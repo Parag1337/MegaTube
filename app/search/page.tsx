@@ -41,7 +41,7 @@ async function Results({ query, page, userId }: { query: string; page: number; u
             <line x1="8" y1="11" x2="14" y2="11"/>
           </svg>
           <p className="text-muted">
-            No videos found for "{query}".
+            No videos found for &ldquo;{query}&rdquo;.
           </p>
         </div>
       </div>
@@ -75,7 +75,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
     <div className="px-4 py-6 sm:px-6">
       <div className="mx-auto max-w-[1800px]">
         <h1 className="mb-6 text-xl font-semibold">
-          {query.trim() ? <>Search results for "{query}"</> : 'Search'}
+          {query.trim() ? <>Search results for &ldquo;{query}&rdquo;</> : 'Search'}
         </h1>
 
         <div className="mb-6 max-w-xl">

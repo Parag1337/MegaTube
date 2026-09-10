@@ -63,12 +63,12 @@ export type MegaAccountMinAggregateOutputType = {
   lastSyncStartedAt: Date | null
   lastSyncCompletedAt: Date | null
   lastSyncErrorAt: Date | null
-  lastSyncMeta: string | null
   lastSyncError: string | null
   consecutiveSyncFailures: number | null
   videoCount: number | null
   createdAt: Date | null
   updatedAt: Date | null
+  lastSyncMeta: string | null
 }
 
 export type MegaAccountMaxAggregateOutputType = {
@@ -83,12 +83,12 @@ export type MegaAccountMaxAggregateOutputType = {
   lastSyncStartedAt: Date | null
   lastSyncCompletedAt: Date | null
   lastSyncErrorAt: Date | null
-  lastSyncMeta: string | null
   lastSyncError: string | null
   consecutiveSyncFailures: number | null
   videoCount: number | null
   createdAt: Date | null
   updatedAt: Date | null
+  lastSyncMeta: string | null
 }
 
 export type MegaAccountCountAggregateOutputType = {
@@ -103,12 +103,12 @@ export type MegaAccountCountAggregateOutputType = {
   lastSyncStartedAt: number
   lastSyncCompletedAt: number
   lastSyncErrorAt: number
-  lastSyncMeta: number
   lastSyncError: number
   consecutiveSyncFailures: number
   videoCount: number
   createdAt: number
   updatedAt: number
+  lastSyncMeta: number
   _all: number
 }
 
@@ -137,12 +137,12 @@ export type MegaAccountMinAggregateInputType = {
   lastSyncStartedAt?: true
   lastSyncCompletedAt?: true
   lastSyncErrorAt?: true
-  lastSyncMeta?: true
   lastSyncError?: true
   consecutiveSyncFailures?: true
   videoCount?: true
   createdAt?: true
   updatedAt?: true
+  lastSyncMeta?: true
 }
 
 export type MegaAccountMaxAggregateInputType = {
@@ -157,12 +157,12 @@ export type MegaAccountMaxAggregateInputType = {
   lastSyncStartedAt?: true
   lastSyncCompletedAt?: true
   lastSyncErrorAt?: true
-  lastSyncMeta?: true
   lastSyncError?: true
   consecutiveSyncFailures?: true
   videoCount?: true
   createdAt?: true
   updatedAt?: true
+  lastSyncMeta?: true
 }
 
 export type MegaAccountCountAggregateInputType = {
@@ -177,12 +177,12 @@ export type MegaAccountCountAggregateInputType = {
   lastSyncStartedAt?: true
   lastSyncCompletedAt?: true
   lastSyncErrorAt?: true
-  lastSyncMeta?: true
   lastSyncError?: true
   consecutiveSyncFailures?: true
   videoCount?: true
   createdAt?: true
   updatedAt?: true
+  lastSyncMeta?: true
   _all?: true
 }
 
@@ -284,12 +284,12 @@ export type MegaAccountGroupByOutputType = {
   lastSyncStartedAt: Date | null
   lastSyncCompletedAt: Date | null
   lastSyncErrorAt: Date | null
-  lastSyncMeta: string | null
   lastSyncError: string | null
   consecutiveSyncFailures: number
   videoCount: number
   createdAt: Date
   updatedAt: Date
+  lastSyncMeta: string | null
   _count: MegaAccountCountAggregateOutputType | null
   _avg: MegaAccountAvgAggregateOutputType | null
   _sum: MegaAccountSumAggregateOutputType | null
@@ -327,12 +327,12 @@ export type MegaAccountWhereInput = {
   lastSyncStartedAt?: Prisma.DateTimeNullableFilter<"MegaAccount"> | Date | string | null
   lastSyncCompletedAt?: Prisma.DateTimeNullableFilter<"MegaAccount"> | Date | string | null
   lastSyncErrorAt?: Prisma.DateTimeNullableFilter<"MegaAccount"> | Date | string | null
-  lastSyncMeta?: Prisma.StringNullableFilter<"MegaAccount"> | string | null
   lastSyncError?: Prisma.StringNullableFilter<"MegaAccount"> | string | null
   consecutiveSyncFailures?: Prisma.IntFilter<"MegaAccount"> | number
   videoCount?: Prisma.IntFilter<"MegaAccount"> | number
   createdAt?: Prisma.DateTimeFilter<"MegaAccount"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"MegaAccount"> | Date | string
+  lastSyncMeta?: Prisma.StringNullableFilter<"MegaAccount"> | string | null
   user?: Prisma.XOR<Prisma.UserScalarRelationFilter, Prisma.UserWhereInput>
   videos?: Prisma.VideoListRelationFilter
 }
@@ -349,12 +349,12 @@ export type MegaAccountOrderByWithRelationInput = {
   lastSyncStartedAt?: Prisma.SortOrderInput | Prisma.SortOrder
   lastSyncCompletedAt?: Prisma.SortOrderInput | Prisma.SortOrder
   lastSyncErrorAt?: Prisma.SortOrderInput | Prisma.SortOrder
-  lastSyncMeta?: Prisma.SortOrderInput | Prisma.SortOrder
   lastSyncError?: Prisma.SortOrderInput | Prisma.SortOrder
   consecutiveSyncFailures?: Prisma.SortOrder
   videoCount?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
+  lastSyncMeta?: Prisma.SortOrderInput | Prisma.SortOrder
   user?: Prisma.UserOrderByWithRelationInput
   videos?: Prisma.VideoOrderByRelationAggregateInput
 }
@@ -375,12 +375,12 @@ export type MegaAccountWhereUniqueInput = Prisma.AtLeast<{
   lastSyncStartedAt?: Prisma.DateTimeNullableFilter<"MegaAccount"> | Date | string | null
   lastSyncCompletedAt?: Prisma.DateTimeNullableFilter<"MegaAccount"> | Date | string | null
   lastSyncErrorAt?: Prisma.DateTimeNullableFilter<"MegaAccount"> | Date | string | null
-  lastSyncMeta?: Prisma.StringNullableFilter<"MegaAccount"> | string | null
   lastSyncError?: Prisma.StringNullableFilter<"MegaAccount"> | string | null
   consecutiveSyncFailures?: Prisma.IntFilter<"MegaAccount"> | number
   videoCount?: Prisma.IntFilter<"MegaAccount"> | number
   createdAt?: Prisma.DateTimeFilter<"MegaAccount"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"MegaAccount"> | Date | string
+  lastSyncMeta?: Prisma.StringNullableFilter<"MegaAccount"> | string | null
   user?: Prisma.XOR<Prisma.UserScalarRelationFilter, Prisma.UserWhereInput>
   videos?: Prisma.VideoListRelationFilter
 }, "id" | "userId_megaEmail">
@@ -397,12 +397,12 @@ export type MegaAccountOrderByWithAggregationInput = {
   lastSyncStartedAt?: Prisma.SortOrderInput | Prisma.SortOrder
   lastSyncCompletedAt?: Prisma.SortOrderInput | Prisma.SortOrder
   lastSyncErrorAt?: Prisma.SortOrderInput | Prisma.SortOrder
-  lastSyncMeta?: Prisma.SortOrderInput | Prisma.SortOrder
   lastSyncError?: Prisma.SortOrderInput | Prisma.SortOrder
   consecutiveSyncFailures?: Prisma.SortOrder
   videoCount?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
+  lastSyncMeta?: Prisma.SortOrderInput | Prisma.SortOrder
   _count?: Prisma.MegaAccountCountOrderByAggregateInput
   _avg?: Prisma.MegaAccountAvgOrderByAggregateInput
   _max?: Prisma.MegaAccountMaxOrderByAggregateInput
@@ -425,12 +425,12 @@ export type MegaAccountScalarWhereWithAggregatesInput = {
   lastSyncStartedAt?: Prisma.DateTimeNullableWithAggregatesFilter<"MegaAccount"> | Date | string | null
   lastSyncCompletedAt?: Prisma.DateTimeNullableWithAggregatesFilter<"MegaAccount"> | Date | string | null
   lastSyncErrorAt?: Prisma.DateTimeNullableWithAggregatesFilter<"MegaAccount"> | Date | string | null
-  lastSyncMeta?: Prisma.StringNullableWithAggregatesFilter<"MegaAccount"> | string | null
   lastSyncError?: Prisma.StringNullableWithAggregatesFilter<"MegaAccount"> | string | null
   consecutiveSyncFailures?: Prisma.IntWithAggregatesFilter<"MegaAccount"> | number
   videoCount?: Prisma.IntWithAggregatesFilter<"MegaAccount"> | number
   createdAt?: Prisma.DateTimeWithAggregatesFilter<"MegaAccount"> | Date | string
   updatedAt?: Prisma.DateTimeWithAggregatesFilter<"MegaAccount"> | Date | string
+  lastSyncMeta?: Prisma.StringNullableWithAggregatesFilter<"MegaAccount"> | string | null
 }
 
 export type MegaAccountCreateInput = {
@@ -443,12 +443,12 @@ export type MegaAccountCreateInput = {
   lastSyncStartedAt?: Date | string | null
   lastSyncCompletedAt?: Date | string | null
   lastSyncErrorAt?: Date | string | null
-  lastSyncMeta?: string | null
   lastSyncError?: string | null
   consecutiveSyncFailures?: number
   videoCount?: number
   createdAt?: Date | string
   updatedAt?: Date | string
+  lastSyncMeta?: string | null
   user: Prisma.UserCreateNestedOneWithoutMegaAccountsInput
   videos?: Prisma.VideoCreateNestedManyWithoutMegaAccountInput
 }
@@ -465,12 +465,12 @@ export type MegaAccountUncheckedCreateInput = {
   lastSyncStartedAt?: Date | string | null
   lastSyncCompletedAt?: Date | string | null
   lastSyncErrorAt?: Date | string | null
-  lastSyncMeta?: string | null
   lastSyncError?: string | null
   consecutiveSyncFailures?: number
   videoCount?: number
   createdAt?: Date | string
   updatedAt?: Date | string
+  lastSyncMeta?: string | null
   videos?: Prisma.VideoUncheckedCreateNestedManyWithoutMegaAccountInput
 }
 
@@ -484,12 +484,12 @@ export type MegaAccountUpdateInput = {
   lastSyncStartedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   lastSyncCompletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   lastSyncErrorAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
-  lastSyncMeta?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   lastSyncError?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   consecutiveSyncFailures?: Prisma.IntFieldUpdateOperationsInput | number
   videoCount?: Prisma.IntFieldUpdateOperationsInput | number
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  lastSyncMeta?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   user?: Prisma.UserUpdateOneRequiredWithoutMegaAccountsNestedInput
   videos?: Prisma.VideoUpdateManyWithoutMegaAccountNestedInput
 }
@@ -506,12 +506,12 @@ export type MegaAccountUncheckedUpdateInput = {
   lastSyncStartedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   lastSyncCompletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   lastSyncErrorAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
-  lastSyncMeta?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   lastSyncError?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   consecutiveSyncFailures?: Prisma.IntFieldUpdateOperationsInput | number
   videoCount?: Prisma.IntFieldUpdateOperationsInput | number
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  lastSyncMeta?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   videos?: Prisma.VideoUncheckedUpdateManyWithoutMegaAccountNestedInput
 }
 
@@ -527,12 +527,12 @@ export type MegaAccountCreateManyInput = {
   lastSyncStartedAt?: Date | string | null
   lastSyncCompletedAt?: Date | string | null
   lastSyncErrorAt?: Date | string | null
-  lastSyncMeta?: string | null
   lastSyncError?: string | null
   consecutiveSyncFailures?: number
   videoCount?: number
   createdAt?: Date | string
   updatedAt?: Date | string
+  lastSyncMeta?: string | null
 }
 
 export type MegaAccountUpdateManyMutationInput = {
@@ -545,12 +545,12 @@ export type MegaAccountUpdateManyMutationInput = {
   lastSyncStartedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   lastSyncCompletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   lastSyncErrorAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
-  lastSyncMeta?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   lastSyncError?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   consecutiveSyncFailures?: Prisma.IntFieldUpdateOperationsInput | number
   videoCount?: Prisma.IntFieldUpdateOperationsInput | number
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  lastSyncMeta?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
 }
 
 export type MegaAccountUncheckedUpdateManyInput = {
@@ -565,12 +565,12 @@ export type MegaAccountUncheckedUpdateManyInput = {
   lastSyncStartedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   lastSyncCompletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   lastSyncErrorAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
-  lastSyncMeta?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   lastSyncError?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   consecutiveSyncFailures?: Prisma.IntFieldUpdateOperationsInput | number
   videoCount?: Prisma.IntFieldUpdateOperationsInput | number
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  lastSyncMeta?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
 }
 
 export type MegaAccountNullableScalarRelationFilter = {
@@ -605,12 +605,12 @@ export type MegaAccountCountOrderByAggregateInput = {
   lastSyncStartedAt?: Prisma.SortOrder
   lastSyncCompletedAt?: Prisma.SortOrder
   lastSyncErrorAt?: Prisma.SortOrder
-  lastSyncMeta?: Prisma.SortOrder
   lastSyncError?: Prisma.SortOrder
   consecutiveSyncFailures?: Prisma.SortOrder
   videoCount?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
+  lastSyncMeta?: Prisma.SortOrder
 }
 
 export type MegaAccountAvgOrderByAggregateInput = {
@@ -631,12 +631,12 @@ export type MegaAccountMaxOrderByAggregateInput = {
   lastSyncStartedAt?: Prisma.SortOrder
   lastSyncCompletedAt?: Prisma.SortOrder
   lastSyncErrorAt?: Prisma.SortOrder
-  lastSyncMeta?: Prisma.SortOrder
   lastSyncError?: Prisma.SortOrder
   consecutiveSyncFailures?: Prisma.SortOrder
   videoCount?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
+  lastSyncMeta?: Prisma.SortOrder
 }
 
 export type MegaAccountMinOrderByAggregateInput = {
@@ -651,12 +651,12 @@ export type MegaAccountMinOrderByAggregateInput = {
   lastSyncStartedAt?: Prisma.SortOrder
   lastSyncCompletedAt?: Prisma.SortOrder
   lastSyncErrorAt?: Prisma.SortOrder
-  lastSyncMeta?: Prisma.SortOrder
   lastSyncError?: Prisma.SortOrder
   consecutiveSyncFailures?: Prisma.SortOrder
   videoCount?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
+  lastSyncMeta?: Prisma.SortOrder
 }
 
 export type MegaAccountSumOrderByAggregateInput = {
@@ -733,12 +733,12 @@ export type MegaAccountCreateWithoutVideosInput = {
   lastSyncStartedAt?: Date | string | null
   lastSyncCompletedAt?: Date | string | null
   lastSyncErrorAt?: Date | string | null
-  lastSyncMeta?: string | null
   lastSyncError?: string | null
   consecutiveSyncFailures?: number
   videoCount?: number
   createdAt?: Date | string
   updatedAt?: Date | string
+  lastSyncMeta?: string | null
   user: Prisma.UserCreateNestedOneWithoutMegaAccountsInput
 }
 
@@ -754,12 +754,12 @@ export type MegaAccountUncheckedCreateWithoutVideosInput = {
   lastSyncStartedAt?: Date | string | null
   lastSyncCompletedAt?: Date | string | null
   lastSyncErrorAt?: Date | string | null
-  lastSyncMeta?: string | null
   lastSyncError?: string | null
   consecutiveSyncFailures?: number
   videoCount?: number
   createdAt?: Date | string
   updatedAt?: Date | string
+  lastSyncMeta?: string | null
 }
 
 export type MegaAccountCreateOrConnectWithoutVideosInput = {
@@ -788,12 +788,12 @@ export type MegaAccountUpdateWithoutVideosInput = {
   lastSyncStartedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   lastSyncCompletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   lastSyncErrorAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
-  lastSyncMeta?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   lastSyncError?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   consecutiveSyncFailures?: Prisma.IntFieldUpdateOperationsInput | number
   videoCount?: Prisma.IntFieldUpdateOperationsInput | number
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  lastSyncMeta?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   user?: Prisma.UserUpdateOneRequiredWithoutMegaAccountsNestedInput
 }
 
@@ -809,12 +809,12 @@ export type MegaAccountUncheckedUpdateWithoutVideosInput = {
   lastSyncStartedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   lastSyncCompletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   lastSyncErrorAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
-  lastSyncMeta?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   lastSyncError?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   consecutiveSyncFailures?: Prisma.IntFieldUpdateOperationsInput | number
   videoCount?: Prisma.IntFieldUpdateOperationsInput | number
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  lastSyncMeta?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
 }
 
 export type MegaAccountCreateWithoutUserInput = {
@@ -827,12 +827,12 @@ export type MegaAccountCreateWithoutUserInput = {
   lastSyncStartedAt?: Date | string | null
   lastSyncCompletedAt?: Date | string | null
   lastSyncErrorAt?: Date | string | null
-  lastSyncMeta?: string | null
   lastSyncError?: string | null
   consecutiveSyncFailures?: number
   videoCount?: number
   createdAt?: Date | string
   updatedAt?: Date | string
+  lastSyncMeta?: string | null
   videos?: Prisma.VideoCreateNestedManyWithoutMegaAccountInput
 }
 
@@ -847,12 +847,12 @@ export type MegaAccountUncheckedCreateWithoutUserInput = {
   lastSyncStartedAt?: Date | string | null
   lastSyncCompletedAt?: Date | string | null
   lastSyncErrorAt?: Date | string | null
-  lastSyncMeta?: string | null
   lastSyncError?: string | null
   consecutiveSyncFailures?: number
   videoCount?: number
   createdAt?: Date | string
   updatedAt?: Date | string
+  lastSyncMeta?: string | null
   videos?: Prisma.VideoUncheckedCreateNestedManyWithoutMegaAccountInput
 }
 
@@ -896,12 +896,12 @@ export type MegaAccountScalarWhereInput = {
   lastSyncStartedAt?: Prisma.DateTimeNullableFilter<"MegaAccount"> | Date | string | null
   lastSyncCompletedAt?: Prisma.DateTimeNullableFilter<"MegaAccount"> | Date | string | null
   lastSyncErrorAt?: Prisma.DateTimeNullableFilter<"MegaAccount"> | Date | string | null
-  lastSyncMeta?: Prisma.StringNullableFilter<"MegaAccount"> | string | null
   lastSyncError?: Prisma.StringNullableFilter<"MegaAccount"> | string | null
   consecutiveSyncFailures?: Prisma.IntFilter<"MegaAccount"> | number
   videoCount?: Prisma.IntFilter<"MegaAccount"> | number
   createdAt?: Prisma.DateTimeFilter<"MegaAccount"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"MegaAccount"> | Date | string
+  lastSyncMeta?: Prisma.StringNullableFilter<"MegaAccount"> | string | null
 }
 
 export type MegaAccountCreateManyUserInput = {
@@ -915,12 +915,12 @@ export type MegaAccountCreateManyUserInput = {
   lastSyncStartedAt?: Date | string | null
   lastSyncCompletedAt?: Date | string | null
   lastSyncErrorAt?: Date | string | null
-  lastSyncMeta?: string | null
   lastSyncError?: string | null
   consecutiveSyncFailures?: number
   videoCount?: number
   createdAt?: Date | string
   updatedAt?: Date | string
+  lastSyncMeta?: string | null
 }
 
 export type MegaAccountUpdateWithoutUserInput = {
@@ -933,12 +933,12 @@ export type MegaAccountUpdateWithoutUserInput = {
   lastSyncStartedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   lastSyncCompletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   lastSyncErrorAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
-  lastSyncMeta?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   lastSyncError?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   consecutiveSyncFailures?: Prisma.IntFieldUpdateOperationsInput | number
   videoCount?: Prisma.IntFieldUpdateOperationsInput | number
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  lastSyncMeta?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   videos?: Prisma.VideoUpdateManyWithoutMegaAccountNestedInput
 }
 
@@ -953,12 +953,12 @@ export type MegaAccountUncheckedUpdateWithoutUserInput = {
   lastSyncStartedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   lastSyncCompletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   lastSyncErrorAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
-  lastSyncMeta?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   lastSyncError?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   consecutiveSyncFailures?: Prisma.IntFieldUpdateOperationsInput | number
   videoCount?: Prisma.IntFieldUpdateOperationsInput | number
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  lastSyncMeta?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   videos?: Prisma.VideoUncheckedUpdateManyWithoutMegaAccountNestedInput
 }
 
@@ -973,12 +973,12 @@ export type MegaAccountUncheckedUpdateManyWithoutUserInput = {
   lastSyncStartedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   lastSyncCompletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   lastSyncErrorAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
-  lastSyncMeta?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   lastSyncError?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   consecutiveSyncFailures?: Prisma.IntFieldUpdateOperationsInput | number
   videoCount?: Prisma.IntFieldUpdateOperationsInput | number
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  lastSyncMeta?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
 }
 
 
@@ -1024,12 +1024,12 @@ export type MegaAccountSelect<ExtArgs extends runtime.Types.Extensions.InternalA
   lastSyncStartedAt?: boolean
   lastSyncCompletedAt?: boolean
   lastSyncErrorAt?: boolean
-  lastSyncMeta?: boolean
   lastSyncError?: boolean
   consecutiveSyncFailures?: boolean
   videoCount?: boolean
   createdAt?: boolean
   updatedAt?: boolean
+  lastSyncMeta?: boolean
   user?: boolean | Prisma.UserDefaultArgs<ExtArgs>
   videos?: boolean | Prisma.MegaAccount$videosArgs<ExtArgs>
   _count?: boolean | Prisma.MegaAccountCountOutputTypeDefaultArgs<ExtArgs>
@@ -1047,12 +1047,12 @@ export type MegaAccountSelectCreateManyAndReturn<ExtArgs extends runtime.Types.E
   lastSyncStartedAt?: boolean
   lastSyncCompletedAt?: boolean
   lastSyncErrorAt?: boolean
-  lastSyncMeta?: boolean
   lastSyncError?: boolean
   consecutiveSyncFailures?: boolean
   videoCount?: boolean
   createdAt?: boolean
   updatedAt?: boolean
+  lastSyncMeta?: boolean
   user?: boolean | Prisma.UserDefaultArgs<ExtArgs>
 }, ExtArgs["result"]["megaAccount"]>
 
@@ -1068,12 +1068,12 @@ export type MegaAccountSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.E
   lastSyncStartedAt?: boolean
   lastSyncCompletedAt?: boolean
   lastSyncErrorAt?: boolean
-  lastSyncMeta?: boolean
   lastSyncError?: boolean
   consecutiveSyncFailures?: boolean
   videoCount?: boolean
   createdAt?: boolean
   updatedAt?: boolean
+  lastSyncMeta?: boolean
   user?: boolean | Prisma.UserDefaultArgs<ExtArgs>
 }, ExtArgs["result"]["megaAccount"]>
 
@@ -1089,15 +1089,15 @@ export type MegaAccountSelectScalar = {
   lastSyncStartedAt?: boolean
   lastSyncCompletedAt?: boolean
   lastSyncErrorAt?: boolean
-  lastSyncMeta?: boolean
   lastSyncError?: boolean
   consecutiveSyncFailures?: boolean
   videoCount?: boolean
   createdAt?: boolean
   updatedAt?: boolean
+  lastSyncMeta?: boolean
 }
 
-export type MegaAccountOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "userId" | "label" | "megaEmail" | "megaUserId" | "encryptedSession" | "status" | "lastAuthenticatedAt" | "lastSyncStartedAt" | "lastSyncCompletedAt" | "lastSyncErrorAt" | "lastSyncMeta" | "lastSyncError" | "consecutiveSyncFailures" | "videoCount" | "createdAt" | "updatedAt", ExtArgs["result"]["megaAccount"]>
+export type MegaAccountOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "userId" | "label" | "megaEmail" | "megaUserId" | "encryptedSession" | "status" | "lastAuthenticatedAt" | "lastSyncStartedAt" | "lastSyncCompletedAt" | "lastSyncErrorAt" | "lastSyncError" | "consecutiveSyncFailures" | "videoCount" | "createdAt" | "updatedAt" | "lastSyncMeta", ExtArgs["result"]["megaAccount"]>
 export type MegaAccountInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   user?: boolean | Prisma.UserDefaultArgs<ExtArgs>
   videos?: boolean | Prisma.MegaAccount$videosArgs<ExtArgs>
@@ -1138,14 +1138,6 @@ export type $MegaAccountPayload<ExtArgs extends runtime.Types.Extensions.Interna
     lastSyncCompletedAt: Date | null
     lastSyncErrorAt: Date | null
     /**
-     * Durable metadata of the LAST sync attempt/completion: JSON string with
-     * { startedAt, completedAt, durationMs, discovered, totalVideos, created,
-     * updated, removed, unchanged, outcome: 'completed'|'failed'|'interrupted' }.
-     * Written by the sync worker and by crash recovery; the UI uses it to show
-     * the final result and to recover progress state after a server restart.
-     */
-    lastSyncMeta: string | null
-    /**
      * Sanitized, human-readable sync error (never contains secrets).
      */
     lastSyncError: string | null
@@ -1156,6 +1148,14 @@ export type $MegaAccountPayload<ExtArgs extends runtime.Types.Extensions.Interna
     videoCount: number
     createdAt: Date
     updatedAt: Date
+    /**
+     * Durable metadata of the LAST sync attempt/completion: JSON string with
+     * { startedAt, completedAt, durationMs, discovered, totalVideos, created,
+     * updated, removed, unchanged, outcome: 'completed'|'failed'|'interrupted' }.
+     * Written by the sync worker and by crash recovery; the UI uses it to show
+     * the final result and to recover progress state after a server restart.
+     */
+    lastSyncMeta: string | null
   }, ExtArgs["result"]["megaAccount"]>
   composites: {}
 }
@@ -1592,12 +1592,12 @@ export interface MegaAccountFieldRefs {
   readonly lastSyncStartedAt: Prisma.FieldRef<"MegaAccount", 'DateTime'>
   readonly lastSyncCompletedAt: Prisma.FieldRef<"MegaAccount", 'DateTime'>
   readonly lastSyncErrorAt: Prisma.FieldRef<"MegaAccount", 'DateTime'>
-  readonly lastSyncMeta: Prisma.FieldRef<"MegaAccount", 'String'>
   readonly lastSyncError: Prisma.FieldRef<"MegaAccount", 'String'>
   readonly consecutiveSyncFailures: Prisma.FieldRef<"MegaAccount", 'Int'>
   readonly videoCount: Prisma.FieldRef<"MegaAccount", 'Int'>
   readonly createdAt: Prisma.FieldRef<"MegaAccount", 'DateTime'>
   readonly updatedAt: Prisma.FieldRef<"MegaAccount", 'DateTime'>
+  readonly lastSyncMeta: Prisma.FieldRef<"MegaAccount", 'String'>
 }
     
 

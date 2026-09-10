@@ -328,6 +328,7 @@ test('user isolation: a sync never touches another user account or videos', asyn
       title: 'User B Video',
       slug: `userb-${accB.id}`,
       fileSize: BigInt(7),
+      creatorAssignment: 'none',
     },
   });
 
@@ -368,6 +369,7 @@ test('account isolation: syncing account #1 never modifies sibling account #2 of
       title: 'Sibling',
       slug: `sibling-${acc2.id}`,
       fileSize: BigInt(3),
+      creatorAssignment: 'none',
     },
   });
 

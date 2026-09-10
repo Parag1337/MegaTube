@@ -6,6 +6,7 @@ import { MegaPlayer } from '@/components/MegaPlayer';
 import { PrivatePlayer } from '@/components/PrivatePlayer';
 import { VideoGrid } from '@/components/VideoGrid';
 import { MEGA_ACCOUNT_STATUSES } from '@/lib/megaAccounts';
+import VideoCreatorControl from './VideoCreatorControl';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,8 +40,8 @@ export default async function VideoPage({ params }: VideoPageProps) {
   const video = await getVideoBySlug(slug);
   if (!video) notFound();
 
+  const user = await getCurrentUser();
   if (video.isPrivate) {
-    const user = await getCurrentUser();
     if (!user || !video.account || video.account.userId !== user.id) {
       notFound();
     }
@@ -73,7 +74,7 @@ export default async function VideoPage({ params }: VideoPageProps) {
                       <line x1="12" y1="9" x2="12" y2="13"/>
                       <line x1="12" y1="17" x2="12.01" y2="17"/>
                     </svg>
-                    <p className="text-base font-medium">This video can't be played right now.</p>
+                    <p className="text-base font-medium">This video can&apos;t be played right now.</p>
                     <p className="mt-1 text-sm text-muted">
                       Its MEGA account needs to be reconnected. Open your Account page to reconnect it.
                     </p>
@@ -146,6 +147,11 @@ export default async function VideoPage({ params }: VideoPageProps) {
                   </>
                 )}
               </div>
+
+              {/* Creator control for private video owners */}
+              {isPrivate && user && video.account && video.account.userId === user.id && (
+                <VideoCreatorControl videoId={video.id} currentCreator={video.creator ? { id: 0, name: video.creator.name, slug: video.creator.slug, avatar: null } : null} />
+              )}
             </div>
           </div>
 

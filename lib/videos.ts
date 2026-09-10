@@ -204,32 +204,40 @@ export async function searchVideos(
   };
 }
 
-/** Videos by a creator, ordered deterministically (public catalog only). */
+/** Videos by a creator for a specific user (private videos only). */
 export async function listVideosByCreator(
+  userId: string,
   creatorSlug: string,
   page = 1,
-): Promise<{ creator: { slug: string; name: string } | null; result: PageResult<ReturnType<typeof serializeVideo>> }> {
+): Promise<{ creator: { id: number; slug: string; name: string; avatar: string | null; description: string | null } | null; result: PageResult<ReturnType<typeof serializeVideo>> }> {
   const perPage = videosPerPage();
   const safePage = Math.max(1, page);
 
-  const creator = await prisma.creator.findUnique({
+  const creator = await prisma.creator.findFirst({
     where: { slug: creatorSlug },
-    select: { slug: true, name: true, id: true },
+    select: { id: true, slug: true, name: true, avatar: true, description: true, userId: true },
   });
 
-  if (!creator) {
+  if (!creator || creator.userId !== userId) {
     return {
       creator: null,
       result: { items: [], total: 0, page: 1, perPage, totalPages: 1 },
     };
   }
 
-  const where = { ...PUBLIC_SCOPE, creatorId: creator.id };
+  const where = {
+    creatorId: creator.id,
+    megaAccount: {
+      userId,
+      status: { not: MEGA_ACCOUNT_STATUSES.DISCONNECTED },
+    },
+  };
+
   const [items, total] = await Promise.all([
     prisma.video.findMany({
       where,
       select: videoSelect,
-      orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       skip: (safePage - 1) * perPage,
       take: perPage,
     }),
@@ -237,7 +245,7 @@ export async function listVideosByCreator(
   ]);
 
   return {
-    creator: { slug: creator.slug, name: creator.name },
+    creator: { id: creator.id, slug: creator.slug, name: creator.name, avatar: creator.avatar, description: creator.description },
     result: {
       items: items.map(serializeVideo),
       total,
@@ -248,13 +256,16 @@ export async function listVideosByCreator(
   };
 }
 
-/** All creators with video counts (public catalog only). */
-export async function listCreators() {
+/** All creators with video counts for the authenticated user. */
+export async function listCreators(userId: string) {
   const creators = await prisma.creator.findMany({
+    where: { userId },
     select: {
+      id: true,
       slug: true,
       name: true,
       avatar: true,
+      description: true,
       _count: { select: { videos: true } },
     },
     orderBy: { name: 'asc' },

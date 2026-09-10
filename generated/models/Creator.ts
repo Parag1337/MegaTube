@@ -36,6 +36,7 @@ export type CreatorSumAggregateOutputType = {
 
 export type CreatorMinAggregateOutputType = {
   id: number | null
+  userId: string | null
   name: string | null
   slug: string | null
   avatar: string | null
@@ -46,6 +47,7 @@ export type CreatorMinAggregateOutputType = {
 
 export type CreatorMaxAggregateOutputType = {
   id: number | null
+  userId: string | null
   name: string | null
   slug: string | null
   avatar: string | null
@@ -56,6 +58,7 @@ export type CreatorMaxAggregateOutputType = {
 
 export type CreatorCountAggregateOutputType = {
   id: number
+  userId: number
   name: number
   slug: number
   avatar: number
@@ -76,6 +79,7 @@ export type CreatorSumAggregateInputType = {
 
 export type CreatorMinAggregateInputType = {
   id?: true
+  userId?: true
   name?: true
   slug?: true
   avatar?: true
@@ -86,6 +90,7 @@ export type CreatorMinAggregateInputType = {
 
 export type CreatorMaxAggregateInputType = {
   id?: true
+  userId?: true
   name?: true
   slug?: true
   avatar?: true
@@ -96,6 +101,7 @@ export type CreatorMaxAggregateInputType = {
 
 export type CreatorCountAggregateInputType = {
   id?: true
+  userId?: true
   name?: true
   slug?: true
   avatar?: true
@@ -193,6 +199,7 @@ export type CreatorGroupByArgs<ExtArgs extends runtime.Types.Extensions.Internal
 
 export type CreatorGroupByOutputType = {
   id: number
+  userId: string | null
   name: string
   slug: string
   avatar: string | null
@@ -226,6 +233,7 @@ export type CreatorWhereInput = {
   OR?: Prisma.CreatorWhereInput[]
   NOT?: Prisma.CreatorWhereInput | Prisma.CreatorWhereInput[]
   id?: Prisma.IntFilter<"Creator"> | number
+  userId?: Prisma.StringNullableFilter<"Creator"> | string | null
   name?: Prisma.StringFilter<"Creator"> | string
   slug?: Prisma.StringFilter<"Creator"> | string
   avatar?: Prisma.StringNullableFilter<"Creator"> | string | null
@@ -233,10 +241,12 @@ export type CreatorWhereInput = {
   createdAt?: Prisma.DateTimeFilter<"Creator"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"Creator"> | Date | string
   videos?: Prisma.VideoListRelationFilter
+  user?: Prisma.XOR<Prisma.UserNullableScalarRelationFilter, Prisma.UserWhereInput> | null
 }
 
 export type CreatorOrderByWithRelationInput = {
   id?: Prisma.SortOrder
+  userId?: Prisma.SortOrderInput | Prisma.SortOrder
   name?: Prisma.SortOrder
   slug?: Prisma.SortOrder
   avatar?: Prisma.SortOrderInput | Prisma.SortOrder
@@ -244,24 +254,29 @@ export type CreatorOrderByWithRelationInput = {
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
   videos?: Prisma.VideoOrderByRelationAggregateInput
+  user?: Prisma.UserOrderByWithRelationInput
 }
 
 export type CreatorWhereUniqueInput = Prisma.AtLeast<{
   id?: number
-  name?: string
-  slug?: string
+  userId_slug?: Prisma.CreatorUserIdSlugCompoundUniqueInput
   AND?: Prisma.CreatorWhereInput | Prisma.CreatorWhereInput[]
   OR?: Prisma.CreatorWhereInput[]
   NOT?: Prisma.CreatorWhereInput | Prisma.CreatorWhereInput[]
+  userId?: Prisma.StringNullableFilter<"Creator"> | string | null
+  name?: Prisma.StringFilter<"Creator"> | string
+  slug?: Prisma.StringFilter<"Creator"> | string
   avatar?: Prisma.StringNullableFilter<"Creator"> | string | null
   description?: Prisma.StringNullableFilter<"Creator"> | string | null
   createdAt?: Prisma.DateTimeFilter<"Creator"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"Creator"> | Date | string
   videos?: Prisma.VideoListRelationFilter
-}, "id" | "name" | "slug">
+  user?: Prisma.XOR<Prisma.UserNullableScalarRelationFilter, Prisma.UserWhereInput> | null
+}, "id" | "userId_slug">
 
 export type CreatorOrderByWithAggregationInput = {
   id?: Prisma.SortOrder
+  userId?: Prisma.SortOrderInput | Prisma.SortOrder
   name?: Prisma.SortOrder
   slug?: Prisma.SortOrder
   avatar?: Prisma.SortOrderInput | Prisma.SortOrder
@@ -280,6 +295,7 @@ export type CreatorScalarWhereWithAggregatesInput = {
   OR?: Prisma.CreatorScalarWhereWithAggregatesInput[]
   NOT?: Prisma.CreatorScalarWhereWithAggregatesInput | Prisma.CreatorScalarWhereWithAggregatesInput[]
   id?: Prisma.IntWithAggregatesFilter<"Creator"> | number
+  userId?: Prisma.StringNullableWithAggregatesFilter<"Creator"> | string | null
   name?: Prisma.StringWithAggregatesFilter<"Creator"> | string
   slug?: Prisma.StringWithAggregatesFilter<"Creator"> | string
   avatar?: Prisma.StringNullableWithAggregatesFilter<"Creator"> | string | null
@@ -296,10 +312,12 @@ export type CreatorCreateInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   videos?: Prisma.VideoCreateNestedManyWithoutCreatorInput
+  user?: Prisma.UserCreateNestedOneWithoutCreatorsInput
 }
 
 export type CreatorUncheckedCreateInput = {
   id?: number
+  userId?: string | null
   name: string
   slug: string
   avatar?: string | null
@@ -317,10 +335,12 @@ export type CreatorUpdateInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   videos?: Prisma.VideoUpdateManyWithoutCreatorNestedInput
+  user?: Prisma.UserUpdateOneWithoutCreatorsNestedInput
 }
 
 export type CreatorUncheckedUpdateInput = {
   id?: Prisma.IntFieldUpdateOperationsInput | number
+  userId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   name?: Prisma.StringFieldUpdateOperationsInput | string
   slug?: Prisma.StringFieldUpdateOperationsInput | string
   avatar?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -332,6 +352,7 @@ export type CreatorUncheckedUpdateInput = {
 
 export type CreatorCreateManyInput = {
   id?: number
+  userId?: string | null
   name: string
   slug: string
   avatar?: string | null
@@ -351,6 +372,7 @@ export type CreatorUpdateManyMutationInput = {
 
 export type CreatorUncheckedUpdateManyInput = {
   id?: Prisma.IntFieldUpdateOperationsInput | number
+  userId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   name?: Prisma.StringFieldUpdateOperationsInput | string
   slug?: Prisma.StringFieldUpdateOperationsInput | string
   avatar?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -359,8 +381,14 @@ export type CreatorUncheckedUpdateManyInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
+export type CreatorUserIdSlugCompoundUniqueInput = {
+  userId: string
+  slug: string
+}
+
 export type CreatorCountOrderByAggregateInput = {
   id?: Prisma.SortOrder
+  userId?: Prisma.SortOrder
   name?: Prisma.SortOrder
   slug?: Prisma.SortOrder
   avatar?: Prisma.SortOrder
@@ -375,6 +403,7 @@ export type CreatorAvgOrderByAggregateInput = {
 
 export type CreatorMaxOrderByAggregateInput = {
   id?: Prisma.SortOrder
+  userId?: Prisma.SortOrder
   name?: Prisma.SortOrder
   slug?: Prisma.SortOrder
   avatar?: Prisma.SortOrder
@@ -385,6 +414,7 @@ export type CreatorMaxOrderByAggregateInput = {
 
 export type CreatorMinOrderByAggregateInput = {
   id?: Prisma.SortOrder
+  userId?: Prisma.SortOrder
   name?: Prisma.SortOrder
   slug?: Prisma.SortOrder
   avatar?: Prisma.SortOrder
@@ -400,6 +430,16 @@ export type CreatorSumOrderByAggregateInput = {
 export type CreatorNullableScalarRelationFilter = {
   is?: Prisma.CreatorWhereInput | null
   isNot?: Prisma.CreatorWhereInput | null
+}
+
+export type CreatorListRelationFilter = {
+  every?: Prisma.CreatorWhereInput
+  some?: Prisma.CreatorWhereInput
+  none?: Prisma.CreatorWhereInput
+}
+
+export type CreatorOrderByRelationAggregateInput = {
+  _count?: Prisma.SortOrder
 }
 
 export type StringFieldUpdateOperationsInput = {
@@ -438,6 +478,48 @@ export type CreatorUpdateOneWithoutVideosNestedInput = {
   update?: Prisma.XOR<Prisma.XOR<Prisma.CreatorUpdateToOneWithWhereWithoutVideosInput, Prisma.CreatorUpdateWithoutVideosInput>, Prisma.CreatorUncheckedUpdateWithoutVideosInput>
 }
 
+export type CreatorCreateNestedManyWithoutUserInput = {
+  create?: Prisma.XOR<Prisma.CreatorCreateWithoutUserInput, Prisma.CreatorUncheckedCreateWithoutUserInput> | Prisma.CreatorCreateWithoutUserInput[] | Prisma.CreatorUncheckedCreateWithoutUserInput[]
+  connectOrCreate?: Prisma.CreatorCreateOrConnectWithoutUserInput | Prisma.CreatorCreateOrConnectWithoutUserInput[]
+  createMany?: Prisma.CreatorCreateManyUserInputEnvelope
+  connect?: Prisma.CreatorWhereUniqueInput | Prisma.CreatorWhereUniqueInput[]
+}
+
+export type CreatorUncheckedCreateNestedManyWithoutUserInput = {
+  create?: Prisma.XOR<Prisma.CreatorCreateWithoutUserInput, Prisma.CreatorUncheckedCreateWithoutUserInput> | Prisma.CreatorCreateWithoutUserInput[] | Prisma.CreatorUncheckedCreateWithoutUserInput[]
+  connectOrCreate?: Prisma.CreatorCreateOrConnectWithoutUserInput | Prisma.CreatorCreateOrConnectWithoutUserInput[]
+  createMany?: Prisma.CreatorCreateManyUserInputEnvelope
+  connect?: Prisma.CreatorWhereUniqueInput | Prisma.CreatorWhereUniqueInput[]
+}
+
+export type CreatorUpdateManyWithoutUserNestedInput = {
+  create?: Prisma.XOR<Prisma.CreatorCreateWithoutUserInput, Prisma.CreatorUncheckedCreateWithoutUserInput> | Prisma.CreatorCreateWithoutUserInput[] | Prisma.CreatorUncheckedCreateWithoutUserInput[]
+  connectOrCreate?: Prisma.CreatorCreateOrConnectWithoutUserInput | Prisma.CreatorCreateOrConnectWithoutUserInput[]
+  upsert?: Prisma.CreatorUpsertWithWhereUniqueWithoutUserInput | Prisma.CreatorUpsertWithWhereUniqueWithoutUserInput[]
+  createMany?: Prisma.CreatorCreateManyUserInputEnvelope
+  set?: Prisma.CreatorWhereUniqueInput | Prisma.CreatorWhereUniqueInput[]
+  disconnect?: Prisma.CreatorWhereUniqueInput | Prisma.CreatorWhereUniqueInput[]
+  delete?: Prisma.CreatorWhereUniqueInput | Prisma.CreatorWhereUniqueInput[]
+  connect?: Prisma.CreatorWhereUniqueInput | Prisma.CreatorWhereUniqueInput[]
+  update?: Prisma.CreatorUpdateWithWhereUniqueWithoutUserInput | Prisma.CreatorUpdateWithWhereUniqueWithoutUserInput[]
+  updateMany?: Prisma.CreatorUpdateManyWithWhereWithoutUserInput | Prisma.CreatorUpdateManyWithWhereWithoutUserInput[]
+  deleteMany?: Prisma.CreatorScalarWhereInput | Prisma.CreatorScalarWhereInput[]
+}
+
+export type CreatorUncheckedUpdateManyWithoutUserNestedInput = {
+  create?: Prisma.XOR<Prisma.CreatorCreateWithoutUserInput, Prisma.CreatorUncheckedCreateWithoutUserInput> | Prisma.CreatorCreateWithoutUserInput[] | Prisma.CreatorUncheckedCreateWithoutUserInput[]
+  connectOrCreate?: Prisma.CreatorCreateOrConnectWithoutUserInput | Prisma.CreatorCreateOrConnectWithoutUserInput[]
+  upsert?: Prisma.CreatorUpsertWithWhereUniqueWithoutUserInput | Prisma.CreatorUpsertWithWhereUniqueWithoutUserInput[]
+  createMany?: Prisma.CreatorCreateManyUserInputEnvelope
+  set?: Prisma.CreatorWhereUniqueInput | Prisma.CreatorWhereUniqueInput[]
+  disconnect?: Prisma.CreatorWhereUniqueInput | Prisma.CreatorWhereUniqueInput[]
+  delete?: Prisma.CreatorWhereUniqueInput | Prisma.CreatorWhereUniqueInput[]
+  connect?: Prisma.CreatorWhereUniqueInput | Prisma.CreatorWhereUniqueInput[]
+  update?: Prisma.CreatorUpdateWithWhereUniqueWithoutUserInput | Prisma.CreatorUpdateWithWhereUniqueWithoutUserInput[]
+  updateMany?: Prisma.CreatorUpdateManyWithWhereWithoutUserInput | Prisma.CreatorUpdateManyWithWhereWithoutUserInput[]
+  deleteMany?: Prisma.CreatorScalarWhereInput | Prisma.CreatorScalarWhereInput[]
+}
+
 export type CreatorCreateWithoutVideosInput = {
   name: string
   slug: string
@@ -445,10 +527,12 @@ export type CreatorCreateWithoutVideosInput = {
   description?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
+  user?: Prisma.UserCreateNestedOneWithoutCreatorsInput
 }
 
 export type CreatorUncheckedCreateWithoutVideosInput = {
   id?: number
+  userId?: string | null
   name: string
   slug: string
   avatar?: string | null
@@ -480,9 +564,112 @@ export type CreatorUpdateWithoutVideosInput = {
   description?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  user?: Prisma.UserUpdateOneWithoutCreatorsNestedInput
 }
 
 export type CreatorUncheckedUpdateWithoutVideosInput = {
+  id?: Prisma.IntFieldUpdateOperationsInput | number
+  userId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
+  avatar?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  description?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+}
+
+export type CreatorCreateWithoutUserInput = {
+  name: string
+  slug: string
+  avatar?: string | null
+  description?: string | null
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  videos?: Prisma.VideoCreateNestedManyWithoutCreatorInput
+}
+
+export type CreatorUncheckedCreateWithoutUserInput = {
+  id?: number
+  name: string
+  slug: string
+  avatar?: string | null
+  description?: string | null
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  videos?: Prisma.VideoUncheckedCreateNestedManyWithoutCreatorInput
+}
+
+export type CreatorCreateOrConnectWithoutUserInput = {
+  where: Prisma.CreatorWhereUniqueInput
+  create: Prisma.XOR<Prisma.CreatorCreateWithoutUserInput, Prisma.CreatorUncheckedCreateWithoutUserInput>
+}
+
+export type CreatorCreateManyUserInputEnvelope = {
+  data: Prisma.CreatorCreateManyUserInput | Prisma.CreatorCreateManyUserInput[]
+}
+
+export type CreatorUpsertWithWhereUniqueWithoutUserInput = {
+  where: Prisma.CreatorWhereUniqueInput
+  update: Prisma.XOR<Prisma.CreatorUpdateWithoutUserInput, Prisma.CreatorUncheckedUpdateWithoutUserInput>
+  create: Prisma.XOR<Prisma.CreatorCreateWithoutUserInput, Prisma.CreatorUncheckedCreateWithoutUserInput>
+}
+
+export type CreatorUpdateWithWhereUniqueWithoutUserInput = {
+  where: Prisma.CreatorWhereUniqueInput
+  data: Prisma.XOR<Prisma.CreatorUpdateWithoutUserInput, Prisma.CreatorUncheckedUpdateWithoutUserInput>
+}
+
+export type CreatorUpdateManyWithWhereWithoutUserInput = {
+  where: Prisma.CreatorScalarWhereInput
+  data: Prisma.XOR<Prisma.CreatorUpdateManyMutationInput, Prisma.CreatorUncheckedUpdateManyWithoutUserInput>
+}
+
+export type CreatorScalarWhereInput = {
+  AND?: Prisma.CreatorScalarWhereInput | Prisma.CreatorScalarWhereInput[]
+  OR?: Prisma.CreatorScalarWhereInput[]
+  NOT?: Prisma.CreatorScalarWhereInput | Prisma.CreatorScalarWhereInput[]
+  id?: Prisma.IntFilter<"Creator"> | number
+  userId?: Prisma.StringNullableFilter<"Creator"> | string | null
+  name?: Prisma.StringFilter<"Creator"> | string
+  slug?: Prisma.StringFilter<"Creator"> | string
+  avatar?: Prisma.StringNullableFilter<"Creator"> | string | null
+  description?: Prisma.StringNullableFilter<"Creator"> | string | null
+  createdAt?: Prisma.DateTimeFilter<"Creator"> | Date | string
+  updatedAt?: Prisma.DateTimeFilter<"Creator"> | Date | string
+}
+
+export type CreatorCreateManyUserInput = {
+  id?: number
+  name: string
+  slug: string
+  avatar?: string | null
+  description?: string | null
+  createdAt?: Date | string
+  updatedAt?: Date | string
+}
+
+export type CreatorUpdateWithoutUserInput = {
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
+  avatar?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  description?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  videos?: Prisma.VideoUpdateManyWithoutCreatorNestedInput
+}
+
+export type CreatorUncheckedUpdateWithoutUserInput = {
+  id?: Prisma.IntFieldUpdateOperationsInput | number
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
+  avatar?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  description?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  videos?: Prisma.VideoUncheckedUpdateManyWithoutCreatorNestedInput
+}
+
+export type CreatorUncheckedUpdateManyWithoutUserInput = {
   id?: Prisma.IntFieldUpdateOperationsInput | number
   name?: Prisma.StringFieldUpdateOperationsInput | string
   slug?: Prisma.StringFieldUpdateOperationsInput | string
@@ -525,6 +712,7 @@ export type CreatorCountOutputTypeCountVideosArgs<ExtArgs extends runtime.Types.
 
 export type CreatorSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
+  userId?: boolean
   name?: boolean
   slug?: boolean
   avatar?: boolean
@@ -532,31 +720,37 @@ export type CreatorSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs 
   createdAt?: boolean
   updatedAt?: boolean
   videos?: boolean | Prisma.Creator$videosArgs<ExtArgs>
+  user?: boolean | Prisma.Creator$userArgs<ExtArgs>
   _count?: boolean | Prisma.CreatorCountOutputTypeDefaultArgs<ExtArgs>
 }, ExtArgs["result"]["creator"]>
 
 export type CreatorSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
+  userId?: boolean
   name?: boolean
   slug?: boolean
   avatar?: boolean
   description?: boolean
   createdAt?: boolean
   updatedAt?: boolean
+  user?: boolean | Prisma.Creator$userArgs<ExtArgs>
 }, ExtArgs["result"]["creator"]>
 
 export type CreatorSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
+  userId?: boolean
   name?: boolean
   slug?: boolean
   avatar?: boolean
   description?: boolean
   createdAt?: boolean
   updatedAt?: boolean
+  user?: boolean | Prisma.Creator$userArgs<ExtArgs>
 }, ExtArgs["result"]["creator"]>
 
 export type CreatorSelectScalar = {
   id?: boolean
+  userId?: boolean
   name?: boolean
   slug?: boolean
   avatar?: boolean
@@ -565,21 +759,28 @@ export type CreatorSelectScalar = {
   updatedAt?: boolean
 }
 
-export type CreatorOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "name" | "slug" | "avatar" | "description" | "createdAt" | "updatedAt", ExtArgs["result"]["creator"]>
+export type CreatorOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "userId" | "name" | "slug" | "avatar" | "description" | "createdAt" | "updatedAt", ExtArgs["result"]["creator"]>
 export type CreatorInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   videos?: boolean | Prisma.Creator$videosArgs<ExtArgs>
+  user?: boolean | Prisma.Creator$userArgs<ExtArgs>
   _count?: boolean | Prisma.CreatorCountOutputTypeDefaultArgs<ExtArgs>
 }
-export type CreatorIncludeCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {}
-export type CreatorIncludeUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {}
+export type CreatorIncludeCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  user?: boolean | Prisma.Creator$userArgs<ExtArgs>
+}
+export type CreatorIncludeUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  user?: boolean | Prisma.Creator$userArgs<ExtArgs>
+}
 
 export type $CreatorPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   name: "Creator"
   objects: {
     videos: Prisma.$VideoPayload<ExtArgs>[]
+    user: Prisma.$UserPayload<ExtArgs> | null
   }
   scalars: runtime.Types.Extensions.GetPayloadResult<{
     id: number
+    userId: string | null
     name: string
     slug: string
     avatar: string | null
@@ -981,6 +1182,7 @@ readonly fields: CreatorFieldRefs;
 export interface Prisma__CreatorClient<T, Null = never, ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs, GlobalOmitOptions = {}> extends Prisma.PrismaPromise<T> {
   readonly [Symbol.toStringTag]: "PrismaPromise"
   videos<T extends Prisma.Creator$videosArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Creator$videosArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$VideoPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  user<T extends Prisma.Creator$userArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Creator$userArgs<ExtArgs>>): Prisma.Prisma__UserClient<runtime.Types.Result.GetResult<Prisma.$UserPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | null, null, ExtArgs, GlobalOmitOptions>
   /**
    * Attaches callbacks for the resolution and/or rejection of the Promise.
    * @param onfulfilled The callback to execute when the Promise is resolved.
@@ -1011,6 +1213,7 @@ export interface Prisma__CreatorClient<T, Null = never, ExtArgs extends runtime.
  */
 export interface CreatorFieldRefs {
   readonly id: Prisma.FieldRef<"Creator", 'Int'>
+  readonly userId: Prisma.FieldRef<"Creator", 'String'>
   readonly name: Prisma.FieldRef<"Creator", 'String'>
   readonly slug: Prisma.FieldRef<"Creator", 'String'>
   readonly avatar: Prisma.FieldRef<"Creator", 'String'>
@@ -1269,6 +1472,10 @@ export type CreatorCreateManyAndReturnArgs<ExtArgs extends runtime.Types.Extensi
    * The data used to create many Creators.
    */
   data: Prisma.CreatorCreateManyInput | Prisma.CreatorCreateManyInput[]
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.CreatorIncludeCreateManyAndReturn<ExtArgs> | null
 }
 
 /**
@@ -1339,6 +1546,10 @@ export type CreatorUpdateManyAndReturnArgs<ExtArgs extends runtime.Types.Extensi
    * Limit how many Creators to update.
    */
   limit?: number
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.CreatorIncludeUpdateManyAndReturn<ExtArgs> | null
 }
 
 /**
@@ -1429,6 +1640,25 @@ export type Creator$videosArgs<ExtArgs extends runtime.Types.Extensions.Internal
   take?: number
   skip?: number
   distinct?: Prisma.VideoScalarFieldEnum | Prisma.VideoScalarFieldEnum[]
+}
+
+/**
+ * Creator.user
+ */
+export type Creator$userArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the User
+   */
+  select?: Prisma.UserSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the User
+   */
+  omit?: Prisma.UserOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.UserInclude<ExtArgs> | null
+  where?: Prisma.UserWhereInput
 }
 
 /**

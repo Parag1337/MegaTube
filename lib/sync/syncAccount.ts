@@ -110,6 +110,7 @@ async function existingRowsForAccount(accountId: number): Promise<ExistingVideoR
       megaFa: true,
       thumbnail: true,
       thumbnailAvailable: true,
+      creatorAssignment: true,
     },
   });
   return rows.filter((r) => r.megaNodeId !== null).map((r) => ({
@@ -122,6 +123,7 @@ async function existingRowsForAccount(accountId: number): Promise<ExistingVideoR
     megaFa: r.megaFa,
     thumbnail: r.thumbnail,
     thumbnailAvailable: r.thumbnailAvailable,
+    creatorAssignment: r.creatorAssignment,
   }));
 }
 
@@ -168,7 +170,7 @@ export async function syncMegaAccount(
 
   const account = await prisma.megaAccount.findUnique({
     where: { id: accountId },
-    select: { id: true, encryptedSession: true, status: true, megaEmail: true },
+    select: { id: true, encryptedSession: true, status: true, megaEmail: true, userId: true },
   });
   if (!account) {
     return null;
@@ -256,7 +258,7 @@ export async function syncMegaAccount(
           const slug = await uniqueSlug(parsed.title);
 
           let creatorId: number | null = null;
-          if (parsed.creator) {
+          if (parsed.creator && account.userId) {
             const normalized = normalizeCreatorName(parsed.creator);
             creatorId = await ensureCreatorForUser(account.userId, normalized);
           }
@@ -332,7 +334,7 @@ export async function syncMegaAccount(
           };
           // A rename can introduce/upgrade the creator from the filename, but only
           // when there is no manual override.
-          if (parsed.creator && u.row.creatorAssignment !== 'manual') {
+          if (parsed.creator && account.userId && u.row.creatorAssignment !== 'manual') {
             const normalized = normalizeCreatorName(parsed.creator);
             data.creatorId = await ensureCreatorForUser(account.userId, normalized);
             data.creatorAssignment = 'auto';

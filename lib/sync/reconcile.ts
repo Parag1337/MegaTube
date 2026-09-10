@@ -28,13 +28,15 @@ export interface ExistingVideoRow {
   id: number;
   megaNodeId: string;
   megaFilename: string;
-  fileSize: bigint | null;
+  fileSize: bigint;
   parentNodeId: string | null;
   /** MEGA node timestamp stored as ms since epoch (or null). */
   megaModifiedAt: Date | null;
-  megaFa: string | null;
+  megaFa: string;
   thumbnailAvailable: boolean;
-  thumbnail: string | null;
+  thumbnail: string;
+  /** Whether the creator assignment is protected from automatic sync. */
+  creatorAssignment: string;
 }
 
 export interface ReconcilePlan {

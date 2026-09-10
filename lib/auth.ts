@@ -42,18 +42,35 @@ export async function verifyPassword(stored: string, password: string): Promise<
   const [, digest, iterationsStr, salt, expectedHash] = parts;
   const iterations = Number(iterationsStr);
   if (!Number.isFinite(iterations) || iterations <= 0) return false;
+  
+  // Try with current pepper first
   const peppered = Buffer.concat([
     Buffer.from(password, 'utf8'),
     Buffer.from(process.env.AUTH_PEPPER ?? '', 'utf8'),
   ]);
   const derivedKey = await pbkdf2Promise(peppered, salt, iterations, PBKDF2_KEY_LENGTH, digest);
   const expectedBuf = Buffer.from(expectedHash, 'hex');
+  
   if (expectedBuf.length !== derivedKey.length) return false;
   let isEqual = true;
   for (let i = 0; i < expectedBuf.length; i++) {
     isEqual = isEqual && expectedBuf[i] === derivedKey[i];
   }
-  return isEqual;
+  
+  // If it matches with current pepper, return true
+  if (isEqual) return true;
+  
+  // Backwards compatibility: try without pepper for accounts created before AUTH_PEPPER was set
+  const unpeppered = Buffer.from(password, 'utf8');
+  const derivedKeyUnpeppered = await pbkdf2Promise(unpeppered, salt, iterations, PBKDF2_KEY_LENGTH, digest);
+  
+  if (expectedBuf.length !== derivedKeyUnpeppered.length) return false;
+  let isEqualUnpeppered = true;
+  for (let i = 0; i < expectedBuf.length; i++) {
+    isEqualUnpeppered = isEqualUnpeppered && expectedBuf[i] === derivedKeyUnpeppered[i];
+  }
+  
+  return isEqualUnpeppered;
 }
 
 function pbkdf2Promise(

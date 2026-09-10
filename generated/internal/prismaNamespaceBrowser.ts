@@ -73,6 +73,7 @@ export type TransactionIsolationLevel = (typeof TransactionIsolationLevel)[keyof
 
 export const CreatorScalarFieldEnum = {
   id: 'id',
+  userId: 'userId',
   name: 'name',
   slug: 'slug',
   avatar: 'avatar',
@@ -93,12 +94,11 @@ export const VideoScalarFieldEnum = {
   megaFilename: 'megaFilename',
   megaNodeId: 'megaNodeId',
   parentNodeId: 'parentNodeId',
-  megaModifiedAt: 'megaModifiedAt',
-  megaFa: 'megaFa',
   fileKeyEncrypted: 'fileKeyEncrypted',
   title: 'title',
   slug: 'slug',
   creatorId: 'creatorId',
+  creatorAssignment: 'creatorAssignment',
   fileSize: 'fileSize',
   mimeType: 'mimeType',
   duration: 'duration',
@@ -108,7 +108,9 @@ export const VideoScalarFieldEnum = {
   sortOrder: 'sortOrder',
   tags: 'tags',
   createdAt: 'createdAt',
-  updatedAt: 'updatedAt'
+  updatedAt: 'updatedAt',
+  megaFa: 'megaFa',
+  megaModifiedAt: 'megaModifiedAt'
 } as const
 
 export type VideoScalarFieldEnum = (typeof VideoScalarFieldEnum)[keyof typeof VideoScalarFieldEnum]
@@ -137,12 +139,12 @@ export const MegaAccountScalarFieldEnum = {
   lastSyncStartedAt: 'lastSyncStartedAt',
   lastSyncCompletedAt: 'lastSyncCompletedAt',
   lastSyncErrorAt: 'lastSyncErrorAt',
-  lastSyncMeta: 'lastSyncMeta',
   lastSyncError: 'lastSyncError',
   consecutiveSyncFailures: 'consecutiveSyncFailures',
   videoCount: 'videoCount',
   createdAt: 'createdAt',
-  updatedAt: 'updatedAt'
+  updatedAt: 'updatedAt',
+  lastSyncMeta: 'lastSyncMeta'
 } as const
 
 export type MegaAccountScalarFieldEnum = (typeof MegaAccountScalarFieldEnum)[keyof typeof MegaAccountScalarFieldEnum]
