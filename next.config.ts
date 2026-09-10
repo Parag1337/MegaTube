@@ -12,7 +12,7 @@ const nextConfig: NextConfig = {
    *
    * This has no effect in production builds.
    */
-  allowedDevOrigins: ["100.84.178.89", "10.93.67.15", "fedora"],
+  allowedDevOrigins: ["100.84.178.89", "10.93.67.15", "fedora", "127.0.0.1"],
 };
 
 export default nextConfig;

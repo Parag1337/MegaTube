@@ -40,10 +40,10 @@ export function LoginForm() {
 
   return (
     <form onSubmit={handleSubmit} className="mx-auto max-w-sm space-y-4">
-      <h1 className="text-2xl font-semibold">Login</h1>
+      <h1 className="text-2xl font-semibold">Sign in</h1>
 
       {error && (
-        <p className="rounded border border-red-500/50 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+        <p className="rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error}
         </p>
       )}
@@ -57,7 +57,7 @@ export function LoginForm() {
           onChange={(e) => setEmail(e.target.value)}
           required
           autoComplete="email"
-          className="w-full rounded border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent"
+          className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none"
         />
       </div>
 
@@ -70,16 +70,16 @@ export function LoginForm() {
           onChange={(e) => setPassword(e.target.value)}
           required
           autoComplete="current-password"
-          className="w-full rounded border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent"
+          className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none"
         />
       </div>
 
       <button
         type="submit"
         disabled={loading}
-        className="w-full rounded bg-accent py-2 text-sm font-medium text-black disabled:opacity-60"
+        className="w-full rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
       >
-        {loading ? 'Signing in…' : 'Sign In'}
+        {loading ? 'Signing in…' : 'Sign in'}
       </button>
 
       <p className="text-center text-sm text-muted">

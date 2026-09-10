@@ -140,6 +140,13 @@ export function isTransientNetworkError(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;
   const e = err as { name?: string; message?: string; cause?: { code?: string } };
   const code = e.cause?.code ?? '';
+  
+  // AbortError is not transient - it's a client cancellation
+  if (e.name === 'AbortError' || e.name === 'TimeoutError') return false;
+  
+  // ResponseAborted is also a client cancellation
+  if (e.name === 'ResponseAborted') return false;
+  
   if (['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET'].includes(code)) {
     return true;
   }
@@ -147,6 +154,5 @@ export function isTransientNetworkError(err: unknown): boolean {
   if (e.name === 'TypeError' && typeof e.message === 'string' && e.message.toLowerCase().includes('fetch failed')) {
     return true;
   }
-  if (e.name === 'AbortError' || e.name === 'TimeoutError') return false;
   return false;
 }
