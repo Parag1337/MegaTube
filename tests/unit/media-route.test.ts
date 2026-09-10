@@ -137,6 +137,7 @@ async function makeVideo(accountId: number, slug: string) {
       megaFilename: 'Creator - Title.mp4',
       title: 'Title',
       slug,
+      creatorAssignment: 'none',
       fileSize: BigInt(PLAIN.length),
       mimeType: 'video/mp4',
       fileKeyEncrypted: encryptSecret(FILE_KEY),

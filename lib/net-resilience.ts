@@ -59,6 +59,14 @@ const megaAgent = new Agent({
   // A few connections are enough for a single-user video session; a small
   // pool avoids connection churn without pinning resources.
   connections: 16,
+  // Bound stalls: without these, a MEGA socket that accepts a request but
+  // never answers pends up to undici's 300 s defaults, leaving the browser
+  // at 0:00 with "Waiting for localhost". 30 s for headers / 60 s of body
+  // silence fails fast into retry/fallback instead. Healthy (even slow,
+  // ~2 MB/s) streams deliver constantly and are unaffected - only true
+  // silence trips these.
+  headersTimeout: 30_000,
+  bodyTimeout: 60_000,
 });
 
 export interface KeepAliveFetchInit {

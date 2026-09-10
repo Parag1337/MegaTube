@@ -13,6 +13,18 @@
       "skillPath": "front-end-developer/SKILL.md",
       "computedHash": "c33c2e51eac1a90e094407dfd61457ec7c3ba3fa9587e7389b747ea90c7bb0eb"
     },
+    "frontend-design": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "skillPath": "skills/frontend-design/SKILL.md",
+      "computedHash": "89496d5dd00f4810205f351759594fc2742bf8eea85a2f2b2d1de59f4bd91576"
+    },
+    "impeccable": {
+      "source": "boraoztunc/skills",
+      "sourceType": "github",
+      "skillPath": "impeccable/SKILL.md",
+      "computedHash": "9a9cd828db0f1685ce0173c57b024adc501b5331c9f02dda187a17f46c1deb16"
+    },
     "nextjs-react-typescript": {
       "source": "mindrally/skills",
       "sourceType": "github",

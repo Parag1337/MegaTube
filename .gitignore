@@ -36,6 +36,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# remuxed-MP4 playback cache (regenerable; can be large)
+/data/cache-media/*
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

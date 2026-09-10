@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createReadStream } from 'node:fs';
+import { createReadStream, promises as fsPromises } from 'node:fs';
 import { Readable } from 'node:stream';
 import path from 'node:path';
 import { getCurrentUser } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { MEGA_ACCOUNT_STATUSES } from '@/lib/megaAccounts';
+import { decryptSecret } from '@/lib/mega/envelope';
+import { withMegaSession } from '@/lib/sync/session-cache';
+import { getPrivateNodeImage } from '@/lib/mega/attributes';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,7 +37,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       id: true,
       thumbnail: true,
       thumbnailAvailable: true,
-      megaAccount: { select: { userId: true, status: true } },
+      megaFa: true,
+      fileKeyEncrypted: true,
+      megaAccount: { select: { id: true, userId: true, status: true, encryptedSession: true } },
     },
   });
 
@@ -49,23 +54,76 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   }
 
   for (const ext of ['png', 'jpg']) {
-    const file = path.join(THUMBS_DIR, `${videoId}.${ext}`);
-    try {
-      const stream = createReadStream(file);
-      const webStream = Readable.toWeb(stream) as unknown as ReadableStream<Uint8Array>;
-      return new Response(webStream, {
-        status: 200,
-        headers: {
-          'Content-Type': ext === 'png' ? 'image/png' : 'image/jpeg',
-          'Cache-Control': 'private, max-age=3600',
-        },
-      });
-    } catch {
-      // try the other extension
+    if (await readableFile(path.join(THUMBS_DIR, `${videoId}.${ext}`))) {
+      return serveThumbFile(videoId, ext);
     }
+  }
+
+  // thumbnailAvailable but no file on disk: the sync-time fetch failed
+  // transiently and sync never retries it (new videos only). Self-heal
+  // on demand: MEGA still has the attribute (owner session, same flow as
+  // sync), so fetch, store, and serve it now instead of 404ing forever.
+  const healed = await healThumbnail(video);
+  if (healed) {
+    return serveThumbFile(videoId, healed);
   }
 
   // thumbnailAvailable but the file is missing (e.g. fetch failed during
   // sync) - the next sync will retry.
   return new NextResponse(null, { status: 404 });
+}
+
+async function readableFile(absPath: string): Promise<boolean> {
+  try {
+    const stat = await fsPromises.stat(absPath);
+    return stat.isFile() && stat.size > 0;
+  } catch {
+    return false;
+  }
+}
+
+function serveThumbFile(videoId: number, ext: string): Response {
+  const stream = createReadStream(path.join(THUMBS_DIR, `${videoId}.${ext}`));
+  const webStream = Readable.toWeb(stream) as unknown as ReadableStream<Uint8Array>;
+  return new Response(webStream, {
+    status: 200,
+    headers: {
+      'Content-Type': ext === 'png' ? 'image/png' : 'image/jpeg',
+      'Cache-Control': 'private, max-age=3600',
+    },
+  });
+}
+
+async function healThumbnail(video: {
+  id: number;
+  megaFa: string | null;
+  fileKeyEncrypted: string | null;
+  megaAccount: { id: number; encryptedSession: string };
+}): Promise<'png' | 'jpg' | null> {
+  try {
+    if (!video.megaFa || !video.fileKeyEncrypted) return null;
+    const fileKey = decryptSecret(video.fileKeyEncrypted);
+    const image = await withMegaSession(
+      video.megaAccount.id,
+      video.megaAccount.encryptedSession,
+      async (storage) => {
+        const request = (storage as unknown as { api: { request: (cmd: Record<string, unknown>) => Promise<unknown> } }).api.request;
+        const api = { request: (cmd: Record<string, unknown>) => request.call((storage as unknown as { api: unknown }).api, cmd) };
+        return getPrivateNodeImage(api, video.megaFa, 'thumbnail', fileKey);
+      },
+    );
+    if (!image) return null;
+    const ext = image.mimeType === 'image/png' ? ('png' as const) : ('jpg' as const);
+    await fsPromises.mkdir(THUMBS_DIR, { recursive: true });
+    await fsPromises.writeFile(path.join(THUMBS_DIR, `${video.id}.${ext}`), image.data);
+    await prisma.video
+      .update({ where: { id: video.id }, data: { thumbnail: `/api/media/thumbs/${video.id}` } })
+      .catch(() => {});
+    return ext;
+  } catch (err) {
+    console.warn(
+      `[thumbs] on-demand heal failed for video ${video.id}: ${err instanceof Error ? err.message.slice(0, 100) : typeof err}`,
+    );
+    return null;
+  }
 }

@@ -30,6 +30,7 @@ function existing(nodeId = 'n1', overrides: Partial<ExistingVideoRow> = {}): Exi
     megaFa: '1:0*t1',
     thumbnailAvailable: false,
     thumbnail: null,
+    creatorAssignment: 'none',
     ...overrides,
   };
 }

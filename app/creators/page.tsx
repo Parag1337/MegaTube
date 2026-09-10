@@ -1,17 +1,34 @@
 import Link from 'next/link';
+import { getCurrentUser } from '@/lib/auth';
 import { listCreators } from '@/lib/videos';
+import CreateCreatorButton from './CreateCreatorButton';
 
 export const metadata = { title: 'Creators' };
 
 export const dynamic = 'force-dynamic';
 
 export default async function CreatorsPage() {
-  const creators = await listCreators();
+  const user = await getCurrentUser();
+  if (!user) {
+    return (
+      <div className="px-4 py-6 sm:px-6">
+        <div className="mx-auto max-w-[1800px]">
+          <h1 className="mb-6 text-xl font-semibold">Creators</h1>
+          <p className="text-muted">Please log in to view your creators.</p>
+        </div>
+      </div>
+    );
+  }
+
+  const creators = await listCreators(user.id);
 
   return (
     <div className="px-4 py-6 sm:px-6">
       <div className="mx-auto max-w-[1800px]">
-        <h1 className="mb-6 text-xl font-semibold">Creators</h1>
+        <div className="mb-6 flex items-center justify-between">
+          <h1 className="text-xl font-semibold">Creators</h1>
+          <CreateCreatorButton />
+        </div>
 
         {creators.length === 0 ? (
           <div className="flex min-h-[400px] items-center justify-center rounded-lg border border-border bg-surface">
@@ -22,20 +39,21 @@ export default async function CreatorsPage() {
                 <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
                 <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
               </svg>
-              <p className="text-muted">No creators yet.</p>
+              <p className="text-muted mb-4">No creators yet.</p>
+              <p className="text-sm text-muted-light">Creators will be automatically assigned from video filenames, or you can create them manually.</p>
             </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
             {creators.map((creator) => (
               <Link
-                key={creator.slug}
+                key={creator.id}
                 href={`/creator/${creator.slug}`}
                 className="flex items-center gap-3 rounded-lg border border-border bg-surface p-4 transition-colors hover:bg-surface-hover"
               >
                 {creator.avatar ? (
                   <img
-                    src={creator.avatar}
+                    src={`/api/creators/${creator.id}/photo`}
                     alt=""
                     className="h-12 w-12 rounded-full object-cover"
                   />

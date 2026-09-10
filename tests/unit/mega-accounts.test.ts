@@ -164,6 +164,7 @@ test('user A cannot access user B private videos', async () => {
       title: 'Private A',
       slug: `private-a-${accA.id}`,
       fileSize: BigInt(123),
+      creatorAssignment: 'none',
     },
   });
 
@@ -187,6 +188,7 @@ test('videos of a disconnected account are hidden from the owner', async () => {
       title: 'Hidden',
       slug: `hidden-${acc.id}`,
       fileSize: BigInt(1),
+      creatorAssignment: 'none',
     },
   });
   assert.equal((await listLibraryVideosForUser(u.id)).total, 1);
@@ -265,6 +267,7 @@ test('videos of a REAUTH_REQUIRED account remain visible to the owner', async ()
       title: 'Reauth Vid',
       slug: `reauth-vid-${acc.id}`,
       fileSize: BigInt(1),
+      creatorAssignment: 'none',
     },
   });
   assert.equal((await listLibraryVideosForUser(u.id)).total, 1);
@@ -284,6 +287,7 @@ test('stale video rows are preserved when account becomes REAUTH_REQUIRED', asyn
       title: 'Stale',
       slug: `stale-${acc.id}`,
       fileSize: BigInt(1),
+      creatorAssignment: 'none',
     },
   });
 

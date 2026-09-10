@@ -72,16 +72,19 @@ async function makeAccount(userId: string, email: string) {
 let slugSeq = 0;
 async function makeVideo(
   accountId: number | null,
+  userId: string,
   overrides: { title?: string; creatorName?: string; megaNodeId?: string; megaFilename?: string } = {},
 ) {
   slugSeq += 1;
   const slug = `p5-video-${slugSeq}`;
   let creatorId: number | null = null;
   if (overrides.creatorName) {
-    const creator = await prisma.creator.upsert({
-      where: { name: overrides.creatorName },
-      update: {},
-      create: { name: overrides.creatorName, slug: `p5-creator-${slugSeq}` },
+    const creator = await prisma.creator.create({
+      data: { 
+        userId,
+        name: overrides.creatorName, 
+        slug: `p5-creator-${slugSeq}` 
+      },
     });
     creatorId = creator.id;
   }
@@ -93,6 +96,7 @@ async function makeVideo(
       title: overrides.title ?? 'A Video',
       slug,
       creatorId,
+      creatorAssignment: 'none',
     },
   });
 }
@@ -103,7 +107,7 @@ async function makeVideo(
 test('search: title partial match, case-insensitive (private video)', async () => {
   const u = await makeUser('search-title');
   const acc = await makeAccount(u.id, 'search-title@example.com');
-  await makeVideo(acc.id, { title: 'Extra Credit Strapon', megaFilename: 'Kristie Bish - Extra Credit Strapon.mp4' });
+  await makeVideo(acc.id, u.id, { title: 'Extra Credit Strapon', megaFilename: 'Kristie Bish - Extra Credit Strapon.mp4' });
 
   const r1 = await searchVideos('Extra Credit', 1, u.id);
   assert.equal(r1.total, 1);
@@ -115,7 +119,7 @@ test('search: title partial match, case-insensitive (private video)', async () =
 test('search: creator name match (case-insensitive, partial)', async () => {
   const u = await makeUser('search-creator');
   const acc = await makeAccount(u.id, 'search-creator@example.com');
-  await makeVideo(acc.id, { title: 'Some Video', creatorName: 'Kristie Bish' });
+  await makeVideo(acc.id, u.id, { title: 'Some Video', creatorName: 'Kristie Bish' });
 
   const r = await searchVideos('kristie', 1, u.id);
   assert.equal(r.total, 1);
@@ -125,7 +129,7 @@ test('search: creator name match (case-insensitive, partial)', async () => {
 test('search: real MEGA filename match (fallback when title differs)', async () => {
   const u = await makeUser('search-filename');
   const acc = await makeAccount(u.id, 'search-filename@example.com');
-  await makeVideo(acc.id, { title: 'Display Title', megaFilename: 'Lady Onyx - Strap On Deal JOI.mp4' });
+  await makeVideo(acc.id, u.id, { title: 'Display Title', megaFilename: 'Lady Onyx - Strap On Deal JOI.mp4' });
 
   const r = await searchVideos('strap on deal', 1, u.id);
   assert.equal(r.total, 1);
@@ -135,8 +139,8 @@ test('search: finds videos across MULTIPLE linked MEGA accounts', async () => {
   const u = await makeUser('search-multi');
   const acc1 = await makeAccount(u.id, 'search-multi1@example.com');
   const acc2 = await makeAccount(u.id, 'search-multi2@example.com');
-  await makeVideo(acc1.id, { title: 'Alpha One', megaFilename: 'x - Alpha One.mp4' });
-  await makeVideo(acc2.id, { title: 'Alpha Two', megaFilename: 'y - Alpha Two.mp4' });
+  await makeVideo(acc1.id, u.id, { title: 'Alpha One', megaFilename: 'x - Alpha One.mp4' });
+  await makeVideo(acc2.id, u.id, { title: 'Alpha Two', megaFilename: 'y - Alpha Two.mp4' });
 
   const r = await searchVideos('alpha', 1, u.id);
   assert.equal(r.total, 2, 'search must span all linked accounts of the user');
@@ -145,7 +149,7 @@ test('search: finds videos across MULTIPLE linked MEGA accounts', async () => {
 test('search: user isolation - cannot find videos of another user', async () => {
   const owner = await makeUser('search-iso-owner');
   const acc = await makeAccount(owner.id, 'search-iso-owner@example.com');
-  await makeVideo(acc.id, { title: 'Secret Private Video' });
+  await makeVideo(acc.id, owner.id, { title: 'Secret Private Video' });
 
   const outsider = await makeUser('search-iso-outsider');
   const r = await searchVideos('Secret Private', 1, outsider.id);
@@ -170,7 +174,7 @@ test('search: pagination works with query', async () => {
   const u = await makeUser('search-page');
   const acc = await makeAccount(u.id, 'search-page@example.com');
   for (let i = 1; i <= 5; i++) {
-    await makeVideo(acc.id, { title: `Pagination Target ${i}` });
+    await makeVideo(acc.id, u.id, { title: `Pagination Target ${i}` });
   }
   const page1 = await searchVideos('Pagination Target', 1, u.id);
   const page2 = await searchVideos('Pagination Target', 2, u.id);
@@ -183,7 +187,7 @@ test('search: pagination works with query', async () => {
 test('search: does NOT match node ids, folder names or account labels', async () => {
   const u = await makeUser('search-nofolder');
   const acc = await makeAccount(u.id, 'search-nofolder@example.com');
-  await makeVideo(acc.id, { title: 'Neutral Title', megaNodeId: 'zwxgTTzBQQ', megaFilename: 'Creator - Neutral Title.mp4' });
+  await makeVideo(acc.id, u.id, { title: 'Neutral Title', megaNodeId: 'zwxgTTzBQQ', megaFilename: 'Creator - Neutral Title.mp4' });
 
   for (const q of ['zwxgTTzBQQ', 'Acc', 'node-']) {
     const r = await searchVideos(q, 1, u.id);
@@ -194,7 +198,7 @@ test('search: does NOT match node ids, folder names or account labels', async ()
 test('search: videos of a disconnected account are excluded', async () => {
   const u = await makeUser('search-disc');
   const acc = await makeAccount(u.id, 'search-disc@example.com');
-  await makeVideo(acc.id, { title: 'Disconnected Library Item' });
+  await makeVideo(acc.id, u.id, { title: 'Disconnected Library Item' });
   await prisma.megaAccount.update({ where: { id: acc.id }, data: { status: MEGA_ACCOUNT_STATUSES.DISCONNECTED } });
 
   const r = await searchVideos('Disconnected Library', 1, u.id);
