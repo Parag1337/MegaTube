@@ -194,9 +194,8 @@ function SyncProgressCard({ progress }: { progress: SyncProgressDto }) {
       : null;
 
   return (
-    <div className="mt-2 rounded border border-border bg-card p-3 text-xs">
+    <div className="mt-2 rounded-lg border border-border bg-surface p-3 text-xs">
       {pct === null ? (
-        // PHASE A: scanning - totals unknown, so no percentage bar at all.
         <>
           <p className="font-medium">Scanning MEGA…</p>
           <p className="mt-1 text-muted">
@@ -208,7 +207,6 @@ function SyncProgressCard({ progress }: { progress: SyncProgressDto }) {
           <p className="mt-1 text-muted">Elapsed: {formatDuration(elapsedMs)}</p>
         </>
       ) : (
-        // PHASE B: reconciliation - real percentage from actual counts.
         <>
           <div className="flex items-center justify-between">
             <p className="font-medium">Syncing library</p>
@@ -241,7 +239,7 @@ function SyncProgressCard({ progress }: { progress: SyncProgressDto }) {
 function SyncResultCard({ meta }: { meta: SyncMetaDto }) {
   if (meta.outcome === 'completed') {
     return (
-      <div className="mt-2 rounded border border-green-500/30 bg-green-500/5 p-3 text-xs">
+      <div className="mt-2 rounded-lg border border-green-500/30 bg-green-500/5 p-3 text-xs">
         <p className="font-medium text-green-500">Sync complete</p>
         <p className="mt-1 text-muted">
           {meta.totalVideos.toLocaleString()} video{meta.totalVideos === 1 ? '' : 's'} ·{' '}
@@ -253,14 +251,14 @@ function SyncResultCard({ meta }: { meta: SyncMetaDto }) {
   }
   if (meta.outcome === 'interrupted') {
     return (
-      <div className="mt-2 rounded border border-yellow-500/30 bg-yellow-500/5 p-3 text-xs">
+      <div className="mt-2 rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-3 text-xs">
         <p className="font-medium text-yellow-600">Sync was interrupted</p>
         <p className="mt-1 text-muted">It will be retried automatically.</p>
       </div>
     );
   }
   return (
-    <div className="mt-2 rounded border border-yellow-500/30 bg-yellow-500/5 p-3 text-xs">
+    <div className="mt-2 rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-3 text-xs">
       <p className="font-medium text-yellow-600">Last sync failed</p>
       <p className="mt-1 text-muted">Will retry automatically with backoff.</p>
     </div>
@@ -438,7 +436,7 @@ export function MegaAccountsPanel() {
   const anySyncing = (accounts ?? []).some((a) => a.status === 'SYNCING');
 
   return (
-    <section className="rounded border border-border bg-card p-6">
+    <section className="rounded-lg border border-border bg-surface p-6">
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-lg font-semibold">Connected MEGA Accounts</h2>
         <button
@@ -447,14 +445,14 @@ export function MegaAccountsPanel() {
             setShowAdd((v) => !v);
             setAddError(null);
           }}
-          className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-black transition-opacity hover:opacity-90"
+          className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover"
         >
           {showAdd ? 'Cancel' : '+ Add MEGA Account'}
         </button>
       </div>
 
       {showAdd && (
-        <form onSubmit={submitAdd} className="mb-5 space-y-3 rounded border border-border p-4">
+        <form onSubmit={submitAdd} className="mb-5 space-y-3 rounded-lg border border-border bg-background p-4">
           <p className="text-sm text-muted">
             Link a MEGA account to sync its private video library. Your MEGA password is used
             once to start a secure session and is never stored.
@@ -469,7 +467,7 @@ export function MegaAccountsPanel() {
               onChange={(e) => setAddLabel(e.target.value)}
               maxLength={50}
               placeholder="e.g. Main MEGA"
-              className="w-full rounded border border-border bg-background px-3 py-2 text-sm"
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none"
             />
           </div>
           <div>
@@ -482,7 +480,7 @@ export function MegaAccountsPanel() {
               required
               value={addEmail}
               onChange={(e) => setAddEmail(e.target.value)}
-              className="w-full rounded border border-border bg-background px-3 py-2 text-sm"
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none"
             />
           </div>
           <div>
@@ -496,7 +494,7 @@ export function MegaAccountsPanel() {
               autoComplete="new-password"
               value={addPassword}
               onChange={(e) => setAddPassword(e.target.value)}
-              className="w-full rounded border border-border bg-background px-3 py-2 text-sm"
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none"
             />
           </div>
           <div>
@@ -509,26 +507,26 @@ export function MegaAccountsPanel() {
               autoComplete="one-time-code"
               value={addMfa}
               onChange={(e) => setAddMfa(e.target.value)}
-              className="w-full rounded border border-border bg-background px-3 py-2 text-sm"
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none"
             />
           </div>
-          {addError && <p className="text-sm text-red-500">{addError}</p>}
+          {addError && <p className="text-sm text-destructive">{addError}</p>}
           <button
             type="submit"
             disabled={addBusy}
-            className="rounded bg-accent px-4 py-2 text-sm font-medium text-black transition-opacity hover:opacity-90 disabled:opacity-50"
+            className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
           >
             {addBusy ? 'Connecting…' : 'Connect MEGA Account'}
           </button>
         </form>
       )}
 
-      {loadError && <p className="mb-4 text-sm text-red-500">{loadError}</p>}
+      {loadError && <p className="mb-4 text-sm text-destructive">{loadError}</p>}
 
       {accounts === null ? (
         <div className="space-y-3">
-          <div className="h-16 animate-pulse rounded bg-background" />
-          <div className="h-16 animate-pulse rounded bg-background" />
+          <div className="h-16 animate-pulse rounded-lg bg-surface" />
+          <div className="h-16 animate-pulse rounded-lg bg-surface" />
         </div>
       ) : accounts.length === 0 ? (
         <p className="text-sm text-muted">
@@ -542,7 +540,7 @@ export function MegaAccountsPanel() {
             const active = busyId === a.id;
             const live = a.status === 'SYNCING' ? a.progress : null;
             return (
-              <li key={a.id} className="rounded border border-border bg-background p-4">
+              <li key={a.id} className="rounded-lg border border-border bg-background p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="flex items-center gap-2 text-sm font-semibold">
@@ -556,7 +554,7 @@ export function MegaAccountsPanel() {
                     </p>
                     <a
                       href={`mailto:${a.megaEmail}`}
-                      className="mt-0.5 block truncate text-sm text-muted hover:text-accent"
+                      className="mt-0.5 block truncate text-sm text-muted hover:text-foreground"
                     >
                       {a.megaEmail}
                     </a>
@@ -579,7 +577,7 @@ export function MegaAccountsPanel() {
                       </p>
                     )}
                     {a.status === 'ERROR' && a.lastSyncError && (
-                      <p className="mt-1 text-xs text-yellow-600">{a.lastSyncError}</p>
+                      <p className="mt-1 text-xs text-destructive">{a.lastSyncError}</p>
                     )}
                   </div>
 
@@ -589,7 +587,7 @@ export function MegaAccountsPanel() {
                         type="button"
                         onClick={() => void triggerSync(a.id)}
                         disabled={active || a.status === 'SYNCING'}
-                        className="rounded border border-border px-3 py-1.5 text-xs transition-colors hover:bg-card disabled:opacity-50"
+                        className="rounded-lg border border-border px-3 py-1.5 text-xs transition-colors hover:bg-surface disabled:opacity-50"
                       >
                         {a.status === 'SYNCING' ? 'Syncing…' : 'Sync Now'}
                       </button>
@@ -602,7 +600,7 @@ export function MegaAccountsPanel() {
                           setReauthError(null);
                         }}
                         disabled={active}
-                        className="rounded border border-border px-3 py-1.5 text-xs transition-colors hover:bg-card disabled:opacity-50"
+                        className="rounded-lg border border-border px-3 py-1.5 text-xs transition-colors hover:bg-surface disabled:opacity-50"
                       >
                         Reconnect
                       </button>
@@ -612,7 +610,7 @@ export function MegaAccountsPanel() {
                         type="button"
                         onClick={() => void disconnect(a.id)}
                         disabled={active || a.status === 'SYNCING'}
-                        className="rounded border border-border px-3 py-1.5 text-xs text-red-500 transition-colors hover:bg-card disabled:opacity-50"
+                        className="rounded-lg border border-border px-3 py-1.5 text-xs text-destructive transition-colors hover:bg-surface disabled:opacity-50"
                       >
                         Disconnect
                       </button>
@@ -631,7 +629,7 @@ export function MegaAccountsPanel() {
                 {reauthFor === a.id && (
                   <form
                     onSubmit={(e) => void submitReauth(a.id, e)}
-                    className="mt-3 space-y-2 rounded border border-border p-3"
+                    className="mt-3 space-y-2 rounded-lg border border-border bg-background p-3"
                   >
                     <p className="text-xs text-muted">
                       This MEGA session expired or was revoked. Enter your MEGA password to
@@ -646,7 +644,7 @@ export function MegaAccountsPanel() {
                       value={reauthPassword}
                       onChange={(e) => setReauthPassword(e.target.value)}
                       disabled={reauthBusy}
-                      className="w-full rounded border border-border bg-background px-3 py-2 text-sm"
+                      className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none"
                       aria-label={`MEGA password for ${a.label}`}
                     />
                     <input
@@ -656,15 +654,15 @@ export function MegaAccountsPanel() {
                       value={reauthMfa}
                       onChange={(e) => setReauthMfa(e.target.value)}
                       disabled={reauthBusy}
-                      className="w-full rounded border border-border bg-background px-3 py-2 text-sm"
+                      className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none"
                       aria-label={`2FA code for ${a.label}`}
                     />
-                    {reauthError && <p className="text-xs text-red-500">{reauthError}</p>}
+                    {reauthError && <p className="text-xs text-destructive">{reauthError}</p>}
                     <div className="flex gap-2">
                       <button
                         type="submit"
                         disabled={reauthBusy || !reauthPassword}
-                        className="rounded bg-accent px-3 py-1.5 text-xs font-medium text-black disabled:opacity-50"
+                        className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
                       >
                         {reauthBusy ? 'Reconnecting…' : 'Reconnect'}
                       </button>
@@ -677,7 +675,7 @@ export function MegaAccountsPanel() {
                           setReauthMfa('');
                         }}
                         disabled={reauthBusy}
-                        className="rounded border border-border px-3 py-1.5 text-xs"
+                        className="rounded-lg border border-border px-3 py-1.5 text-xs"
                       >
                         Cancel
                       </button>

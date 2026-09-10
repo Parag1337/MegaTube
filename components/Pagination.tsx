@@ -1,9 +1,5 @@
 import Link from 'next/link';
 
-/**
- * Build the list of page numbers to show, with ellipsis markers.
- * Example (current=6, total=20): 1 … 4 5 [6] 7 8 … 20
- */
 function pageWindow(current: number, total: number): (number | '…')[] {
   if (total <= 7) {
     return Array.from({ length: total }, (_, i) => i + 1);
@@ -31,8 +27,6 @@ export function Pagination({
 }) {
   if (totalPages <= 1) return null;
 
-  // basePath may already carry query params (e.g. "?account=3"); page is
-  // (re)written as a query param so both combine cleanly.
   const hrefFor = (p: number) => {
     const u = new URL(basePath, 'http://localhost');
     if (p === 1) u.searchParams.delete('page');
@@ -45,15 +39,15 @@ export function Pagination({
       {page > 1 && (
         <Link
           href={hrefFor(page - 1)}
-          className="rounded-lg border border-border px-3 py-1.5 text-sm transition-colors hover:bg-card"
+          className="rounded-lg px-3 py-2 text-sm font-medium text-muted transition-colors hover:bg-surface hover:text-foreground"
         >
-          ← Prev
+          Previous
         </Link>
       )}
 
       {pageWindow(page, totalPages).map((p, i) =>
         p === '…' ? (
-          <span key={`e${i}`} className="px-1.5 text-muted">
+          <span key={`e${i}`} className="px-2 text-muted">
             …
           </span>
         ) : (
@@ -61,10 +55,10 @@ export function Pagination({
             key={p}
             href={hrefFor(p)}
             aria-current={p === page ? 'page' : undefined}
-            className={`rounded-lg px-3 py-1.5 text-sm transition-colors ${
+            className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
               p === page
-                ? 'bg-accent font-semibold text-white'
-                : 'border border-border hover:bg-card'
+                ? 'bg-surface text-foreground'
+                : 'text-muted hover:bg-surface hover:text-foreground'
             }`}
           >
             {p}
@@ -75,9 +69,9 @@ export function Pagination({
       {page < totalPages && (
         <Link
           href={hrefFor(page + 1)}
-          className="rounded-lg border border-border px-3 py-1.5 text-sm transition-colors hover:bg-card"
+          className="rounded-lg px-3 py-2 text-sm font-medium text-muted transition-colors hover:bg-surface hover:text-foreground"
         >
-          Next →
+          Next
         </Link>
       )}
     </nav>

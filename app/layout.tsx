@@ -21,12 +21,12 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
+      <body className="min-h-full flex flex-col bg-background">
         <Header />
-        <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6">
+        <main className="flex-1">
           {children}
         </main>
-        <footer className="border-t border-border px-4 py-6 text-center text-sm text-muted">
+        <footer className="border-t border-border bg-surface px-4 py-6 text-center text-sm text-muted">
           {SITE_NAME} — a video discovery catalog powered by MEGA public links.
         </footer>
       </body>

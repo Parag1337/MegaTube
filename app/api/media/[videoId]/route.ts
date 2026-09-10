@@ -321,23 +321,44 @@ export async function handleMediaRequest(
     const nodeUpstream = Readable.fromWeb(
       upstream.body as unknown as Parameters<typeof Readable.fromWeb>[0],
     );
+    
+    // Handle abort signal cleanup
+    let aborted = false;
+    if (signal) {
+      signal.addEventListener('abort', () => {
+        aborted = true;
+        nodeUpstream.destroy();
+        decryptor.destroy();
+      });
+    }
+
     nodeUpstream.on('error', (err: Error) => {
       // Surface as a stream error; the browser will show a playback error.
-      decryptor.emit('error', err);
+      if (!aborted) {
+        decryptor.emit('error', err);
+      }
     });
 
     // Order matters: the CTR keystream is positioned by `apiStart`, so the
     // DECRYPTOR must see the ciphertext exactly as MEGA stored it. Any
     // plaintext alignment/sizing happens AFTER decryption, never before.
-    let chain: Readable = nodeUpstream.pipe(decryptor);
-    if (skipBytes > 0) chain = chain.pipe(skipLeading(skipBytes));
-    if (!fullRange) chain = chain.pipe(limitBytes(end - start + 1));
+    let chain: Readable = nodeUpstream.pipe(decryptor, { end: false });
+    if (skipBytes > 0) chain = chain.pipe(skipLeading(skipBytes), { end: false });
+    if (!fullRange) chain = chain.pipe(limitBytes(end - start + 1), { end: false });
     const outNode = chain;
     outNode.on('error', (err: Error) => {
       const code = (err as { code?: string }).code;
-      console.warn(
-        `[media] video ${videoId} stream error: ${JSON.stringify({ name: err.name, code: code ?? null, message: err.message.slice(0, 80) || null })}`,
-      );
+      // Only log if not aborted - aborts are expected during normal navigation
+      if (!aborted && err.name !== 'AbortError') {
+        console.warn(
+          `[media] video ${videoId} stream error: ${JSON.stringify({ name: err.name, code: code ?? null, message: err.message.slice(0, 80) || null })}`,
+        );
+      }
+    });
+
+    // Ensure proper cleanup when stream ends
+    outNode.on('end', () => {
+      decryptor.end();
     });
 
     const webOut = Readable.toWeb(outNode) as unknown as ReadableStream<Uint8Array>;

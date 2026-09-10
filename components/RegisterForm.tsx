@@ -44,7 +44,7 @@ export function RegisterForm() {
       <h1 className="text-2xl font-semibold">Create an account</h1>
 
       {error && (
-        <p className="rounded border border-red-500/50 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+        <p className="rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error}
         </p>
       )}
@@ -58,7 +58,7 @@ export function RegisterForm() {
           onChange={(e) => setEmail(e.target.value)}
           required
           autoComplete="email"
-          className="w-full rounded border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent"
+          className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none"
         />
       </div>
 
@@ -72,7 +72,7 @@ export function RegisterForm() {
           required
           minLength={8}
           autoComplete="new-password"
-          className="w-full rounded border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent"
+          className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none"
         />
         <p className="text-xs text-muted">At least 8 characters.</p>
       </div>
@@ -86,16 +86,16 @@ export function RegisterForm() {
           onChange={(e) => setConfirm(e.target.value)}
           required
           autoComplete="new-password"
-          className="w-full rounded border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent"
+          className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none"
         />
       </div>
 
       <button
         type="submit"
         disabled={loading}
-        className="w-full rounded bg-accent py-2 text-sm font-medium text-black disabled:opacity-60"
+        className="w-full rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
       >
-        {loading ? 'Creating account…' : 'Sign Up'}
+        {loading ? 'Creating account…' : 'Sign up'}
       </button>
 
       <p className="text-center text-sm text-muted">

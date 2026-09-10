@@ -1,79 +1,52 @@
-// MEGA video discovery catalog schema.
-//
-// SQLite initially; the schema is written so switching the datasource
-// provider to PostgreSQL later is a small change (no enums, no scalar
-// lists, standard relations).
-
-datasource db {
-  provider = "sqlite"
-}
-
 generator client {
   provider = "prisma-client"
   output   = "../generated"
 }
 
+datasource db {
+  provider = "sqlite"
+}
+
 model Creator {
   id          Int      @id @default(autoincrement())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name        String
+  name        String   @unique
   slug        String   @unique
   avatar      String?
   description String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-
-  @@unique([userId, name])
-  @@index([userId])
-  videos Video[]
+  videos      Video[]
 }
 
 model Video {
-  id                 Int      @id @default(autoincrement())
-  // Ownership: null = public catalog video (imported from link.txt, visible
-  // to everyone). Non-null = private video belonging to a MegaAccount,
-  // visible only to that account's owner.
+  id                 Int          @id @default(autoincrement())
   megaAccountId      Int?
-  megaAccount        MegaAccount? @relation(fields: [megaAccountId], references: [id], onDelete: Cascade)
-  // MEGA link details (public catalog videos only)
   megaUrl            String?
   megaFileId         String?
   megaFileKey        String?
   megaFilename       String
-  // MEGA node identity (private, synced videos)
   megaNodeId         String?
   parentNodeId       String?
-  /// MEGA node timestamp (upload/modify time) - used for change detection.
-  megaModifiedAt     DateTime?
-  /// Raw MEGA file-attribute list - used to detect new thumbnails/media attrs.
-  megaFa             String?
-  // Encrypted-at-rest per-node file key (needed to decrypt the video
-  // server-side for private playback). Never stored in plaintext.
   fileKeyEncrypted   String?
-  // Website-facing metadata
   title              String
-  slug               String   @unique
+  slug               String       @unique
   creatorId          Int?
-  creator            Creator? @relation(fields: [creatorId], references: [id], onDelete: SetNull)
-  /// Creator assignment source: null = unassigned, 'auto' = from filename,
-  /// 'manual' = user explicitly chose. Manual assignments survive future syncs.
-  creatorAssignment  String   @default("auto") // 'auto' | 'manual' | 'none'
   fileSize           BigInt?
   mimeType           String?
-  duration           Int? // seconds; best-effort from MEGA media attributes
-  // Thumbnail
-  thumbnail          String? // public: relative path under /public; private: served via /api/media/thumbs
-  thumbnailAvailable Boolean  @default(false)
-  // Player
-  embedUrl           String? // public embed iframe URL; null for private videos (streamed via /api/media)
-  // Deterministic random ordering for the homepage (set at import time).
-  sortOrder          Int      @default(0)
-  // Future: categories/tags. Comma-separated tags in V1; can become a
-  // normalized Tag model + join table later (SQLite has no scalar lists).
+  duration           Int?
+  thumbnail          String?
+  thumbnailAvailable Boolean      @default(false)
+  embedUrl           String?
+  sortOrder          Int          @default(0)
   tags               String?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  /// Raw MEGA file-attribute list - used to detect new thumbnails/media attrs.
+  megaFa             String?
+  /// MEGA node timestamp (upload/modify time) - used for change detection.
+  megaModifiedAt     DateTime?
+  creator            Creator?     @relation(fields: [creatorId], references: [id])
+  megaAccount        MegaAccount? @relation(fields: [megaAccountId], references: [id], onDelete: Cascade)
 
   @@unique([megaAccountId, megaNodeId])
   @@index([creatorId])
@@ -83,63 +56,62 @@ model Video {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
-  passwordHash  String
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-
-  sessions     Session[]
+  id           String        @id @default(cuid())
+  email        String        @unique
+  passwordHash String
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
   megaAccounts MegaAccount[]
+  sessions     Session[]
+  new_Creator  new_Creator[]
 }
 
 /// A MEGA account linked to a website user. One website user can link many
 /// MEGA accounts; one MEGA account belongs to exactly one website user.
 ///
 /// Status lifecycle:
-///   CONNECTED         - session material stored, not yet (re)synced
-///   SYNCING           - a sync job is running
-///   SYNCED            - last sync completed successfully
-///   REAUTH_REQUIRED   - MEGA session expired/revoked/invalid; user must
-///                       re-enter MEGA credentials (no auto-retry)
-///   ERROR             - last sync failed with a (transient) error; the
-///                       scheduler retries with backoff
-///   DISCONNECTED      - user removed the account; session material deleted.
-///                       Video rows are preserved and hidden until the same
-///                       MEGA email is linked again.
+/// CONNECTED         - session material stored, not yet (re)synced
+/// SYNCING           - a sync job is running
+/// SYNCED            - last sync completed successfully
+/// REAUTH_REQUIRED   - MEGA session expired/revoked/invalid; user must
+/// re-enter MEGA credentials (no auto-retry)
+/// ERROR             - last sync failed with a (transient) error; the
+/// scheduler retries with backoff
+/// DISCONNECTED      - user removed the account; session material deleted.
+/// Video rows are preserved and hidden until the same
+/// MEGA email is linked again.
 model MegaAccount {
-  id       Int     @id @default(autoincrement())
-  userId   String
-  user     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  label    String
-  megaEmail String
+  id                      Int       @id @default(autoincrement())
+  userId                  String
+  label                   String
+  megaEmail               String
   /// MEGA user id (e.g. "Uxxxxxxxxx") from the authenticated API.
-  megaUserId   String?
+  megaUserId              String?
   /// AES-256-GCM encrypted session material (format: "v1.<base64url(iv|ct|tag)>").
   /// Plaintext JSON inside: { v, sid, masterKey, rsa, user, name, email }.
   /// Never store the MEGA password; the password is used once at login and
   /// discarded.
-  encryptedSession String
-  status           String    @default("CONNECTED")
-  lastAuthenticatedAt DateTime?
-  lastSyncStartedAt   DateTime?
-  lastSyncCompletedAt DateTime?
-  lastSyncErrorAt     DateTime?
+  encryptedSession        String
+  status                  String    @default("CONNECTED")
+  lastAuthenticatedAt     DateTime?
+  lastSyncStartedAt       DateTime?
+  lastSyncCompletedAt     DateTime?
+  lastSyncErrorAt         DateTime?
+  /// Sanitized, human-readable sync error (never contains secrets).
+  lastSyncError           String?
+  consecutiveSyncFailures Int       @default(0)
+  /// Denormalized count of visible videos (updated on sync / disconnect).
+  videoCount              Int       @default(0)
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
   /// Durable metadata of the LAST sync attempt/completion: JSON string with
   /// { startedAt, completedAt, durationMs, discovered, totalVideos, created,
   /// updated, removed, unchanged, outcome: 'completed'|'failed'|'interrupted' }.
   /// Written by the sync worker and by crash recovery; the UI uses it to show
   /// the final result and to recover progress state after a server restart.
-  lastSyncMeta        String?
-  /// Sanitized, human-readable sync error (never contains secrets).
-  lastSyncError       String?
-  consecutiveSyncFailures Int   @default(0)
-  /// Denormalized count of visible videos (updated on sync / disconnect).
-  videoCount          Int     @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  videos Video[]
+  lastSyncMeta            String?
+  user                    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  videos                  Video[]
 
   @@unique([userId, megaEmail])
   @@index([userId])
@@ -147,13 +119,25 @@ model MegaAccount {
 }
 
 model Session {
-  id         String   @id @default(cuid())
-  userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  token      String   @unique
-  expiresAt  DateTime
-  createdAt  DateTime @default(now())
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([token])
   @@index([userId])
+}
+
+model new_Creator {
+  id          Int      @id @default(autoincrement())
+  userId      String
+  name        String
+  slug        String
+  avatar      String?
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+  User        User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 }

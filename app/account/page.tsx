@@ -13,27 +13,29 @@ export default async function AccountPage() {
   if (!user) redirect('/login');
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-12 sm:px-6">
-      <h1 className="mb-8 text-2xl font-semibold">Account</h1>
+    <div className="px-4 py-6 sm:px-6">
+      <div className="mx-auto max-w-3xl">
+        <h1 className="mb-8 text-2xl font-semibold">Account</h1>
 
-      <section className="mb-8 rounded border border-border bg-card p-6">
-        <h2 className="mb-4 text-lg font-semibold">Website Account</h2>
-        <div className="space-y-2 text-sm">
-          <p>
-            <span className="text-muted">Email:</span>{' '}
-            <span className="font-medium">{user.email}</span>
-          </p>
-          <p>
-            <span className="text-muted">Member since:</span>{' '}
-            {user.createdAt.toLocaleDateString()}
-          </p>
+        <section className="mb-8 rounded-lg border border-border bg-surface p-6">
+          <h2 className="mb-4 text-lg font-semibold">Website Account</h2>
+          <div className="space-y-3 text-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-muted">Email</span>
+              <span className="font-medium">{user.email}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted">Member since</span>
+              <span>{user.createdAt.toLocaleDateString()}</span>
+            </div>
+          </div>
+        </section>
+
+        <MegaAccountsPanel />
+
+        <div className="mt-8">
+          <LogoutButton />
         </div>
-      </section>
-
-      <MegaAccountsPanel />
-
-      <div className="mt-8">
-        <LogoutButton />
       </div>
     </div>
   );
