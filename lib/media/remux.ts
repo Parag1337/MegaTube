@@ -36,6 +36,82 @@ import { Readable } from 'node:stream';
 
 export const REMUXED_MIME_TYPE = 'video/mp4';
 
+/**
+ * Convert a Node Readable to a Web ReadableStream with ABORT-SAFE controller
+ * handling (Bug 4).
+ *
+ * Why not `Readable.toWeb`: when the browser aborts a media response, the
+ * adapter can observe the downstream controller already being closed by the
+ * HTTP layer while it simultaneously reports the upstream destroy as an
+ * error - `controller.error()` on a closed controller throws synchronously
+ * from a microtask, surfacing as `uncaughtException: TypeError: Invalid
+ * state: Controller is already closed`. This adapter guards every controller
+ * interaction behind a `closed` flag + try/catch, so normal browser aborts
+ * (navigation, reload, Range cancellation) are always harmless while genuine
+ * upstream errors still reach the client (one error, never a throw).
+ */
+export function nodeToWebSafe(nodeStream: Readable): ReadableStream<Uint8Array> {
+  let closed = false;
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      const enqueue = (chunk: Buffer): boolean => {
+        if (closed) return false;
+        try {
+          controller.enqueue(new Uint8Array(chunk));
+        } catch {
+          // Downstream closed between the flag check and the call.
+          closed = true;
+          nodeStream.destroy();
+          return false;
+        }
+        // Backpressure: stop reading while the consumer is not pulling.
+        const desired = controller.desiredSize;
+        if (typeof desired === 'number' && desired <= 0) {
+          nodeStream.pause();
+          return false;
+        }
+        return true;
+      };
+      nodeStream.on('data', (c: Buffer) => {
+        enqueue(c);
+      });
+      nodeStream.on('end', () => {
+        if (closed) return;
+        closed = true;
+        try {
+          controller.close();
+        } catch {
+          // already closed - fine
+        }
+      });
+      nodeStream.on('error', (err: Error) => {
+        if (closed) {
+          // Post-abort upstream error (destroy, EPIPE, ...): swallow. The
+          // consumer is gone; nobody can observe the error and reporting it
+          // is exactly what crashes.
+          return;
+        }
+        closed = true;
+        try {
+          controller.error(err);
+        } catch {
+          // already closed - fine
+        }
+      });
+      // Readable streams start paused without a flowing consumer; kick once.
+      nodeStream.resume();
+    },
+    pull() {
+      if (!closed) nodeStream.resume();
+    },
+    cancel() {
+      // Browser abort: destroy upstream (aborts the MEGA read / file read).
+      closed = true;
+      nodeStream.destroy();
+    },
+  });
+}
+
 /** True when the source container needs remuxing before browsers can play it. */
 export function needsRemuxPlayback(mimeType: string | null | undefined): boolean {
   return mimeType === 'video/mp2t';
@@ -111,9 +187,31 @@ function decryptBufferAtOffset(fileKey: Buffer, cipher: Buffer, start: number): 
 
 /** Head/tail sample sizes for PCR duration probing (tiny vs file size). */
 const PCR_HEAD_BYTES = 1024 * 1024;
-const PCR_TAIL_BYTES = 2 * 1024 * 1024;
-/** Max extra wait for the duration probe before publishing live init. */
-const PCR_PROBE_TIMEOUT_MS = 12000;
+export const PCR_TAIL_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Tail-sample start offset for PCR duration probing (Bug 1).
+ *
+ * The probe reads a tail sample and decrypts it in place; MEGA CTR
+ * decryption requires the sample start to be 16-byte aligned, while the TS
+ * parser inside requires 188-byte packet alignment. A naive
+ * `size - TAIL - (size % 188)` offset satisfies 188 but can be ≡8 (mod 16),
+ * which fails with "start argument of megaDecrypt must be a multiple of 16"
+ * and silently kills the duration probe. 752 = 188 × 4 is the combined
+ * alignment (divisible by both 188 and 16), so we round the offset DOWN to
+ * the nearest multiple of 752.
+ */
+export const PCR_ALIGN = 752;
+
+/**
+ * Largest offset ≤ `size - PCR_TAIL_BYTES` that is a multiple of 752
+ * (188- and 16-aligned at once). Never negative; 0 for tiny files.
+ */
+export function pcrTailStart(size: number): number {
+  const target = size - PCR_TAIL_BYTES;
+  if (target <= 0) return 0;
+  return target - (target % PCR_ALIGN);
+}
 
 export interface RemuxSource {
   videoId: number;
@@ -194,6 +292,45 @@ export interface TsPcrDuration {
 
 const TS_PACKET = 188;
 const PCR_ROLLOVER_SECONDS = 2 ** 33 / 90000; // 33-bit 90 kHz clock (~26.5 h)
+
+/**
+ * Locate the mvhd duration field of an fMP4 init segment WITHOUT copying.
+ * Returns the absolute byte offset of the duration field and its width,
+ * or null when the init has no moov/mvhd, the version is unknown, or the
+ * field does not fit in `buf` (short/truncated init).
+ */
+function locateMvhdDuration(buf: Buffer): { offset: number; len: 4 | 8; timescale: number } | null {
+  let off = 0;
+  let moovStart = -1;
+  let moovSize = 0;
+  while (off + 8 <= buf.length) {
+    const size = buf.readUInt32BE(off);
+    if (size < 8 || off + size > buf.length) break;
+    if (buf.toString('latin1', off + 4, off + 8) === 'moov') {
+      moovStart = off;
+      moovSize = size;
+      break;
+    }
+    off += size;
+  }
+  if (moovStart < 0) return null;
+  const mvhd = findChildBox(buf, moovStart, moovSize, 'mvhd');
+  if (mvhd < 0) return null;
+  const version = buf[mvhd + 8];
+  if (version === 0) {
+    if (mvhd + 24 + 4 > buf.length) return null;
+    const timescale = buf.readUInt32BE(mvhd + 20);
+    if (!Number.isFinite(timescale) || timescale <= 0) return null;
+    return { offset: mvhd + 24, len: 4, timescale };
+  }
+  if (version === 1) {
+    if (mvhd + 32 + 8 > buf.length) return null;
+    const timescale = buf.readUInt32BE(mvhd + 28);
+    if (!Number.isFinite(timescale) || timescale <= 0) return null;
+    return { offset: mvhd + 32, len: 8, timescale };
+  }
+  return null;
+}
 
 /** Collect (pid -> PCR (seconds, byte offset)) from a buffer at absolute file `offset`. */
 function collectPcr(buf: Buffer, offset: number, out: Map<number, Array<{ t: number; at: number }>>): void {
@@ -291,50 +428,73 @@ function findChildBox(buf: Buffer, parentStart: number, parentSize: number, type
 export function patchFragmentedMp4Duration(init: Buffer, durationSeconds: number | null | undefined): Buffer | null {
   if (typeof durationSeconds !== 'number' || !Number.isFinite(durationSeconds) || durationSeconds <= 0) return null;
   // Locate moov among top-level boxes.
-  let off = 0;
-  let moovStart = -1;
-  let moovSize = 0;
-  while (off + 8 <= init.length) {
-    const size = init.readUInt32BE(off);
-    if (size < 8 || off + size > init.length) break;
-    if (init.toString('latin1', off + 4, off + 8) === 'moov') {
-      moovStart = off;
-      moovSize = size;
-      break;
-    }
-    off += size;
-  }
-  if (moovStart < 0) return null;
-  const mvhd = findChildBox(init, moovStart, moovSize, 'mvhd');
-  if (mvhd < 0) return null;
-  const version = init[mvhd + 8];
-  let timescale: number;
-  let durationOff: number;
-  let durationLen: number;
-  if (version === 0) {
-    if (mvhd + 24 > init.length) return null;
-    timescale = init.readUInt32BE(mvhd + 20);
-    durationOff = mvhd + 24;
-    durationLen = 4;
-  } else if (version === 1) {
-    if (mvhd + 40 > init.length) return null;
-    timescale = init.readUInt32BE(mvhd + 28);
-    durationOff = mvhd + 32;
-    durationLen = 8;
-  } else {
-    return null;
-  }
-  if (!Number.isFinite(timescale) || timescale <= 0) return null;
-  const ticks = Math.round(durationSeconds * timescale);
+  const loc = locateMvhdDuration(init);
+  if (!loc) return null;
+  const ticks = Math.round(durationSeconds * loc.timescale);
   if (ticks <= 0) return null;
   const out = Buffer.from(init);
-  if (durationLen === 4) {
+  if (loc.len === 4) {
     if (ticks > 0xffffffff) return null;
-    out.writeUInt32BE(ticks, durationOff);
+    out.writeUInt32BE(ticks, loc.offset);
   } else {
-    out.writeBigUInt64BE(BigInt(ticks), durationOff);
+    out.writeBigUInt64BE(BigInt(ticks), loc.offset);
   }
   return out;
+}
+
+/**
+ * Patch the mvhd duration of an fMP4 init segment IN PLACE (same Buffer).
+ * Used by the live pipeline when the exact duration becomes known only
+ * after the init was already published/persisted: `job.initSegment` and the
+ * spool copy on disk are both updated so late-attaching viewers and spool
+ * replays see the true duration too.
+ */
+function patchMvhdDurationInPlace(init: Buffer, durationSeconds: number): boolean {
+  const loc = locateMvhdDuration(init);
+  if (!loc) return false;
+  const ticks = Math.round(durationSeconds * loc.timescale);
+  if (ticks <= 0) return false;
+  if (loc.len === 4) {
+    if (ticks > 0xffffffff) return false;
+    init.writeUInt32BE(ticks, loc.offset);
+  } else {
+    init.writeBigUInt64BE(BigInt(ticks), loc.offset);
+  }
+  return true;
+}
+
+/**
+ * Patch the mvhd duration field of a sparse spool file on disk at absolute
+ * `offset` (same field located by `locateMvhdDuration` in memory). No-op on
+ * any mismatch - the spool copy then simply keeps reporting the live edge.
+ */
+async function patchSpoolDurationOnDisk(spoolPath: string, offset: number, init: Buffer, durationSeconds: number): Promise<void> {
+  const loc = locateMvhdDuration(init);
+  if (!loc) return;
+  const ticks = Math.round(durationSeconds * loc.timescale);
+  if (ticks <= 0) return;
+  try {
+    const fh = await fs.promises.open(spoolPath, 'r+');
+    try {
+      if (loc.len === 4) {
+        if (ticks > 0xffffffff) return;
+        const b = Buffer.alloc(4);
+        b.writeUInt32BE(ticks, 0);
+        await fh.write(b, 0, 4, offset + loc.offset);
+      } else {
+        const b = Buffer.alloc(8);
+        b.writeBigUInt64BE(BigInt(ticks), 0);
+        await fh.write(b, 0, 8, offset + loc.offset);
+      }
+    } finally {
+      await fh.close();
+    }
+    console.warn(
+      `[livejob] spool mvhd duration patched on disk at +${offset + loc.offset}: ${durationSeconds.toFixed(1)}s`,
+    );
+  } catch {
+    // Best-effort: a failed patch leaves the spool at duration 0.
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -363,6 +523,15 @@ export interface LiveRemuxJob {
   spoolPath: string;
   spoolSynced: Promise<void>;
   spoolBytes: number;
+  /**
+   * Resolves once the fMP4 init segment is durably at spool offset 0 (and
+   * job.initSegment is set). The route awaits this before serving ANY live
+   * bytes, so every viewer - including spool replays and seeks - receives a
+   * byte-continuous fMP4 stream that starts with the init segment.
+   */
+  spoolInitWritten: Promise<void>;
+  /** Absolute spool offset where the init segment ends (== init length). */
+  initSpoolOffset: number;
   /** Resolves to the published faststart cache (null when unconvertible). */
   cache: Promise<{ path: string; size: number } | null>;
   /**
@@ -383,6 +552,8 @@ export interface LiveRemuxJob {
 }
 
 const liveJobs = new Map<number, LiveRemuxJob>();
+/** In-flight PCR probes per job, aborted when the job dies (no leaked fetch). */
+const liveJobProbeAborts = new WeakMap<LiveRemuxJob, AbortController>();
 
 // ---------------------------------------------------------------------------
 // Bounded remux concurrency (per-process, single-Node)
@@ -467,6 +638,8 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
     spoolPath: '',
     spoolSynced: Promise.resolve(),
     spoolBytes: 0,
+    spoolInitWritten: Promise.resolve(),
+    initSpoolOffset: 0,
     cache: Promise.resolve(null),
     ready: Promise.resolve(),
     liveEnded: false,
@@ -501,6 +674,11 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
     } catch {
       // ignore
     }
+    try {
+      liveJobProbeAborts.get(job)?.abort();
+    } catch {
+      // ignore
+    }
     endBroadcast(job, err instanceof Error ? err : new Error(String(err)));
     return null;
   };
@@ -515,6 +693,13 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
   // Avoid unhandled rejection when nobody awaits ready (e.g. viewers that
   // detached before the fetch settled - cache still carries the outcome).
   job.ready.catch(() => {});
+
+  let spoolInitWrittenResolve: () => void = () => {};
+  job.spoolInitWritten = new Promise<void>((resolve) => {
+    spoolInitWrittenResolve = resolve;
+  });
+  // Nobody may hang on this even if the pipeline dies before publishing.
+  job.spoolInitWritten.catch(() => {});
 
   job.cache = (async (): Promise<{ path: string; size: number } | null> => {
     await acquireRemuxSlot();
@@ -545,16 +730,23 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
       readyResolve();
       console.warn(`[livejob] ${src.videoId} upstream-headers OK at +${Date.now() - job.xStartedAt}ms`);
 
-      // Exact duration via PCR differencing (head + 188-aligned tail
-      // samples, fetched in parallel with the main download - typically
-      // settled before ffmpeg emits the init segment, adding ~zero TTFB).
-      const tailStart =
-        src.size - PCR_TAIL_BYTES - ((src.size - PCR_TAIL_BYTES) % TS_PACKET);
-      const durationPromise: Promise<number | null> = (async () => {
+      // Exact duration via PCR differencing (head + 752-aligned tail
+      // samples - 752 = 188×4 satisfies BOTH the TS packet grid and MEGA's
+      // 16-byte CTR alignment, see pcrTailStart/Bug 1). Runs fully in the
+      // BACKGROUND: it must never delay init publication or first byte
+      // (Bug 3). The in-flight request is tracked so a dead job (viewer
+      // gone, upstream failed) can abort it instead of leaking the fetch.
+      // MEGA efficiency: when the duration is already known (DB/fa:8) the
+      // probe would be ~3 MB of redundant MEGA ranges per cold play - skip.
+      const tailStart = pcrTailStart(src.size);
+      const probeAbort = new AbortController();
+      const durationPromise: Promise<number | null> = src.durationSeconds != null
+        ? Promise.resolve(src.durationSeconds)
+        : (async () => {
         try {
           const [headRes, tailRes] = await Promise.all([
-            src.fetchCiphertext(`${src.upstreamUrl}/0-${Math.min(src.size - 1, PCR_HEAD_BYTES - 1)}`),
-            src.fetchCiphertext(`${src.upstreamUrl}/${Math.max(0, tailStart)}-${src.size - 1}`),
+            src.fetchCiphertext(`${src.upstreamUrl}/0-${Math.min(src.size - 1, PCR_HEAD_BYTES - 1)}`, probeAbort.signal),
+            src.fetchCiphertext(`${src.upstreamUrl}/${tailStart}-${src.size - 1}`, probeAbort.signal),
           ]);
           if (!headRes.ok || !headRes.body || !tailRes.ok || !tailRes.body) return null;
           const [headCipher, tailCipher] = await Promise.all([
@@ -563,9 +755,9 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
           ]);
           const [headPlain, tailPlain] = await Promise.all([
             decryptBufferAtOffset(src.fileKey, headCipher, 0),
-            decryptBufferAtOffset(src.fileKey, tailCipher, Math.max(0, tailStart)),
+            decryptBufferAtOffset(src.fileKey, tailCipher, tailStart),
           ]);
-          const found = scanTsPcrDuration(headPlain, 0, tailPlain, Math.max(0, tailStart), src.size);
+          const found = scanTsPcrDuration(headPlain, 0, tailPlain, tailStart, src.size);
           if (found) {
             console.log(
               `[media] duration probe video ${src.videoId}: pid=${found.pid} ${found.seconds.toFixed(1)}s`,
@@ -577,29 +769,39 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
           }
           return found?.seconds ?? null;
         } catch (err) {
-          console.warn(
-            `[media] duration probe video ${src.videoId} error: ${err instanceof Error ? `${err.name} ${err.message.slice(0, 100)}` : typeof err}`,
-          );
+          if (!probeAbort.signal.aborted) {
+            console.warn(
+              `[media] duration probe video ${src.videoId} error: ${err instanceof Error ? `${err.name} ${err.message.slice(0, 100)}` : typeof err}`,
+            );
+          }
           return null;
         }
       })();
-      const durationSettled: Promise<number | null> = Promise.race([
-        durationPromise,
-        new Promise<number | null>((r) => setTimeout(() => r(null), PCR_PROBE_TIMEOUT_MS)),
-      ]);
-      // Persist exact duration even when the probe resolves after the live
-      // init already went out (timeout path) - next plays use it instantly.
+      liveJobProbeAborts.set(job, probeAbort);
+      // Background duration landing (Bug 3): patch job.initSegment IN PLACE
+      // (already-attached viewers read it live) and the spool copy on disk
+      // (late viewers replay it), then persist via onDurationKnown. The
+      // probe no longer gates anything - playback started long before.
       durationPromise.then(
         (secs) => {
-          if (secs !== null && src.durationSeconds == null) {
-            try {
-              src.onDurationKnown?.(secs);
-            } catch {
-              // persist is best-effort
-            }
+          liveJobProbeAborts.delete(job);
+          if (secs === null || src.durationSeconds != null) return;
+          if (job.initSegment && patchMvhdDurationInPlace(job.initSegment, secs)) {
+            console.warn(`[livejob] ${src.videoId} init duration patched in memory: ${secs.toFixed(1)}s`);
+          }
+          const patchRec = (job as unknown as { spoolDurationPatch?: { at: number; init: Buffer } }).spoolDurationPatch;
+          if (patchRec) {
+            void patchSpoolDurationOnDisk(job.spoolPath, patchRec.at, patchRec.init, secs);
+          }
+          try {
+            src.onDurationKnown?.(secs);
+          } catch {
+            // persist is best-effort
           }
         },
-        () => {},
+        () => {
+          liveJobProbeAborts.delete(job);
+        },
       );
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { decrypt } = require('megajs') as typeof import('megajs');
@@ -632,28 +834,70 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
       let liveFailed = false;
       let initPublished = false;
       const liveDone = new Promise<void>((resolveLive) => {
-        // Publish the init segment once BOTH the raw bytes and the duration
-        // verdict are in (bounded wait - first paint stays in seconds).
-        // DB/fa:8 duration wins instantly; otherwise the PCR probe result.
+        /**
+         * Publish the init segment AS SOON AS its bytes are complete (Bug 3):
+         * the init must never wait for duration probing. The PCR probe then
+         * runs in the background; when it lands, the duration is patched
+         * into job.initSegment in place AND into the spool copy on disk, so
+         * every viewer (already attached or late) sees the true duration.
+         * The MEGA-side probe (fa:8 / DB) never blocks publication either:
+         * its result only rides along if it arrived before this call.
+         */
         const publishInit = (rawInit: Buffer, tail: Buffer) => {
           if (initPublished || job.liveEnded) return;
           initPublished = true;
-          const publish = (pcrSeconds: number | null) => {
-            const effective = src.durationSeconds ?? pcrSeconds;
-            job.initSegment =
-              patchFragmentedMp4Duration(rawInit, effective) ?? rawInit;
-            console.warn(
-              `[livejob] ${src.videoId} init published ${job.initSegment.length}B eff=${effective ?? 'null'} at +${Date.now() - job.xStartedAt}ms`,
+          const preKnown = src.durationSeconds;
+          job.initSegment = preKnown != null
+            ? (patchFragmentedMp4Duration(rawInit, preKnown) ?? rawInit)
+            : rawInit;
+          job.initSpoolOffset = job.initSegment.length;
+          console.warn(
+            `[livejob] ${src.videoId} init published ${job.initSegment.length}B eff=${preKnown ?? 'null'} at +${Date.now() - job.xStartedAt}ms`,
+          );
+          // DURABLE FIRST (Bug 2 correctness): persist init+tail to the
+          // spool so every current/future viewer replays byte-continuously
+          // from offset 0. Init bytes are broadcast through the same ordered
+          // chain as fragments - no second writer can interleave.
+          job.spoolSynced = job.spoolSynced
+            .catch(() => {})
+            .then(() => fs.promises.appendFile(job.spoolPath, job.initSegment as Buffer))
+            .then(() => {
+              job.spoolBytes += (job.initSegment as Buffer).length;
+              if (preKnown == null) {
+                // Remember where the mvhd duration field lives in the spool
+                // so the on-disk copy can be patched when the probe lands.
+                const loc = locateMvhdDuration(job.initSegment as Buffer);
+                if (loc) {
+                  (job as unknown as { spoolDurationPatch?: { at: number; init: Buffer } }).spoolDurationPatch = {
+                    at: job.spoolBytes - (job.initSegment as Buffer).length + loc.offset,
+                    init: job.initSegment as Buffer,
+                  };
+                }
+              }
+              if (tail.length > 0) {
+                job.spoolSynced = job.spoolSynced
+                  .then(() => fs.promises.appendFile(job.spoolPath, tail))
+                  .then(() => {
+                    job.spoolBytes += tail.length;
+                  })
+                  .catch((err) => {
+                    console.warn(
+                      `[livejob] ${src.videoId} spool write failed: ${err instanceof Error ? err.message.slice(0, 120) : typeof err}`,
+                    );
+                  });
+              }
+            })
+            .then(() => {
+              spoolInitWrittenResolve();
+            })
+          	.catch((err) => {
+            	console.warn(
+              `[livejob] ${src.videoId} spool init write failed: ${err instanceof Error ? err.message.slice(0, 120) : typeof err}`,
             );
-            for (const w of job.waiters.splice(0)) w();
-            if (tail.length > 0) broadcast(job, tail);
-            initAccum = [];
-          };
-          if (src.durationSeconds != null) {
-            publish(src.durationSeconds);
-          } else {
-            durationSettled.then(publish, () => publish(null));
-          }
+            spoolInitWrittenResolve();
+          });
+          for (const w of job.waiters.splice(0)) w();
+          initAccum = [];
         };
         ffOut.on('data', (c: Buffer) => {
           const chunk = Buffer.from(c);
@@ -752,9 +996,20 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
       releaseRemuxSlot();
       if (liveJobs.get(src.videoId) === job) liveJobs.delete(src.videoId);
       try {
+        liveJobProbeAborts.get(job)?.abort();
+      } catch {
+        // ignore
+      }
+      // Bug 6: this job's temp files must never outlive it. The temp .ts
+      // download is removed here whether the remux succeeded, failed, or was
+      // interrupted - a successful cache (mp4Path + sidecar) is untouched.
+      try {
         const dir = mediaCacheDir();
-        await fs.promises.rm(path.join(dir, `${src.videoId}.part.mp4`), { force: true });
-        await fs.promises.rm(path.join(dir, `${src.videoId}.live.spool`), { force: true });
+        await Promise.all([
+          fs.promises.rm(path.join(dir, `${src.videoId}.part.mp4`), { force: true }),
+          fs.promises.rm(path.join(dir, `${src.videoId}.ts.part`), { force: true }),
+          fs.promises.rm(path.join(dir, `${src.videoId}.live.spool`), { force: true }),
+        ]);
       } catch {
         // ignore cleanup errors
       }
@@ -769,6 +1024,36 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
  */
 export function hasLiveRemuxJob(videoId: number): boolean {
   return liveJobs.has(videoId);
+}
+
+/**
+ * Bug 6 sweep: delete orphaned temp files from jobs killed by a crash or a
+ * hard process exit (the per-job finally cannot run for those). Runs once
+ * per process at startup, BEFORE the media route can start new jobs, so it
+ * never races a live job's own cleanup. Successful caches (<id>.mp4 +
+ * <id>.json) are never touched; only *.ts.part, *.part.mp4 and *.live.spool
+ * are removed.
+ */
+export async function cleanupOrphanedTempFiles(): Promise<void> {
+  const dir = mediaCacheDir();
+  let names: string[];
+  try {
+    names = await fs.promises.readdir(dir);
+  } catch {
+    return; // no cache dir yet - nothing to sweep
+  }
+  const tempRe = /\.(ts\.part|part\.mp4|live\.spool)$/;
+  let removed = 0;
+  for (const name of names) {
+    if (!tempRe.test(name)) continue;
+    try {
+      await fs.promises.rm(path.join(dir, name), { force: true });
+      removed++;
+    } catch {
+      // ignore individual failures
+    }
+  }
+  if (removed > 0) console.warn(`[media] orphaned temp cleanup: removed ${removed} file(s) from ${dir}`);
 }
 
 /**
@@ -805,10 +1090,77 @@ export function waitForLiveInit(job: LiveRemuxJob): Promise<Buffer> {
  * are satisfied from the live bytes with `Content-Range: bytes 0-N/*`
  * (`*` = total unknown while warming - valid per RFC 7233).
  */
+/**
+ * Resolve once the spool holds at least `offset` bytes (or the live has
+ * ended / the viewer is gone). Returns the actual frontier at settle time.
+ *
+ * Used by the route for cold MPEG-TS seeks: a position inside the already
+ * spooled fMP4 window can be served from the live stream without waiting
+ * for the full cache (Bug 2).
+ */
+export function waitForSpoolOffset(
+  job: LiveRemuxJob,
+  offset: number,
+  signal?: AbortSignal,
+): Promise<number> {
+  if (job.spoolBytes >= offset) return Promise.resolve(job.spoolBytes);
+  if (job.liveEnded) return Promise.resolve(job.spoolBytes);
+  return new Promise<number>((resolve) => {
+    let done = false;
+    let waiter: (() => void) | null = null;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      const idx = waiter ? job.waiters.indexOf(waiter) : -1;
+      if (waiter) {
+        const w = waiter;
+        waiter = null;
+        if (idx >= 0) job.waiters.splice(idx, 1);
+        w();
+      }
+      signal?.removeEventListener('abort', onAbort);
+      resolve(job.spoolBytes);
+    };
+    const check = () => {
+      if (done) return; // settled via abort/end - never re-register
+      // A notify consumes the registered entry; drop it before deciding.
+      const idx = waiter ? job.waiters.indexOf(waiter) : -1;
+      if (waiter && idx >= 0) job.waiters.splice(idx, 1);
+      waiter = null;
+      if (job.spoolBytes >= offset || job.liveEnded) {
+        finish();
+        return;
+      }
+      // Not there yet: re-register for the next broadcast/end notification.
+      waiter = check;
+      job.waiters.push(check);
+    };
+    const onAbort = () => finish();
+    signal?.addEventListener('abort', onAbort);
+    check();
+  });
+}
+
+/**
+ * True when `start` falls inside the fMP4 window the live spool can serve:
+ * past the init segment and either already buffered or the live is still
+ * running (bytes will arrive). False at 0 (the normal live path) and when
+ * the start is beyond anything the live can provide (finished job with a
+ * short spool).
+ */
+export function canServeSeekFromSpool(job: LiveRemuxJob, start: number): boolean {
+  if (start <= 0) return false;
+  if (start < job.initSpoolOffset) return false;
+  if (job.spoolBytes > start) return true;
+  // Not buffered yet: only the still-running live can ever reach it.
+  return !job.liveEnded;
+}
+
 export function createLiveResponse(
   job: LiveRemuxJob,
   endByte: number | null,
   signal?: AbortSignal,
+  startOffset: number = 0,
 ): Response {
   const sub: LiveSubscriber = { notify: () => {}, detached: false };
   job.subscribers.add(sub);
@@ -843,15 +1195,13 @@ export function createLiveResponse(
   }
 
   async function* streamBytes(): AsyncGenerator<Buffer> {
-    console.warn(`[livejob] ${job.videoId} stream open sub=${job.subscribers.size} awaitInit`);
+    console.warn(`[livejob] ${job.videoId} stream open sub=${job.subscribers.size} start=${startOffset} awaitInit`);
     try {
-      // Wait for the init (guaranteed by the route's bounded preflight for
-      // the FIRST viewer; a late joiner's spool replay includes it anyway).
-      // NOTE: the init bytes are NOT yielded here - the spool replay below
-      // starts at offset 0 and already contains them.
-      await Promise.race([waitForLiveInit(job), viewerGone]);
+      // The init bytes MUST be durable in the spool before anything is read
+      // from it (the spool is the single source of byte-continuous truth).
+      await Promise.race([job.spoolInitWritten, viewerGone]);
       console.warn(`[livejob] ${job.videoId} stream init-ready at +${Date.now() - job.xStartedAt}ms`);
-      let sent = 0;
+      let sent = startOffset;
       for (;;) {
         if (aborted || sub.detached) return;
         // The spool is the single truth: every viewer replays the stream
@@ -868,6 +1218,9 @@ export function createLiveResponse(
             start: sent,
             end: frontier - 1,
           });
+          // A start>0 viewer skipped the spool's [0..startOffset) - the
+          // existing fMP4 window. Byte-continuity comes from the HTTP
+          // Content-Range contract, not from replaying those bytes.
           let readErr: Error | null = null;
           rs.on('error', (e: Error) => {
             readErr = e;
@@ -916,16 +1269,23 @@ export function createLiveResponse(
 
   const nodeStream = Readable.from(streamBytes() as unknown as Iterable<Uint8Array>);
   nodeStream.on('error', () => detach());
-  const webOut = Readable.toWeb(nodeStream) as unknown as ReadableStream<Uint8Array>;
+  const webOut = nodeToWebSafe(nodeStream);
 
   const headers = new Headers({
     'Content-Type': REMUXED_MIME_TYPE,
     'Accept-Ranges': 'none',
     'Cache-Control': 'no-store',
   });
-  if (endByte !== null) {
-    headers.set('Content-Range', `bytes 0-${endByte}/*`);
-    headers.set('X-Media-Path', 'live');
+  if (endByte !== null || startOffset > 0) {
+    // Total is unknown while the live warms ('*' is valid per RFC 7233).
+    // Once the live has ended the total is final: clamp the end (a viewer
+    // may have asked beyond what the source actually produced).
+    const effectiveEnd = endByte !== null ? Math.min(endByte, job.spoolBytes - 1) : job.spoolBytes - 1;
+    const total = job.liveEnded
+      ? `bytes ${startOffset}-${Math.max(startOffset, effectiveEnd)}/${job.spoolBytes}`
+      : `bytes ${startOffset}-${endByte ?? ''}/*`;
+    headers.set('Content-Range', total);
+    headers.set('X-Media-Path', 'live-spool');
     return new Response(webOut, { status: 206, headers });
   }
   headers.set('X-Media-Path', 'live');
@@ -957,7 +1317,7 @@ export function createCachedFileResponse(
       console.warn(`[media] cached file stream error: ${err.name}: ${err.message.slice(0, 80)}`);
     }
   });
-  const webOut = Readable.toWeb(nodeStream) as unknown as ReadableStream<Uint8Array>;
+  const webOut = nodeToWebSafe(nodeStream);
   const partial = !(start === 0 && end === size - 1);
   const headers = new Headers({
     'Content-Type': REMUXED_MIME_TYPE,
