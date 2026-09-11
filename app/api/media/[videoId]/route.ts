@@ -18,14 +18,60 @@ import {
   createLiveResponse,
   decryptPrefixToBuffer,
   getOrCreateLiveRemuxJob,
+  hasLiveRemuxJob,
+  joinLiveRemuxJob,
   needsRemuxPlayback,
   readRemuxCache,
+  waitForLiveInit,
 } from '@/lib/media/remux';
 
 // The media route uses node:stream, megajs CTR decryption and the Node-only
 // network stack. Pin it to the Node.js runtime explicitly.
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+// ---------------------------------------------------------------------------
+// Lightweight in-process cache for short-lived MEGA temporary download URLs.
+// URLs are valid for ~10 minutes; we cache for 5 minutes to avoid duplicate
+// a=g calls for the same node across concurrent/repeated requests.
+// ---------------------------------------------------------------------------
+
+interface CachedDownloadUrl {
+  url: string;
+  size: number;
+  expiresAt: number;
+}
+
+const downloadUrlCache = new Map<string, CachedDownloadUrl>();
+
+async function getCachedDownloadUrl(
+  nodeId: string,
+  storage: unknown,
+  fetcher: (storage: unknown, nodeId: string) => Promise<TemporaryDownloadUrl>,
+): Promise<TemporaryDownloadUrl> {
+  const cached = downloadUrlCache.get(nodeId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return { url: cached.url, size: cached.size };
+  }
+  const result = await fetcher(storage, nodeId);
+  downloadUrlCache.set(nodeId, {
+    url: result.url,
+    size: result.size,
+    expiresAt: Date.now() + 5 * 60_000,
+  });
+  return result;
+}
+
+/**
+ * Bounds for the cold remux path so a slow/hung MEGA response can never
+ * leave the browser at 0:00 with an indefinite spinner:
+ *  - PREFLIGHT: how long to wait for the upstream headers (509/404/403
+ *    detection) and the first live init bytes before answering 503.
+ *  - CACHE_WAIT: how long a cold SEEK waits for the faststart cache
+ *    (full download + stream-copy remux) before answering 503.
+ */
+const MEDIA_PREFLIGHT_TIMEOUT_MS = 20_000;
+const MEDIA_CACHE_WAIT_TIMEOUT_MS = 45_000;
 
 /**
  * Private MEGA video streaming (owner only).
@@ -260,7 +306,45 @@ export async function handleMediaRequest(
     return NextResponse.json({ error: 'Stored playback key is unreadable.' }, { status: 500 });
   }
 
+  // HEAD probes must never touch MEGA: answer from stored metadata only.
+  if (method === 'HEAD') {
+    const contentType = needsRemuxPlayback(video.mimeType) ? 'video/mp4' : (video.mimeType ?? 'video/mp4');
+    return new Response(null, {
+      status: 200,
+      headers: {
+        'Content-Type': contentType,
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'no-store',
+      },
+    });
+  }
+
   try {
+    // For MPEG-TS, check the warm cache BEFORE any MEGA work. A warm hit
+    // avoids session resume, download URL generation, MIME sniff, and
+    // source download entirely.
+    const storedMimeType = video.mimeType ?? 'video/mp4';
+    if (needsRemuxPlayback(storedMimeType)) {
+      const cacheSize = video.fileSize !== null ? Number(video.fileSize) : null;
+      if (cacheSize !== null) {
+        const warm = await readRemuxCache(video.id, video.megaNodeId, cacheSize);
+        if (warm) {
+          console.warn(`[media] cache hit video ${videoId} path=warm-cache`);
+          const warmRange = parseRange(requestHeaders.get('range'), warm.size);
+          if (warmRange === 'invalid') {
+            return new NextResponse(null, {
+              status: 416,
+              headers: { 'Content-Range': `bytes */${warm.size}` },
+            });
+          }
+          const rs = warmRange ? warmRange.start : 0;
+          const re = warmRange ? warmRange.end : warm.size - 1;
+          return createCachedFileResponse(warm.path, rs, re, warm.size, signal);
+        }
+        console.warn(`[media] cache miss video ${videoId} path=cold`);
+      }
+    }
+
     // The download-URL step (session resume + read-only a=g) intermittently
     // fails with transient MEGA/network errors (observed live as a lone
     // 503 while the retry-less request died). Retry TRANSIENT failures only:
@@ -280,13 +364,14 @@ export async function handleMediaRequest(
           account.encryptedSession,
           async (storage) => {
             const [dl, mediaSeconds] = await Promise.all([
-              deps.getDownloadUrl(storage, video.megaNodeId!),
+              () => getCachedDownloadUrl(video.megaNodeId!, storage, deps.getDownloadUrl),
               video.duration ??
                 fetchMegaDurationSeconds(storage, video.megaFa, fileKey),
             ]);
+            const resolvedDl = await dl();
             const size =
-              dl.size ?? (video.fileSize !== null ? Number(video.fileSize) : null);
-            return { upstreamUrl: dl.url, size, durationSeconds: mediaSeconds };
+              resolvedDl.size ?? (video.fileSize !== null ? Number(video.fileSize) : null);
+            return { upstreamUrl: resolvedDl.url, size, durationSeconds: mediaSeconds };
           },
         ),
       {
@@ -305,7 +390,14 @@ export async function handleMediaRequest(
       // Persist for future plays; never blocks the response.
       prisma.video
         .update({ where: { id: video.id }, data: { duration: durationSeconds } })
-        .catch(() => {});
+        .then(() => {
+          console.log(`[media] persisted fa:8 duration video ${video.id}: ${durationSeconds}s`);
+        })
+        .catch((err) => {
+          console.warn(
+            `[media] duration persist failed video ${video.id}: ${err instanceof Error ? err.message.slice(0, 100) : typeof err}`,
+          );
+        });
     }
 
     if (size === null || !Number.isFinite(size) || size < 0) {
@@ -316,42 +408,38 @@ export async function handleMediaRequest(
     }
 
     const rangeHeader = requestHeaders.get('range');
-    const range = parseRange(rangeHeader, size);
-    if (range === 'invalid') {
+    // Re-parse range now that size is known.
+    const resolvedRange = parseRange(rangeHeader, size);
+    if (resolvedRange === 'invalid') {
       return new NextResponse(null, {
         status: 416,
         headers: { 'Content-Range': `bytes */${size}` },
       });
     }
-    const start = range ? range.start : 0;
-    const end = range ? range.end : size - 1;
+    const resolvedStart = resolvedRange ? resolvedRange.start : 0;
+    const resolvedEnd = resolvedRange ? resolvedRange.end : size - 1;
 
-    const apiStart = start - (start % 16);
-    const skipBytes = start - apiStart;
+    const apiStart = resolvedStart - (resolvedStart % 16);
+    const skipBytes = resolvedStart - apiStart;
 
-    // Sniff the actual MIME type from the file content so browsers receive
-    // the correct Content-Type even when the stored extension-based value
-    // is wrong (e.g. a .mp4 file that is actually an MPEG-TS stream).
-    // Only on range-start-0 requests (metadata fetch): Chrome always issues
-    // one open-ended request from 0 first, so seeks skip this extra upstream
-    // round-trip entirely.
-    let effectiveMimeType = video.mimeType ?? 'video/mp4';
-    // Header probes carry no body interest - the stored type is enough for
-    // them, and skipping the sniff round-trip keeps HEAD fast.
-    if (start === 0 && method !== 'HEAD') {
+    // Sniff the actual MIME type from the file content only when the stored
+    // value is missing or we have reason to doubt it. A correct persisted
+    // mimeType (from extension-based sync) is trusted; the sniff is reserved
+    // for discovery of misleading extensions (e.g. .mp4 that is actually
+    // MPEG-TS). Header probes and warm cache hits skip this entirely.
+    let effectiveMimeType = storedMimeType;
+    if (resolvedStart === 0 && !effectiveMimeType) {
       try {
-      const sniffRes = await deps.fetchCiphertext(`${upstreamUrl}/0-187`, signal);
-      if (sniffRes.ok) {
-        const sniffBuf = Buffer.from(await sniffRes.arrayBuffer());
-        // megajs decrypt() is a stream (no update()/final() API); collect
-        // the decrypted prefix through the stream instead.
-        const decrypted = await decryptPrefixToBuffer(fileKey, sniffBuf);
-        const detected = sniffMimeType(decrypted);
-        if (detected && detected !== effectiveMimeType) {
-          effectiveMimeType = detected;
-          await prisma.video.update({ where: { id: video.id }, data: { mimeType: detected } }).catch(() => {});
+        const sniffRes = await deps.fetchCiphertext(`${upstreamUrl}/0-187`, signal);
+        if (sniffRes.ok) {
+          const sniffBuf = Buffer.from(await sniffRes.arrayBuffer());
+          const decrypted = await decryptPrefixToBuffer(fileKey, sniffBuf);
+          const detected = sniffMimeType(decrypted);
+          if (detected) {
+            effectiveMimeType = detected;
+            await prisma.video.update({ where: { id: video.id }, data: { mimeType: detected } }).catch(() => {});
+          }
         }
-      }
       } catch {
         // Sniff failure is non-fatal; fall back to stored MIME type.
       }
@@ -399,6 +487,7 @@ export async function handleMediaRequest(
       // Server-owned pipeline: runs to completion even if this viewer goes
       // away, so a refresh finds a warm cache. No viewer abort signal is
       // passed - stalls are bounded by the upstream fetch timeouts.
+      const existed = hasLiveRemuxJob(video.id);
       const job = getOrCreateLiveRemuxJob({
         videoId: video.id,
         megaNodeId: video.megaNodeId,
@@ -410,17 +499,50 @@ export async function handleMediaRequest(
           if (video.duration == null) {
             prisma.video
               .update({ where: { id: video.id }, data: { duration: Math.round(secs) } })
-              .catch(() => {});
+              .then(() => {
+                console.log(`[media] persisted PCR duration video ${video.id}: ${Math.round(secs)}s`);
+              })
+              .catch((err) => {
+                console.warn(
+                  `[media] PCR persist failed video ${video.id}: ${err instanceof Error ? err.message.slice(0, 100) : typeof err}`,
+                );
+              });
           }
         },
         fetchCiphertext: (url) =>
           fetchCiphertextWithRetry(url, undefined, logCtx, videoId, deps.fetchCiphertext),
       });
+      if (!existed) {
+        console.warn(`[media] new remux job video ${videoId} size=${size}`);
+      } else {
+        joinLiveRemuxJob(videoId);
+        console.warn(`[media] joined remux job video ${videoId} joined=${job.xJoinedCount}`);
+      }
       // Preflight: the upstream may answer 509 (MEGA bandwidth quota) or
       // 404/403 (node gone). Report those as honest JSON BEFORE response
       // headers go out - after that point only a doomed stream is possible.
+      //
+      // Bounded: job.ready resolves when the full-file MEGA fetch returns
+      // headers, which can take many seconds (MEGA transient) or never on a
+      // hung socket. An unbounded await left the browser at 0:00 with an
+      // indefinite spinner. We timebox it and answer a retryable 503 while
+      // the job keeps warming in the background (a refresh then succeeds).
       try {
-        await job.ready;
+        console.warn(`[route] video ${videoId} awaiting job.ready (start=${resolvedStart} end=${resolvedEnd}) at +${logCtx.elapsedMs()}ms`);
+        await Promise.race([
+          job.ready,
+          new Promise<never>((_resolve, reject) =>
+            setTimeout(
+              () =>
+                reject(
+                  Object.assign(new Error('MEGA is still preparing this video.'), {
+                    name: 'MediaPreflightTimeout',
+                  }),
+                ),
+              MEDIA_PREFLIGHT_TIMEOUT_MS,
+            ),
+          ),
+        ]);
       } catch (err) {
         const st = (err as { upstreamStatus?: unknown }).upstreamStatus;
         if (st === 509) {
@@ -436,17 +558,56 @@ export async function handleMediaRequest(
             { status: 410 },
           );
         }
-        // Unknown early failure - fall through to the direct path below,
-        // which will produce its own precise error for this request.
+        // Timeout (or an unknown early failure): surface a real error
+        // instead of letting the browser spin. The live job keeps running
+        // server-side, so a refresh typically finds warm bytes.
+        return NextResponse.json(
+          { error: 'The video is still being prepared; please retry in a moment.' },
+          { status: 503, headers: { 'Retry-After': '5' } },
+        );
       }
-      if (start === 0) {
+      if (resolvedStart === 0) {
+        // Never commit a 200 that may sit silent: wait (bounded) for actual
+        // init bytes so the browser receives a stream that is immediately
+        // playable. Cold first plays start in seconds; a job that cannot
+        // publish init within the budget answers a retryable 503 instead of
+        // an empty stream that Chrome aborts a few seconds later.
+        const initReady = await Promise.race([
+          waitForLiveInit(job)
+            .then(() => true)
+            .catch(() => false),
+          new Promise<boolean>((resolve) =>
+            setTimeout(() => resolve(false), MEDIA_PREFLIGHT_TIMEOUT_MS),
+          ),
+        ]);
+        if (!initReady) {
+          return NextResponse.json(
+            { error: 'The video player could not start the stream; please retry.' },
+            { status: 503, headers: { 'Retry-After': '5' } },
+          );
+        }
         // Open-ended (`bytes=0-` / no Range) -> pure live stream (200).
         // Bounded start-0 (e.g. Safari's `bytes=0-1` probe) -> collect the
         // first end+1 live bytes and answer 206 (`*` = total unknown yet).
-        const endByte = range && range.end < size - 1 ? range.end : null;
+        const endByte = resolvedRange && resolvedRange.end < size - 1 ? resolvedRange.end : null;
+        console.warn(`[route] video ${videoId} createLiveResponse endByte=${endByte ?? 'open'} at +${logCtx.elapsedMs()}ms`);
         return createLiveResponse(job, endByte, signal);
       }
-      const done = await job.cache;
+      // Cold seek (start > 0): the byte coordinates of the remuxed file do
+      // not exist until the faststart cache is published, so we wait a
+      // BOUNDED time for the full download + stream-copy remux, then answer
+      // honestly instead of leaving the browser spinning for minutes.
+      let done: { path: string; size: number } | null = null;
+      try {
+        done = await Promise.race([
+          job.cache,
+          new Promise<{ path: string; size: number } | null>((resolve) =>
+            setTimeout(() => resolve(null), MEDIA_CACHE_WAIT_TIMEOUT_MS),
+          ),
+        ]);
+      } catch {
+        done = null;
+      }
       if (done) {
         const seekRange = parseRange(rangeHeader, done.size);
         if (seekRange === 'invalid') {
@@ -459,13 +620,17 @@ export async function handleMediaRequest(
         const re = seekRange ? seekRange.end : done.size - 1;
         return createCachedFileResponse(done.path, rs, re, done.size, signal);
       }
+      return NextResponse.json(
+        { error: 'The video is still preparing for playback; please retry in a moment.' },
+        { status: 503, headers: { 'Retry-After': '10' } },
+      );
     }
 
     // Range request to MEGA storage. The g-url is short-lived; the range is
     // expressed in the storage URL itself, so a retry re-issues the IDENTICAL
     // request (Range semantics preserved). Transient connect failures are
     // retried up to 3 attempts with short backoff; nothing else is.
-    const storageUrl = `${upstreamUrl}/${apiStart}-${end}`;
+    const storageUrl = `${upstreamUrl}/${apiStart}-${resolvedEnd}`;
     const upstream = await fetchCiphertextWithRetry(storageUrl, signal, logCtx, videoId, deps.fetchCiphertext);
 
     if (upstream.status === 509) {
@@ -490,7 +655,7 @@ export async function handleMediaRequest(
       );
     }
 
-    const fullRange = start === 0 && end === size - 1;
+    const fullRange = resolvedStart === 0 && resolvedEnd === size - 1;
     const decryptor = decrypt(fileKey, {
       start: apiStart,
       disableVerification: !fullRange,
@@ -528,7 +693,7 @@ export async function handleMediaRequest(
     // arrived, but `end` never fired, leaving browsers stuck buffering.
     let chain: Readable = nodeUpstream.pipe(decryptor);
     if (skipBytes > 0) chain = chain.pipe(skipLeading(skipBytes));
-    if (!fullRange) chain = chain.pipe(limitBytes(end - start + 1));
+    if (!fullRange) chain = chain.pipe(limitBytes(resolvedEnd - resolvedStart + 1));
     const outNode = chain;
     outNode.on('error', (err: Error) => {
       const code = (err as { code?: string }).code;
@@ -551,16 +716,17 @@ export async function handleMediaRequest(
       'Content-Type': effectiveMimeType,
       'Accept-Ranges': 'bytes',
       'Cache-Control': 'no-store',
+      'X-Media-Path': 'direct',
     });
-    if (range) {
-      headers.set('Content-Range', `bytes ${start}-${end}/${size}`);
-      headers.set('Content-Length', String(end - start + 1));
+    if (resolvedRange) {
+      headers.set('Content-Range', `bytes ${resolvedStart}-${resolvedEnd}/${size}`);
+      headers.set('Content-Length', String(resolvedEnd - resolvedStart + 1));
     } else {
       headers.set('Content-Length', String(size));
     }
 
     return new Response(webOut, {
-      status: range ? 206 : 200,
+      status: resolvedRange ? 206 : 200,
       headers,
     });
   } catch (err) {
@@ -603,6 +769,7 @@ export async function handleMediaRequest(
         elapsedMs: logCtx.elapsedMs(),
         errorClass: errClass,
         errorName: err instanceof Error ? err.name : typeof err,
+        errorMessage: err instanceof Error ? err.message.slice(0, 200) : undefined,
         detail: err instanceof Error && errClass === 'transient-network' ? (err as { cause?: { code?: string } }).cause?.code ?? err.message.slice(0, 60) : undefined,
       })}`,
     );
