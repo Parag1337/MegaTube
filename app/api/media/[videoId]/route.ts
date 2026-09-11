@@ -14,6 +14,7 @@ import { sniffMimeType } from '@/lib/mega/nodes';
 import { getPrivateNodeMediaProperties } from '@/lib/mega/attributes';
 import { keepAliveFetch, withTransientRetry, isTransientNetworkError } from '@/lib/net-resilience';
 import {
+  canServeSeekFromSpool,
   createCachedFileResponse,
   createLiveResponse,
   decryptPrefixToBuffer,
@@ -21,8 +22,10 @@ import {
   hasLiveRemuxJob,
   joinLiveRemuxJob,
   needsRemuxPlayback,
+  nodeToWebSafe,
   readRemuxCache,
   waitForLiveInit,
+  waitForSpoolOffset,
 } from '@/lib/media/remux';
 
 // The media route uses node:stream, megajs CTR decryption and the Node-only
@@ -60,6 +63,73 @@ async function getCachedDownloadUrl(
     expiresAt: Date.now() + 5 * 60_000,
   });
   return result;
+}
+
+/**
+ * MP4s at or above this size are considered for local caching (Bug 5).
+ * Smaller files are cheap enough to stream through MEGA directly; caching
+ * them would double storage for little latency gain.
+ */
+const MP4_CACHE_MIN_SIZE = 100 * 1024 * 1024;
+
+/**
+ * True when an MP4 source is a candidate for the local disk cache (Bug 5):
+ * only large files qualify; small/faststart MP4s keep the direct stream
+ * path with zero extra work.
+ */
+function isCacheableMp4(mimeType: string, size: number): boolean {
+  return mimeType === 'video/mp4' && size >= MP4_CACHE_MIN_SIZE;
+}
+
+/**
+ * Layout probe for a large cached MP4 (Bug 5): is the moov atom NOT in the
+ * first few hundred KB? Such files are non-faststart: every playback start
+ * (and many seeks) needs a MEGA range near the END of the file to read the
+ * index, which is exactly the expensive pattern the local cache removes.
+ * The check reads ~256 KB from the start over the same short-lived URL the
+ * playback request resolved (no extra session/URL generation), decrypts it
+ * through megajs and walks the top-level boxes. Any doubt -> null (caller
+ * keeps the direct path; never worse than today).
+ */
+async function probeMp4Layout(
+  fileKey: Buffer,
+  upstreamUrl: string,
+  size: number,
+  fetchImpl: (url: string, signal?: AbortSignal) => Promise<Response>,
+  signal?: AbortSignal,
+): Promise<'faststart' | 'non-faststart' | null> {
+  try {
+    const PROBE_BYTES = Math.min(256 * 1024, size);
+    const res = await fetchImpl(`${upstreamUrl}/0-${PROBE_BYTES - 1}`, signal);
+    if (!res.ok || !res.body) return null;
+    const cipher = Buffer.from(await res.arrayBuffer());
+    const plain = await decryptPrefixToBuffer(fileKey, cipher);
+    // Walk top-level boxes: mdat BEFORE moov -> non-faststart.
+    let off = 0;
+    let sawMoov = false;
+    for (;;) {
+      if (off + 8 > plain.length) break;
+      const boxSize = plain.readUInt32BE(off);
+      const type = plain.toString('latin1', off + 4, off + 8);
+      if (boxSize === 1) {
+        // 64-bit size (large mdat): read the 64-bit width.
+        if (off + 16 > plain.length) break;
+        const hi = plain.readUInt32BE(off + 8);
+        const lo = plain.readUInt32BE(off + 12);
+        const big = hi * 2 ** 32 + lo;
+        if (type === 'mdat') return sawMoov ? 'faststart' : 'non-faststart';
+        off += big;
+        continue;
+      }
+      if (boxSize < 8) break; // malformed/unknown - be conservative
+      if (type === 'moov') { sawMoov = true; break; }
+      if (type === 'mdat') return sawMoov ? 'faststart' : 'non-faststart';
+      off += boxSize;
+    }
+    return sawMoov ? 'faststart' : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -320,27 +390,32 @@ export async function handleMediaRequest(
   }
 
   try {
-    // For MPEG-TS, check the warm cache BEFORE any MEGA work. A warm hit
-    // avoids session resume, download URL generation, MIME sniff, and
-    // source download entirely.
+    // Cache decision BEFORE any MEGA work (P0 order preserved):
+    //  - MPEG-TS always remuxes; a warm cache avoids session resume, a=g,
+    //    MIME sniffing, and the source download entirely;
+    //  - large MP4s are probed for a non-faststart layout (moov after the
+    //    media) and cached too (Bug 5): playback of such files otherwise
+    //    re-downloads big MEGA ranges on every start/seek. The probe needs a
+    //    session + URL, so it deliberately runs AFTER this point's network
+    //    step shares its result (see probeMp4Layout use below).
     const storedMimeType = video.mimeType ?? 'video/mp4';
-    if (needsRemuxPlayback(storedMimeType)) {
-      const cacheSize = video.fileSize !== null ? Number(video.fileSize) : null;
-      if (cacheSize !== null) {
-        const warm = await readRemuxCache(video.id, video.megaNodeId, cacheSize);
-        if (warm) {
-          console.warn(`[media] cache hit video ${videoId} path=warm-cache`);
-          const warmRange = parseRange(requestHeaders.get('range'), warm.size);
-          if (warmRange === 'invalid') {
-            return new NextResponse(null, {
-              status: 416,
-              headers: { 'Content-Range': `bytes */${warm.size}` },
-            });
-          }
-          const rs = warmRange ? warmRange.start : 0;
-          const re = warmRange ? warmRange.end : warm.size - 1;
-          return createCachedFileResponse(warm.path, rs, re, warm.size, signal);
+    const cacheSize = video.fileSize !== null ? Number(video.fileSize) : null;
+    if (cacheSize !== null && (needsRemuxPlayback(storedMimeType) || isCacheableMp4(storedMimeType, cacheSize))) {
+      const warm = await readRemuxCache(video.id, video.megaNodeId, cacheSize);
+      if (warm) {
+        console.warn(`[media] cache hit video ${videoId} path=warm-cache`);
+        const warmRange = parseRange(requestHeaders.get('range'), warm.size);
+        if (warmRange === 'invalid') {
+          return new NextResponse(null, {
+            status: 416,
+            headers: { 'Content-Range': `bytes */${warm.size}` },
+          });
         }
+        const rs = warmRange ? warmRange.start : 0;
+        const re = warmRange ? warmRange.end : warm.size - 1;
+        return createCachedFileResponse(warm.path, rs, re, warm.size, signal);
+      }
+      if (needsRemuxPlayback(storedMimeType)) {
         console.warn(`[media] cache miss video ${videoId} path=cold`);
       }
     }
@@ -428,7 +503,7 @@ export async function handleMediaRequest(
     // for discovery of misleading extensions (e.g. .mp4 that is actually
     // MPEG-TS). Header probes and warm cache hits skip this entirely.
     let effectiveMimeType = storedMimeType;
-    if (resolvedStart === 0 && !effectiveMimeType) {
+    if (resolvedStart === 0 && !effectiveMimeType && (video.megaFa || !video.duration)) {
       try {
         const sniffRes = await deps.fetchCiphertext(`${upstreamUrl}/0-187`, signal);
         if (sniffRes.ok) {
@@ -455,10 +530,28 @@ export async function handleMediaRequest(
     //     simultaneously warms the faststart cache underneath (refresh and
     //     later seeks then get full features). Waiting for the whole file
     //     first left the player at 0:00 for minutes on large sources.
-    //   - cold cache, seek (start > 0) -> wait for the cache, then serve.
-    // Any conversion failure falls through to the direct path (previous
-    // behavior - never worse than today).
-    if (needsRemuxPlayback(effectiveMimeType)) {
+    //   - cold cache, seek (start > 0) -> served from the live spool window
+    //     when possible (Bug 2); otherwise bounded-wait for the cache.
+    // Large NON-faststart MP4s join the same pipeline (Bug 5): their moov
+    // sits at the end, so direct streaming re-fetches expensive MEGA ranges
+    // on every start/seek; a one-time stream-copy cache fixes repeat plays.
+    // No re-encoding anywhere (-c copy), and only the muxer differs (faststart
+    // file vs live fMP4) - direct MP4 playback itself is untouched.
+    let needsRemux = needsRemuxPlayback(effectiveMimeType);
+    if (
+      !needsRemux &&
+      method === 'GET' &&
+      isCacheableMp4(effectiveMimeType, size) &&
+      video.fileSize !== null &&
+      Number(video.fileSize) === size
+    ) {
+      const layout = await probeMp4Layout(fileKey, upstreamUrl, size, deps.fetchCiphertext, signal);
+      if (layout === 'non-faststart') {
+        needsRemux = true;
+        console.warn(`[media] video ${videoId} large non-faststart MP4 -> cache pipeline`);
+      }
+    }
+    if (needsRemux) {
       // Header probes (the player's upfront HEAD) must never trigger or
       // wait for conversion work - answer instantly; Next strips the body.
       if (method === 'HEAD') {
@@ -593,10 +686,32 @@ export async function handleMediaRequest(
         console.warn(`[route] video ${videoId} createLiveResponse endByte=${endByte ?? 'open'} at +${logCtx.elapsedMs()}ms`);
         return createLiveResponse(job, endByte, signal);
       }
-      // Cold seek (start > 0): the byte coordinates of the remuxed file do
-      // not exist until the faststart cache is published, so we wait a
-      // BOUNDED time for the full download + stream-copy remux, then answer
-      // honestly instead of leaving the browser spinning for minutes.
+      // Cold seek (start > 0), Bug 2: the OLD behavior waited up to 45 s for
+      // the complete faststart cache and then answered JSON 503 - which the
+      // media element cannot interpret, killing playback on the first seek.
+      // The remuxed fMP4 byte coordinates ARE the spool, so serve the seek
+      // from the live window instead:
+      //   - position already spooled (or the live is still running and will
+      //     reach it): answer 206 from the spool immediately/bounded;
+      //   - only when the live has ALREADY ENDED short of the position (dead
+      //     job, no future bytes) do we fall back to the completed cache or
+      //     an honest bounded wait for it.
+      if (resolvedStart > 0 && canServeSeekFromSpool(job, resolvedStart)) {
+        const frontier = await waitForSpoolOffset(job, resolvedStart, signal);
+        if (frontier > resolvedStart) {
+          console.warn(
+            `[route] video ${videoId} cold seek served from live spool start=${resolvedStart} frontier=${frontier} at +${logCtx.elapsedMs()}ms`,
+          );
+          return createLiveResponse(job, resolvedEnd, signal, resolvedStart);
+        }
+        // waitForSpoolOffset settled without reaching the position: the live
+        // ended early. Fall through to the cache/failure handling below.
+        console.warn(
+          `[route] video ${videoId} cold seek outpaced (frontier=${frontier}, liveEnded=${job.liveEnded}) at +${logCtx.elapsedMs()}ms`,
+        );
+      }
+      // Cold seek the live cannot serve (ended short / failed): wait a
+      // BOUNDED time for the faststart cache, then answer honestly.
       let done: { path: string; size: number } | null = null;
       try {
         done = await Promise.race([
@@ -710,7 +825,10 @@ export async function handleMediaRequest(
       decryptor.end();
     });
 
-    const webOut = Readable.toWeb(outNode) as unknown as ReadableStream<Uint8Array>;
+    // Abort-safe adapter (Bug 4): guards every Web-Stream controller call so
+    // a normal browser abort/reload can never surface as an uncaught
+    // "Controller is already closed" while genuine errors still propagate.
+    const webOut = nodeToWebSafe(outNode);
 
     const headers = new Headers({
       'Content-Type': effectiveMimeType,

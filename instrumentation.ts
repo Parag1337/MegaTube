@@ -18,5 +18,14 @@ export async function register() {
     // (static import() would pull the module into BOTH runtime bundles).
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     require('./lib/net-resilience').applyNetworkResilience();
+    // Bug 6: temp files from jobs killed by a crash/hard exit (*.ts.part,
+    // *.part.mp4, *.live.spool) can never clean themselves up. Sweep them
+    // once per server start, before any media request can create a new job,
+    // so this cannot race a live job's own cleanup. Successful caches are
+    // never touched.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('./lib/media/remux')
+      .cleanupOrphanedTempFiles()
+      .catch(() => {});
   }
 }

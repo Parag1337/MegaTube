@@ -18,7 +18,10 @@ process.env.MEDIA_CACHE_DIR = path.join(tmpRoot, 'cache');
 
 import { encrypt } from 'megajs';
 import {
+  PCR_ALIGN,
   REMUXED_MIME_TYPE,
+  canServeSeekFromSpool,
+  cleanupOrphanedTempFiles,
   createCachedFileResponse,
   createLiveResponse,
   decryptPrefixToBuffer,
@@ -26,8 +29,10 @@ import {
   mediaCacheDir,
   needsRemuxPlayback,
   patchFragmentedMp4Duration,
+  pcrTailStart,
   readRemuxCache,
   scanTsPcrDuration,
+  waitForSpoolOffset,
 } from '@/lib/media/remux';
 import type { LiveRemuxJob } from '@/lib/media/remux';
 
@@ -163,6 +168,8 @@ function fakeLiveJob(init: Buffer): LiveRemuxJob {
     spoolPath: '',
     spoolSynced: Promise.resolve(),
     spoolBytes: 0,
+    spoolInitWritten: Promise.resolve(),
+    initSpoolOffset: init.length,
     cache: Promise.resolve(null),
     ready: Promise.resolve(),
     liveEnded: false,
@@ -308,4 +315,162 @@ test('scanTsPcrDuration: null on garbage or implausible input', () => {
   const tail = Buffer.concat([tsPacket(256, 2), tsPacket(256, 3)]);
   // 1 GB claimed for a 3 s clip -> 2.6 Gbps implied -> gate rejects.
   assert.equal(scanTsPcrDuration(head, 0, tail, 188, 1_000_000_000), null, 'gate rejects');
+});
+
+// ---------------------------------------------------------------------------
+// Bug 1: PCR probe tail offset must satisfy BOTH 188 (TS packet) and 16
+// (MEGA CTR start) alignment - 752 = 188 × 4 is the combined alignment.
+// ---------------------------------------------------------------------------
+test('pcrTailStart: 752-aligned for every size (Bug 1 regression)', () => {
+  // The audit's exact failure shape: naive %188 rounding produced offsets
+  // ≡ 8 (mod 16) and megaDecrypt threw. Every size must give %16 == %188 == 0.
+  for (const size of [197_030_392, 164_283_424, 159_545_072, 10_606_208, 188 * 1000 + 7, 1_000_000, 752, 100]) {
+    const at = pcrTailStart(size);
+    assert.equal(at % 188, 0, `size ${size}: %188`);
+    assert.equal(at % 16, 0, `size ${size}: %16`);
+    assert.equal(at % PCR_ALIGN, 0, `size ${size}: %752`);
+    assert.ok(at <= Math.max(0, size - 1), `size ${size}: within file`);
+  }
+  // Small files clamp to 0 (whole file is the sample).
+  assert.equal(pcrTailStart(100), 0);
+  assert.equal(pcrTailStart(752 * 3), 0);
+});
+
+// ---------------------------------------------------------------------------
+// Bug 2 helpers: spool-offset waiting + cold-seek serving decision
+// ---------------------------------------------------------------------------
+test('canServeSeekFromSpool: start 0 false, inside window true, beyond ended job false', () => {
+  const job = fakeLiveJob(Buffer.alloc(1200));
+  job.initSpoolOffset = 1200;
+  job.spoolBytes = 5_000_000;
+  assert.equal(canServeSeekFromSpool(job, 0), false, 'start 0 is the normal live path');
+  assert.equal(canServeSeekFromSpool(job, 1200), true, 'at init end, buffered');
+  assert.equal(canServeSeekFromSpool(job, 4_999_999), true, 'inside buffered window');
+  job.liveEnded = true;
+  assert.equal(canServeSeekFromSpool(job, 5_000_000), false, 'beyond buffered, live ended');
+  assert.equal(canServeSeekFromSpool(job, 4_000_000_000), false, 'way beyond, live ended');
+  job.liveEnded = false;
+  assert.equal(canServeSeekFromSpool(job, 9_000_000), true, 'beyond buffered but live running: bytes will arrive');
+  assert.equal(canServeSeekFromSpool(job, 600), false, 'inside the init segment: not a valid seek target');
+});
+
+test('waitForSpoolOffset: resolves immediately when buffered, on end, and on abort', async () => {
+  const job = fakeLiveJob(Buffer.alloc(8));
+  job.spoolBytes = 1_000;
+  assert.equal(await waitForSpoolOffset(job, 500), 1_000, 'already buffered -> immediate');
+  job.liveEnded = true;
+  assert.equal(await waitForSpoolOffset(job, 5_000), 1_000, 'ended short -> immediate short frontier');
+  // Abort while waiting for growth.
+  const job2 = fakeLiveJob(Buffer.alloc(8));
+  job2.spoolBytes = 100;
+  const ac = new AbortController();
+  const p = waitForSpoolOffset(job2, 5_000, ac.signal);
+  setTimeout(() => ac.abort(), 20);
+  assert.equal(await p, 100, 'abort resolves with the current frontier');
+  // Growth while waiting (frontier must be re-checked on notify).
+  const job3 = fakeLiveJob(Buffer.alloc(8));
+  job3.spoolBytes = 100;
+  const p3 = waitForSpoolOffset(job3, 5_000);
+  setTimeout(() => {
+    job3.spoolBytes = 6_000;
+    for (const w of job3.waiters.splice(0)) w();
+  }, 20);
+  assert.equal(await p3, 6_000, 'notify re-checks the frontier (no stale waiter)');
+});
+
+test('waitForSpoolOffset: removed from job.waiters after settle (no leak)', async () => {
+  const job = fakeLiveJob(Buffer.alloc(8));
+  job.spoolBytes = 100;
+  const ac = new AbortController();
+  const p = waitForSpoolOffset(job, 5_000, ac.signal);
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(job.waiters.length, 1, 'registered while pending');
+  ac.abort();
+  await p;
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(job.waiters.length, 0, 'unregistered after settle');
+});
+
+test('createLiveResponse: start-offset viewer receives the exact spool slice (cold seek)', async () => {
+  const spoolPath = path.join(tmpRoot, 'seek-spool.bin');
+  const payload = Buffer.concat([Buffer.from('INIT'), Buffer.alloc(996, 0x61), Buffer.alloc(4000, 0x62)]);
+  await fs.promises.writeFile(spoolPath, payload);
+  const job = fakeLiveJob(payload.subarray(0, 4));
+  job.spoolPath = spoolPath;
+  job.initSpoolOffset = 4;
+  job.spoolBytes = payload.length;
+  job.liveEnded = true;
+  const res = createLiveResponse(job, 4999, new AbortController().signal, 1000);
+  assert.equal(res.status, 206);
+  assert.match(res.headers.get('content-range') ?? '', /bytes 1000-4999\//);
+  const body = Buffer.from(await res.arrayBuffer());
+  assert.equal(body.length, 4000);
+  assert.ok(body.equals(payload.subarray(1000, 5000)), 'exact spool slice from the seek offset');
+});
+
+test('createLiveResponse: resolved Content-Range uses the real total once the live has ended', async () => {
+  const spoolPath = path.join(tmpRoot, 'ended-spool.bin');
+  await fs.promises.writeFile(spoolPath, Buffer.alloc(5000, 7));
+  const job = fakeLiveJob(Buffer.alloc(8));
+  job.spoolPath = spoolPath;
+  job.spoolBytes = 5000;
+  job.liveEnded = true;
+  const res = createLiveResponse(job, 5099, new AbortController().signal, 1000);
+  assert.equal(res.status, 206);
+  assert.equal(res.headers.get('content-range'), 'bytes 1000-4999/5000', 'total clamped to the actual spool length');
+  const body = Buffer.from(await res.arrayBuffer());
+  assert.equal(body.length, 4000);
+});
+
+test('Bug 4 regression: aborted live viewer never rejects unhandled (clean detach)', async () => {
+  const spoolPath = path.join(tmpRoot, 'abort-spool.bin');
+  await fs.promises.writeFile(spoolPath, Buffer.alloc(1_000_000, 9));
+  const job = fakeLiveJob(Buffer.alloc(8));
+  job.spoolPath = spoolPath;
+  job.spoolBytes = 1_000_000;
+  const ac = new AbortController();
+  const res = createLiveResponse(job, null, ac.signal);
+  const reader = res.body!.getReader();
+  const first = await reader.read(); // some bytes flowed
+  assert.ok(first.value && first.value.length > 0);
+  // Browser aborts: cancel + controller error at once (the crash shape).
+  const cancelPromise = reader.cancel().catch(() => 'cancelled');
+  ac.abort();
+  await cancelPromise;
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(job.subscribers.size, 0, 'viewer detached from the job');
+});
+
+test('Bug 4 regression: cancel AFTER stream end does not reject or crash', async () => {
+  const spoolPath = path.join(tmpRoot, 'late-cancel-spool.bin');
+  await fs.promises.writeFile(spoolPath, Buffer.from('short'));
+  const job = fakeLiveJob(Buffer.alloc(8));
+  job.spoolPath = spoolPath;
+  job.spoolBytes = 5;
+  job.liveEnded = true;
+  const res = createLiveResponse(job, null, new AbortController().signal);
+  const body = Buffer.from(await res.arrayBuffer());
+  assert.ok(body.equals(Buffer.from('short')));
+  // Response fully consumed; a late reader.cancel() must be harmless.
+  await res.body!.cancel().catch(() => 'already closed');
+  await new Promise((r) => setTimeout(r, 20));
+});
+
+// ---------------------------------------------------------------------------
+// Bug 6: orphaned temp cleanup
+// ---------------------------------------------------------------------------
+test('cleanupOrphanedTempFiles: removes only temp files, keeps caches', async () => {
+  const dir = mediaCacheDir();
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, '4242.ts.part'), 'junk');
+  fs.writeFileSync(path.join(dir, '4243.part.mp4'), 'junk');
+  fs.writeFileSync(path.join(dir, '4244.live.spool'), 'junk');
+  fs.writeFileSync(path.join(dir, '4242.mp4'), 'real-cache');
+  fs.writeFileSync(path.join(dir, '4242.json'), '{}');
+  await cleanupOrphanedTempFiles();
+  assert.equal(fs.existsSync(path.join(dir, '4242.ts.part')), false, '.ts.part removed');
+  assert.equal(fs.existsSync(path.join(dir, '4243.part.mp4')), false, '.part.mp4 removed');
+  assert.equal(fs.existsSync(path.join(dir, '4244.live.spool')), false, '.live.spool removed');
+  assert.equal(fs.existsSync(path.join(dir, '4242.mp4')), true, 'cache untouched');
+  assert.equal(fs.existsSync(path.join(dir, '4242.json')), true, 'sidecar untouched');
 });

@@ -21,11 +21,20 @@
 
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { randomBytes } from 'node:crypto';
 import { createTestDatabase } from './helpers/test-db';
 
 const db = createTestDatabase('media-route-unit');
 process.env.DATABASE_URL = db.url;
 process.env.MEGA_SESSION_ENCRYPTION_KEY = 'ab'.repeat(32);
+// Isolated cache dir for this test file (warm-cache + temp-file assertions).
+const MEDIA_CACHE_TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'media-route-unit-'));
+process.env.MEDIA_CACHE_DIR = MEDIA_CACHE_TMP;
 
 import { encrypt } from 'megajs';
 import { encryptSecret } from '@/lib/mega/envelope';
@@ -150,6 +159,35 @@ before(async () => {
   ({ createMegaAccount, MEGA_ACCOUNT_STATUSES } = await import('@/lib/megaAccounts'));
   const route = await import('@/app/api/media/[videoId]/route');
   handleMediaRequest = route.handleMediaRequest;
+  // Build a small real MPEG-TS fixture (ffmpeg + megajs encryption) for the
+  // cold-pipeline tests. Skipped gracefully when ffmpeg is unavailable.
+  try {
+    const tmp = path.join(os.tmpdir(), `media-route-ts-${randomBytes(4).toString('hex')}.ts`);
+    await execFileP('ffmpeg', [
+      '-v', 'error', '-y',
+      '-f', 'lavfi', '-i', 'testsrc=duration=6:size=320x240:rate=10',
+      '-f', 'lavfi', '-i', 'sine=frequency=440:duration=6',
+      '-c:v', 'libopenh264', '-b:v', '120k', '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac', '-b:a', '16k',
+      '-force_key_frames', 'expr:gte(t,n_forced*1)',
+      '-muxdelay', '0', '-muxpreload', '0',
+      '-f', 'mpegts', tmp,
+    ]);
+    const plain = fs.readFileSync(tmp);
+    fs.rmSync(tmp, { force: true });
+    const { encrypt } = await import('megajs');
+    const encKey = Buffer.concat([Buffer.alloc(16, 0x55), Buffer.alloc(8, 0x66)]);
+    const encStream = encrypt(encKey);
+    const ctChunks: Buffer[] = [];
+    const keyRef: { key: Buffer } = { key: Buffer.alloc(32) };
+    encStream.on('data', (c: Buffer) => ctChunks.push(Buffer.from(c)));
+    encStream.on('end', () => { keyRef.key = Buffer.from(encStream.key); });
+    encStream.end(plain);
+    while (keyRef.key.every((b) => b === 0)) await new Promise((r) => setTimeout(r, 10));
+    FF_TS = { plain, ct: Buffer.concat(ctChunks), key: keyRef.key };
+  } catch {
+    FF_TS = null; // cold-pipeline tests skip; everything else still runs
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -341,4 +379,142 @@ test('MEGA boundary exposes no destructive capability (read-only surface)', asyn
   assert.equal(typeof deps.withMegaSession, 'function');
   assert.equal(typeof deps.getDownloadUrl, 'function');
   assert.equal(typeof deps.fetchCiphertext, 'function');
+});
+
+// ---------------------------------------------------------------------------
+// Bug 2: a cold MPEG-TS seek must be served from the live spool window, not
+// answered as JSON 503 after a 45 s cache wait.
+// ---------------------------------------------------------------------------
+const execFileP = promisify(execFile);
+/**
+ * Real MPEG-TS fixture (ffmpeg-generated, megajs-encrypted): the cold TS
+ * pipeline only works when ffmpeg can actually transmux the bytes, so these
+ * tests use genuine TS content and skip cleanly when ffmpeg is unavailable.
+ */
+let FF_TS: { plain: Buffer; ct: Buffer; key: Buffer } | null = null;
+
+function tsCiphertextResponse(url: string): Response {
+  const m = url.match(/\/(\d+)-(\d+)$/);
+  const from = m ? Number(m[1]) : 0;
+  const to = m ? Number(m[2]) : FF_TS!.ct.length - 1;
+  return new Response(Buffer.from(FF_TS!.ct.subarray(from, to + 1)), { status: 200 });
+}
+
+function tsDeps(overrides: Partial<MediaDeps> = {}): MediaDeps {
+  return fakeDeps({
+    getDownloadUrl: async (): Promise<TemporaryDownloadUrl> => ({ url: UPSTREAM, size: FF_TS!.plain.length }),
+    fetchCiphertext: async (url) => tsCiphertextResponse(url),
+    ...overrides,
+  });
+}
+
+async function makeTsVideo(slug: string) {
+  const u = await makeUser(`ts-${slug}`);
+  const acc = await makeAccount(u.id, `ts-${slug}@example.com`);
+  const v = await prisma.video.create({
+    data: {
+      megaAccountId: acc.id,
+      megaNodeId: `node-ts-${slug}`,
+      megaFilename: 'Creator - TS Title.mp4',
+      title: 'TS Title',
+      slug,
+      creatorAssignment: 'none',
+      fileSize: BigInt(FF_TS!.plain.length),
+      mimeType: 'video/mp2t',
+      fileKeyEncrypted: encryptSecret(FF_TS!.key),
+    },
+  });
+  return { user: u, video: v };
+}
+
+test('cold MPEG-TS seek while the live is running -> 206 media bytes (no JSON 503)', async (t) => {
+  if (!FF_TS) return t.skip('ffmpeg unavailable: cannot build a real TS fixture');
+  const { user, video } = await makeTsVideo('cold-seek');
+  // Slow every upstream fetch slightly so the pipeline is provably still
+  // warming while the seek arrives (the old code waited 45 s then sent JSON).
+  const deps = tsDeps({
+    fetchCiphertext: async (url) => {
+      await new Promise((r) => setTimeout(r, 80));
+      return tsCiphertextResponse(url);
+    },
+  });
+  // Kick the pipeline off (start-0 open-ended GET); detach the viewer.
+  const startedPromise = handleMediaRequest(user.id, String(video.id), new Headers(), new AbortController().signal, deps);
+  startedPromise.then((r) => r.body?.cancel().catch(() => {})).catch(() => {});
+  // Wait until the live spool holds real bytes (init + first fragments).
+  const spoolPath = path.join(MEDIA_CACHE_TMP, `${video.id}.live.spool`);
+  let spooled = 0;
+  for (let i = 0; i < 100 && spooled < 4096; i++) {
+    await new Promise((r) => setTimeout(r, 25));
+    try {
+      spooled = fs.statSync(spoolPath).size;
+    } catch {
+      spooled = 0;
+    }
+  }
+  // Immediately seek within the already-spooled window.
+  const seekRes = await handleMediaRequest(
+    user.id,
+    String(video.id),
+    new Headers({ range: 'bytes=2048-8191' }),
+    new AbortController().signal,
+    deps,
+  );
+  // Bug 2 contract: a media response with real Range semantics - never the
+  // JSON 503 the media element cannot interpret. (Exact x-media-path is
+  // timing-dependent: live-spool while warming, warm-cache once done.)
+  assert.equal(seekRes.status, 206);
+  assert.equal(seekRes.headers.get('content-type'), 'video/mp4');
+  assert.match(seekRes.headers.get('content-range') ?? '', /^bytes 2048-\d+\//, 'a real Content-Range, not JSON');
+  await readBody(seekRes);
+  await startedPromise.catch(() => {});
+});
+
+test('cold MPEG-TS start-0 GET still streams a byte-continuous fMP4 (init first)', async (t) => {
+  if (!FF_TS) return t.skip('ffmpeg unavailable: cannot build a real TS fixture');
+  const { user, video } = await makeTsVideo('cold-start');
+  const res = await handleMediaRequest(user.id, String(video.id), new Headers(), new AbortController().signal, tsDeps());
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'video/mp4');
+  const body = await readBody(res);
+  // Live fMP4 output must START with the init segment (ftyp+moov): the
+  // regression where the spool began at 'moof' corrupted every viewer.
+  assert.ok(body.length >= 8, 'has bytes');
+  assert.equal(body.subarray(4, 8).toString('latin1'), 'ftyp', 'stream starts with the fMP4 init segment');
+});
+
+test('warm MPEG-TS cache hit -> 206 range from the cache file, no MEGA contact', async () => {
+  const { user, video } = await makeTsVideo('warm-hit');
+  // Seed a valid warm cache for this video.
+  const { remuxCachePaths } = await import('@/lib/media/remux');
+  const { mp4Path, sidecarPath } = remuxCachePaths(video.id);
+  fs.mkdirSync(path.dirname(mp4Path), { recursive: true });
+  const cacheBytes = Buffer.from('fake-warm-mp4-bytes');
+  fs.writeFileSync(mp4Path, cacheBytes);
+  fs.writeFileSync(
+    sidecarPath,
+    JSON.stringify({ megaNodeId: `node-ts-warm-hit`, sourceSize: FF_TS ? FF_TS.plain.length : Number(video.fileSize), outputSize: cacheBytes.length }),
+  );
+  let megaTouched = false;
+  const res = await handleMediaRequest(
+    user.id,
+    String(video.id),
+    new Headers({ range: 'bytes=0-9' }),
+    new AbortController().signal,
+    fakeDeps({
+      withMegaSession: async () => {
+        megaTouched = true;
+        throw new Error('warm hit must not touch MEGA');
+      },
+    }),
+  );
+  assert.equal(megaTouched, false, 'P0 guarantee: warm cache answers before any MEGA work');
+  assert.equal(res.status, 206);
+  assert.equal(res.headers.get('x-media-path'), 'warm-cache');
+  assert.ok(Buffer.from(await res.arrayBuffer()).equals(cacheBytes.subarray(0, 10)));
+  fs.rmSync(path.dirname(mp4Path), { recursive: true, force: true });
+});
+
+after(() => {
+  fs.rmSync(MEDIA_CACHE_TMP, { recursive: true, force: true });
 });
