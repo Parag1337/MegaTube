@@ -158,6 +158,11 @@ test('findFragmentedMp4InitEnd: init ends where the first moof starts', () => {
 function fakeLiveJob(init: Buffer): LiveRemuxJob {
   return {
     videoId: 1,
+    xBroadcastBytes: 0,
+    xStartedAt: Date.now(),
+    spoolPath: '',
+    spoolSynced: Promise.resolve(),
+    spoolBytes: 0,
     cache: Promise.resolve(null),
     ready: Promise.resolve(),
     liveEnded: false,
@@ -165,20 +170,21 @@ function fakeLiveJob(init: Buffer): LiveRemuxJob {
     initSegment: init,
     subscribers: new Set(),
     waiters: [],
+    xJoinedCount: 0,
   };
 }
 
-test('createLiveResponse: bytes=0-N collects init+tail and ends 206', async () => {
+test('createLiveResponse: bytes=0-N replays the spool and ends 206', async () => {
+  const spoolPath = path.join(tmpRoot, 'live-spool.bin');
+  await fs.promises.writeFile(spoolPath, Buffer.from('INIT0123456789EXTRA'));
   const job = fakeLiveJob(Buffer.from('INIT'));
+  job.spoolPath = spoolPath;
+  job.spoolBytes = Buffer.from('INIT0123456789EXTRA').length;
   const res = createLiveResponse(job, 9, new AbortController().signal);
   assert.equal(res.status, 206);
   assert.equal(res.headers.get('content-type'), REMUXED_MIME_TYPE);
   assert.equal(res.headers.get('content-range'), 'bytes 0-9/*');
-  // Feed the tail the live pipeline would broadcast, then end it.
-  for (const sub of job.subscribers) {
-    sub.queue.push(Buffer.from('0123456789EXTRA'));
-    sub.notify();
-  }
+  // Live ended: the reader emits the bytes and terminates cleanly.
   job.liveEnded = true;
   for (const sub of job.subscribers) sub.notify();
   const body = Buffer.from(await res.arrayBuffer());

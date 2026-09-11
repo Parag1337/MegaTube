@@ -138,12 +138,35 @@ function toMegaError(err: unknown, context: 'login' | 'session'): MegaError {
  * megajs's `API.request` is typed against the global JSON utility type and
  * its `sid` field is not in the .d.ts (it is set at runtime). The protocol
  * commands are plain objects; this helper gives us a clean call signature.
+ *
+ * Bounded: megajs issues API calls with no timeout of its own, so a MEGA
+ * socket that accepts but never answers would pend the caller (e.g. a media
+ * request) FOREVER behind an innocent spinner. The timeout rejects with
+ * transient-classified text (matches RE_TRANSIENT via "temporarily
+ * unavailable") so callers retry / surface a real error instead of hanging.
  */
+const MEGA_API_TIMEOUT_MS = 30_000;
+
 function apiRequest(storage: Storage, cmd: Record<string, unknown>): Promise<unknown> {
   const request = storage.api.request as unknown as (
     cmd: Record<string, unknown>,
   ) => Promise<unknown>;
-  return request.call(storage.api, cmd);
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error('MEGA API request timed out (temporarily unavailable)'));
+    }, MEGA_API_TIMEOUT_MS);
+    if (typeof timer === 'object' && typeof (timer as unknown as { unref?: unknown }).unref === 'function') {
+      (timer as unknown as { unref(): void }).unref();
+    }
+  });
+  const pending = request.call(storage.api, cmd);
+  // The race loser keeps running: a late megajs rejection after the timeout
+  // won must not surface as an unhandled rejection.
+  pending.catch(() => {});
+  return Promise.race([pending, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 /** Attach the session id to a storage API transport (runtime field). */

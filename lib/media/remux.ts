@@ -342,13 +342,27 @@ export function patchFragmentedMp4Duration(init: Buffer, durationSeconds: number
 // ---------------------------------------------------------------------------
 
 interface LiveSubscriber {
-  queue: Buffer[];
   notify: () => void;
   detached: boolean;
 }
 
 export interface LiveRemuxJob {
   videoId: number;
+  /** DIAG: total bytes broadcast to subscribers (live stream pacing). */
+  xBroadcastBytes: number;
+  /** DIAG: wall-clock ms of the job start (server-side timeline). */
+  xStartedAt: number;
+  /**
+   * Live OUTPUT spool: every viewer replays the fMP4 byte-continuously from
+   * offset 0 (init + tail + fragments). A viewer that attaches AFTER the
+   * stream started - Chrome always re-issues a second start-0 request during
+   * element setup - would otherwise receive a mid-fragment byte gap, which
+   * corrupts the stream for Chrome (player parks at 0:00). `spoolBytes` is
+   * only authoritative once the latest `spoolSynced` link has settled.
+   */
+  spoolPath: string;
+  spoolSynced: Promise<void>;
+  spoolBytes: number;
   /** Resolves to the published faststart cache (null when unconvertible). */
   cache: Promise<{ path: string; size: number } | null>;
   /**
@@ -364,22 +378,75 @@ export interface LiveRemuxJob {
   initSegment: Buffer | null;
   subscribers: Set<LiveSubscriber>;
   waiters: Array<() => void>;
+  /** DIAG: number of requests that joined this job after creation. */
+  xJoinedCount: number;
 }
 
 const liveJobs = new Map<number, LiveRemuxJob>();
 
+// ---------------------------------------------------------------------------
+// Bounded remux concurrency (per-process, single-Node)
+// ---------------------------------------------------------------------------
+
+const MAX_CONCURRENT_REMUX = Number(process.env.MAX_CONCURRENT_REMUX) || 2;
+let activeRemux = 0;
+const remuxWaiters: (() => void)[] = [];
+
+async function acquireRemuxSlot(): Promise<void> {
+  if (activeRemux < MAX_CONCURRENT_REMUX) {
+    activeRemux++;
+    return;
+  }
+  await new Promise<void>((resolve) => remuxWaiters.push(resolve));
+  activeRemux++;
+}
+
+function releaseRemuxSlot(): void {
+  activeRemux--;
+  const next = remuxWaiters.shift();
+  if (next) next();
+}
+
+export function getLiveRemuxStats(): { active: number; videoIds: number[] } {
+  return {
+    active: liveJobs.size,
+    videoIds: [...liveJobs.keys()],
+  };
+}
+
 function broadcast(job: LiveRemuxJob, chunk: Buffer): void {
+  job.xBroadcastBytes += chunk.length;
+  if (job.xBroadcastBytes <= chunk.length || job.xBroadcastBytes % (4 * 1024 * 1024) < chunk.length) {
+    console.warn(
+      `[livejob] ${job.videoId} broadcast cum=${job.xBroadcastBytes} at +${Date.now() - job.xStartedAt}ms subs=${job.subscribers.size}`,
+    );
+  }
+  // Persist to the spool in strict order BEFORE waking readers, so after a
+  // subscriber awaits `spoolSynced` the file always contains [0..spoolBytes).
+  job.spoolSynced = job.spoolSynced
+    .catch(() => {})
+    .then(() => fs.promises.appendFile(job.spoolPath, chunk))
+    .then(() => {
+      job.spoolBytes += chunk.length;
+    })
+    .catch((err) => {
+      // A failed spool append is exceptional (local temp disk). Readers may
+      // see a short spool and finish early; log so it is not silent.
+      console.warn(
+        `[livejob] ${job.videoId} spool write failed: ${err instanceof Error ? err.message.slice(0, 120) : typeof err}`,
+      );
+    });
   for (const sub of job.subscribers) {
-    if (!sub.detached) {
-      sub.queue.push(chunk);
-      sub.notify();
-    }
+    if (!sub.detached) sub.notify();
   }
 }
 
 function endBroadcast(job: LiveRemuxJob, err: unknown): void {
   job.liveEnded = true;
   job.liveError = err ?? null;
+  console.warn(
+    `[livejob] ${job.videoId} endBroadcast at +${Date.now() - job.xStartedAt}ms err=${err instanceof Error ? err.message.slice(0, 60) : typeof err} sent=${job.xBroadcastBytes}`,
+  );
   for (const sub of job.subscribers) sub.notify();
   for (const w of job.waiters.splice(0)) w();
 }
@@ -395,6 +462,11 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
 
   const job: LiveRemuxJob = {
     videoId: src.videoId,
+    xBroadcastBytes: 0,
+    xStartedAt: Date.now(),
+    spoolPath: '',
+    spoolSynced: Promise.resolve(),
+    spoolBytes: 0,
     cache: Promise.resolve(null),
     ready: Promise.resolve(),
     liveEnded: false,
@@ -402,8 +474,24 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
     initSegment: null,
     subscribers: new Set(),
     waiters: [],
+    xJoinedCount: 0,
   };
+  console.warn(`[livejob] ${src.videoId} start size=${src.size}`);
   liveJobs.set(src.videoId, job);
+  const spoolPath = path.join(mediaCacheDir(), `${src.videoId}.live.spool`);
+  job.spoolPath = spoolPath;
+  // The spool must start EMPTY so replay readers are byte-continuous from 0.
+  // Folded into job.spoolSynced so the first broadcast's append chains
+  // strictly AFTER the truncate (never interleaves).
+  job.spoolSynced = job.spoolSynced
+    .then(() => fs.promises.rm(spoolPath, { force: true }))
+    .then(() => fs.promises.appendFile(spoolPath, Buffer.alloc(0)))
+    .then(() => fs.promises.truncate(spoolPath, 0))
+    .catch((err) => {
+      console.warn(
+        `[livejob] ${src.videoId} spool init failed: ${err instanceof Error ? err.message.slice(0, 120) : typeof err}`,
+      );
+    });
 
   const fail = (err: unknown): null => {
     const detail = err instanceof Error ? `${err.name}: ${err.message.slice(0, 200)}` : typeof err;
@@ -429,6 +517,7 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
   job.ready.catch(() => {});
 
   job.cache = (async (): Promise<{ path: string; size: number } | null> => {
+    await acquireRemuxSlot();
     const startedAt = Date.now();
     try {
       const dir = mediaCacheDir();
@@ -454,6 +543,7 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
         return fail(err);
       }
       readyResolve();
+      console.warn(`[livejob] ${src.videoId} upstream-headers OK at +${Date.now() - job.xStartedAt}ms`);
 
       // Exact duration via PCR differencing (head + 188-aligned tail
       // samples, fetched in parallel with the main download - typically
@@ -480,9 +570,16 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
             console.log(
               `[media] duration probe video ${src.videoId}: pid=${found.pid} ${found.seconds.toFixed(1)}s`,
             );
+          } else {
+            console.log(
+              `[media] duration probe video ${src.videoId}: no PCR duration (head=${headPlain.length} tail=${tailPlain.length})`,
+            );
           }
           return found?.seconds ?? null;
-        } catch {
+        } catch (err) {
+          console.warn(
+            `[media] duration probe video ${src.videoId} error: ${err instanceof Error ? `${err.name} ${err.message.slice(0, 100)}` : typeof err}`,
+          );
           return null;
         }
       })();
@@ -490,6 +587,20 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
         durationPromise,
         new Promise<number | null>((r) => setTimeout(() => r(null), PCR_PROBE_TIMEOUT_MS)),
       ]);
+      // Persist exact duration even when the probe resolves after the live
+      // init already went out (timeout path) - next plays use it instantly.
+      durationPromise.then(
+        (secs) => {
+          if (secs !== null && src.durationSeconds == null) {
+            try {
+              src.onDurationKnown?.(secs);
+            } catch {
+              // persist is best-effort
+            }
+          }
+        },
+        () => {},
+      );
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { decrypt } = require('megajs') as typeof import('megajs');
       const decryptor = decrypt(src.fileKey, { start: 0, disableVerification: false });
@@ -531,13 +642,9 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
             const effective = src.durationSeconds ?? pcrSeconds;
             job.initSegment =
               patchFragmentedMp4Duration(rawInit, effective) ?? rawInit;
-            if (src.durationSeconds == null && pcrSeconds !== null) {
-              try {
-                src.onDurationKnown?.(pcrSeconds);
-              } catch {
-                // persist is best-effort
-              }
-            }
+            console.warn(
+              `[livejob] ${src.videoId} init published ${job.initSegment.length}B eff=${effective ?? 'null'} at +${Date.now() - job.xStartedAt}ms`,
+            );
             for (const w of job.waiters.splice(0)) w();
             if (tail.length > 0) broadcast(job, tail);
             initAccum = [];
@@ -611,6 +718,16 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
       });
 
       await downloadDone;
+      // A clean early-EOF (MEGA closing a throttled connection, e.g. mid-
+      // download 509 pressure) resolves the pipe WITHOUT error - but the
+      // file is then short. Verify exact size; anything else fails the job
+      // instead of publishing a truncated cache / ending live early.
+      const tsStat = await fs.promises.stat(tsTmp);
+      if (tsStat.size !== src.size) {
+        return fail(
+          new Error(`truncated download: got ${tsStat.size} of ${src.size} bytes`),
+        );
+      }
       console.log(
         `[media] live remux download video ${src.videoId}: ${(src.size / 1048576).toFixed(1)} MB in ${Date.now() - startedAt}ms`,
       );
@@ -632,10 +749,12 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
       readyReject(err);
       return fail(err);
     } finally {
+      releaseRemuxSlot();
       if (liveJobs.get(src.videoId) === job) liveJobs.delete(src.videoId);
       try {
         const dir = mediaCacheDir();
         await fs.promises.rm(path.join(dir, `${src.videoId}.part.mp4`), { force: true });
+        await fs.promises.rm(path.join(dir, `${src.videoId}.live.spool`), { force: true });
       } catch {
         // ignore cleanup errors
       }
@@ -645,8 +764,29 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
   return job;
 }
 
-/** Wait until the live init segment is available (or the live fails). */
-function waitForInit(job: LiveRemuxJob): Promise<Buffer> {
+/**
+ * True when a live remux pipeline is already running for this video.
+ */
+export function hasLiveRemuxJob(videoId: number): boolean {
+  return liveJobs.has(videoId);
+}
+
+/**
+ * Mark that an additional request has joined an existing live remux job.
+ * No-op if no job exists for this video.
+ */
+export function joinLiveRemuxJob(videoId: number): void {
+  const job = liveJobs.get(videoId);
+  if (job) job.xJoinedCount++;
+}
+
+/**
+ * Wait until the live init segment is available (or the live fails).
+ * Exported so the route can preflight "bytes will actually flow" before
+ * committing response headers (an init-less 200 makes Chrome abort the
+ * request a few seconds later and park the player at 0:00).
+ */
+export function waitForLiveInit(job: LiveRemuxJob): Promise<Buffer> {
   if (job.initSegment) return Promise.resolve(job.initSegment);
   if (job.liveEnded) return Promise.reject(job.liveError ?? new Error('live stream ended'));
   return new Promise<Buffer>((resolve, reject) => {
@@ -670,7 +810,7 @@ export function createLiveResponse(
   endByte: number | null,
   signal?: AbortSignal,
 ): Response {
-  const sub: LiveSubscriber = { queue: [], notify: () => {}, detached: false };
+  const sub: LiveSubscriber = { notify: () => {}, detached: false };
   job.subscribers.add(sub);
   let waiter: (() => void) | null = null;
   let aborted = false;
@@ -703,33 +843,55 @@ export function createLiveResponse(
   }
 
   async function* streamBytes(): AsyncGenerator<Buffer> {
+    console.warn(`[livejob] ${job.videoId} stream open sub=${job.subscribers.size} awaitInit`);
     try {
-      // Init segment first, unless the viewer is already gone - awaiting a
-      // dead viewer and yielding into a torn-down stream is exactly the
-      // "Controller is already closed" crash. Every yield below is guarded
-      // by the detached check at the top of the loop for the same reason.
-      yield await Promise.race([waitForInit(job), viewerGone]);
-      let sent = job.initSegment?.length ?? 0;
-      if (endByte !== null && sent > endByte + 1) {
-        return;
-      }
+      // Wait for the init (guaranteed by the route's bounded preflight for
+      // the FIRST viewer; a late joiner's spool replay includes it anyway).
+      // NOTE: the init bytes are NOT yielded here - the spool replay below
+      // starts at offset 0 and already contains them.
+      await Promise.race([waitForLiveInit(job), viewerGone]);
+      console.warn(`[livejob] ${job.videoId} stream init-ready at +${Date.now() - job.xStartedAt}ms`);
+      let sent = 0;
       for (;;) {
         if (aborted || sub.detached) return;
-        while (sub.queue.length > 0) {
-          let chunk = sub.queue.shift() as Buffer;
-          if (endByte !== null && sent + chunk.length > endByte + 1) {
-            chunk = chunk.subarray(0, endByte + 1 - sent);
+        // The spool is the single truth: every viewer replays the stream
+        // byte-continuously from offset 0, so a request that arrives after
+        // streaming started (Chrome always re-issues a start-0 request
+        // during element setup) still receives a valid fMP4 from the very
+        // first byte. Await the chain snapshot so appends are durable.
+        const synced = job.spoolSynced;
+        await Promise.race([synced, viewerGone]);
+        if (aborted || sub.detached) return;
+        const frontier = job.spoolBytes;
+        if (frontier > sent) {
+          const rs = fs.createReadStream(job.spoolPath, {
+            start: sent,
+            end: frontier - 1,
+          });
+          let readErr: Error | null = null;
+          rs.on('error', (e: Error) => {
+            readErr = e;
+            (rs as { destroy?: () => void }).destroy?.();
+          });
+          for await (const chunk of rs as unknown as AsyncIterable<Buffer>) {
+            if (aborted || sub.detached) return;
+            if (endByte !== null && sent + chunk.length > endByte + 1) {
+              const head = chunk.subarray(0, endByte + 1 - sent);
+              sent += head.length;
+              yield head;
+              return;
+            }
+            sent += chunk.length;
             yield chunk;
-            return;
           }
-          sent += chunk.length;
-          yield chunk;
+          if (readErr) throw readErr;
         }
         if (job.liveEnded) {
-          if (job.liveError && sent === (job.initSegment?.length ?? 0)) throw job.liveError;
+          if (job.liveError && sent === 0) throw job.liveError;
           return;
         }
         if (aborted || sub.detached) return;
+        // Wait for more spool bytes (or the live ending).
         await new Promise<void>((r) => {
           waiter = r;
           sub.notify = () => {
@@ -745,7 +907,9 @@ export function createLiveResponse(
       // Viewer gone or downstream torn down: never propagate (the Response
       // stream machinery treats a generator throw as a stream error, and a
       // post-abort yield crashes with "Controller is already closed").
+      console.warn(`[livejob] ${job.videoId} stream threw (aborted=${aborted} detached=${sub.detached})`);
     } finally {
+      console.warn(`[livejob] ${job.videoId} stream closed (aborted=${aborted} detached=${sub.detached})`);
       detach();
     }
   }
@@ -761,8 +925,10 @@ export function createLiveResponse(
   });
   if (endByte !== null) {
     headers.set('Content-Range', `bytes 0-${endByte}/*`);
+    headers.set('X-Media-Path', 'live');
     return new Response(webOut, { status: 206, headers });
   }
+  headers.set('X-Media-Path', 'live');
   return new Response(webOut, { status: 200, headers });
 }
 
@@ -787,7 +953,7 @@ export function createCachedFileResponse(
     });
   }
   nodeStream.on('error', (err: Error) => {
-    if (!aborted) {
+    if (!aborted && err.name !== 'AbortError') {
       console.warn(`[media] cached file stream error: ${err.name}: ${err.message.slice(0, 80)}`);
     }
   });
@@ -798,6 +964,7 @@ export function createCachedFileResponse(
     'Accept-Ranges': 'bytes',
     'Cache-Control': 'no-store',
     'Content-Length': String(end - start + 1),
+    'X-Media-Path': 'warm-cache',
   });
   if (partial) headers.set('Content-Range', `bytes ${start}-${end}/${size}`);
   return new Response(webOut, { status: partial ? 206 : 200, headers });

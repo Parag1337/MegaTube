@@ -86,6 +86,17 @@ test('classifyMegaError: unexpected failure is permanent at login, unknown in se
   assert.equal(classifyMegaError('plain string error (-16)', 'login'), 'auth');
 });
 
+test('classifyMegaError: API timeout text is transient (retryable, never a silent hang)', () => {
+  assert.equal(
+    classifyMegaError(new Error('MEGA API request timed out (temporarily unavailable)'), 'session'),
+    'transient',
+  );
+  assert.equal(
+    classifyMegaError(new Error('MEGA API request timed out (temporarily unavailable)'), 'login'),
+    'transient',
+  );
+});
+
 test('MegaError carries kind, safe message, and api code', () => {
   const err = new MegaError('session-expired', safeMegaErrorMessage('session-expired'), -15);
   assert.equal(err.name, 'MegaError');
