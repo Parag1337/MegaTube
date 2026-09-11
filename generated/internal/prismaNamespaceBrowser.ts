@@ -55,7 +55,10 @@ export const ModelName = {
   Video: 'Video',
   User: 'User',
   MegaAccount: 'MegaAccount',
-  Session: 'Session'
+  Session: 'Session',
+  WatchlistItem: 'WatchlistItem',
+  SavedVideo: 'SavedVideo',
+  WatchHistory: 'WatchHistory'
 } as const
 
 export type ModelName = (typeof ModelName)[keyof typeof ModelName]
@@ -159,6 +162,37 @@ export const SessionScalarFieldEnum = {
 } as const
 
 export type SessionScalarFieldEnum = (typeof SessionScalarFieldEnum)[keyof typeof SessionScalarFieldEnum]
+
+
+export const WatchlistItemScalarFieldEnum = {
+  id: 'id',
+  userId: 'userId',
+  videoId: 'videoId',
+  createdAt: 'createdAt'
+} as const
+
+export type WatchlistItemScalarFieldEnum = (typeof WatchlistItemScalarFieldEnum)[keyof typeof WatchlistItemScalarFieldEnum]
+
+
+export const SavedVideoScalarFieldEnum = {
+  id: 'id',
+  userId: 'userId',
+  videoId: 'videoId',
+  createdAt: 'createdAt'
+} as const
+
+export type SavedVideoScalarFieldEnum = (typeof SavedVideoScalarFieldEnum)[keyof typeof SavedVideoScalarFieldEnum]
+
+
+export const WatchHistoryScalarFieldEnum = {
+  id: 'id',
+  userId: 'userId',
+  videoId: 'videoId',
+  lastWatchedAt: 'lastWatchedAt',
+  createdAt: 'createdAt'
+} as const
+
+export type WatchHistoryScalarFieldEnum = (typeof WatchHistoryScalarFieldEnum)[keyof typeof WatchHistoryScalarFieldEnum]
 
 
 export const SortOrder = {

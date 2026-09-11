@@ -398,6 +398,9 @@ export type VideoWhereInput = {
   megaModifiedAt?: Prisma.DateTimeNullableFilter<"Video"> | Date | string | null
   creator?: Prisma.XOR<Prisma.CreatorNullableScalarRelationFilter, Prisma.CreatorWhereInput> | null
   megaAccount?: Prisma.XOR<Prisma.MegaAccountNullableScalarRelationFilter, Prisma.MegaAccountWhereInput> | null
+  watchlistedBy?: Prisma.WatchlistItemListRelationFilter
+  savedBy?: Prisma.SavedVideoListRelationFilter
+  watchHistory?: Prisma.WatchHistoryListRelationFilter
 }
 
 export type VideoOrderByWithRelationInput = {
@@ -428,6 +431,9 @@ export type VideoOrderByWithRelationInput = {
   megaModifiedAt?: Prisma.SortOrderInput | Prisma.SortOrder
   creator?: Prisma.CreatorOrderByWithRelationInput
   megaAccount?: Prisma.MegaAccountOrderByWithRelationInput
+  watchlistedBy?: Prisma.WatchlistItemOrderByRelationAggregateInput
+  savedBy?: Prisma.SavedVideoOrderByRelationAggregateInput
+  watchHistory?: Prisma.WatchHistoryOrderByRelationAggregateInput
 }
 
 export type VideoWhereUniqueInput = Prisma.AtLeast<{
@@ -462,6 +468,9 @@ export type VideoWhereUniqueInput = Prisma.AtLeast<{
   megaModifiedAt?: Prisma.DateTimeNullableFilter<"Video"> | Date | string | null
   creator?: Prisma.XOR<Prisma.CreatorNullableScalarRelationFilter, Prisma.CreatorWhereInput> | null
   megaAccount?: Prisma.XOR<Prisma.MegaAccountNullableScalarRelationFilter, Prisma.MegaAccountWhereInput> | null
+  watchlistedBy?: Prisma.WatchlistItemListRelationFilter
+  savedBy?: Prisma.SavedVideoListRelationFilter
+  watchHistory?: Prisma.WatchHistoryListRelationFilter
 }, "id" | "slug" | "megaAccountId_megaNodeId">
 
 export type VideoOrderByWithAggregationInput = {
@@ -553,6 +562,9 @@ export type VideoCreateInput = {
   megaModifiedAt?: Date | string | null
   creator?: Prisma.CreatorCreateNestedOneWithoutVideosInput
   megaAccount?: Prisma.MegaAccountCreateNestedOneWithoutVideosInput
+  watchlistedBy?: Prisma.WatchlistItemCreateNestedManyWithoutVideoInput
+  savedBy?: Prisma.SavedVideoCreateNestedManyWithoutVideoInput
+  watchHistory?: Prisma.WatchHistoryCreateNestedManyWithoutVideoInput
 }
 
 export type VideoUncheckedCreateInput = {
@@ -581,6 +593,9 @@ export type VideoUncheckedCreateInput = {
   updatedAt?: Date | string
   megaFa?: string | null
   megaModifiedAt?: Date | string | null
+  watchlistedBy?: Prisma.WatchlistItemUncheckedCreateNestedManyWithoutVideoInput
+  savedBy?: Prisma.SavedVideoUncheckedCreateNestedManyWithoutVideoInput
+  watchHistory?: Prisma.WatchHistoryUncheckedCreateNestedManyWithoutVideoInput
 }
 
 export type VideoUpdateInput = {
@@ -608,6 +623,9 @@ export type VideoUpdateInput = {
   megaModifiedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   creator?: Prisma.CreatorUpdateOneWithoutVideosNestedInput
   megaAccount?: Prisma.MegaAccountUpdateOneWithoutVideosNestedInput
+  watchlistedBy?: Prisma.WatchlistItemUpdateManyWithoutVideoNestedInput
+  savedBy?: Prisma.SavedVideoUpdateManyWithoutVideoNestedInput
+  watchHistory?: Prisma.WatchHistoryUpdateManyWithoutVideoNestedInput
 }
 
 export type VideoUncheckedUpdateInput = {
@@ -636,6 +654,9 @@ export type VideoUncheckedUpdateInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   megaFa?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   megaModifiedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  watchlistedBy?: Prisma.WatchlistItemUncheckedUpdateManyWithoutVideoNestedInput
+  savedBy?: Prisma.SavedVideoUncheckedUpdateManyWithoutVideoNestedInput
+  watchHistory?: Prisma.WatchHistoryUncheckedUpdateManyWithoutVideoNestedInput
 }
 
 export type VideoCreateManyInput = {
@@ -836,6 +857,11 @@ export type VideoSumOrderByAggregateInput = {
   sortOrder?: Prisma.SortOrder
 }
 
+export type VideoScalarRelationFilter = {
+  is?: Prisma.VideoWhereInput
+  isNot?: Prisma.VideoWhereInput
+}
+
 export type VideoCreateNestedManyWithoutCreatorInput = {
   create?: Prisma.XOR<Prisma.VideoCreateWithoutCreatorInput, Prisma.VideoUncheckedCreateWithoutCreatorInput> | Prisma.VideoCreateWithoutCreatorInput[] | Prisma.VideoUncheckedCreateWithoutCreatorInput[]
   connectOrCreate?: Prisma.VideoCreateOrConnectWithoutCreatorInput | Prisma.VideoCreateOrConnectWithoutCreatorInput[]
@@ -944,6 +970,48 @@ export type VideoUncheckedUpdateManyWithoutMegaAccountNestedInput = {
   deleteMany?: Prisma.VideoScalarWhereInput | Prisma.VideoScalarWhereInput[]
 }
 
+export type VideoCreateNestedOneWithoutWatchlistedByInput = {
+  create?: Prisma.XOR<Prisma.VideoCreateWithoutWatchlistedByInput, Prisma.VideoUncheckedCreateWithoutWatchlistedByInput>
+  connectOrCreate?: Prisma.VideoCreateOrConnectWithoutWatchlistedByInput
+  connect?: Prisma.VideoWhereUniqueInput
+}
+
+export type VideoUpdateOneRequiredWithoutWatchlistedByNestedInput = {
+  create?: Prisma.XOR<Prisma.VideoCreateWithoutWatchlistedByInput, Prisma.VideoUncheckedCreateWithoutWatchlistedByInput>
+  connectOrCreate?: Prisma.VideoCreateOrConnectWithoutWatchlistedByInput
+  upsert?: Prisma.VideoUpsertWithoutWatchlistedByInput
+  connect?: Prisma.VideoWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.VideoUpdateToOneWithWhereWithoutWatchlistedByInput, Prisma.VideoUpdateWithoutWatchlistedByInput>, Prisma.VideoUncheckedUpdateWithoutWatchlistedByInput>
+}
+
+export type VideoCreateNestedOneWithoutSavedByInput = {
+  create?: Prisma.XOR<Prisma.VideoCreateWithoutSavedByInput, Prisma.VideoUncheckedCreateWithoutSavedByInput>
+  connectOrCreate?: Prisma.VideoCreateOrConnectWithoutSavedByInput
+  connect?: Prisma.VideoWhereUniqueInput
+}
+
+export type VideoUpdateOneRequiredWithoutSavedByNestedInput = {
+  create?: Prisma.XOR<Prisma.VideoCreateWithoutSavedByInput, Prisma.VideoUncheckedCreateWithoutSavedByInput>
+  connectOrCreate?: Prisma.VideoCreateOrConnectWithoutSavedByInput
+  upsert?: Prisma.VideoUpsertWithoutSavedByInput
+  connect?: Prisma.VideoWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.VideoUpdateToOneWithWhereWithoutSavedByInput, Prisma.VideoUpdateWithoutSavedByInput>, Prisma.VideoUncheckedUpdateWithoutSavedByInput>
+}
+
+export type VideoCreateNestedOneWithoutWatchHistoryInput = {
+  create?: Prisma.XOR<Prisma.VideoCreateWithoutWatchHistoryInput, Prisma.VideoUncheckedCreateWithoutWatchHistoryInput>
+  connectOrCreate?: Prisma.VideoCreateOrConnectWithoutWatchHistoryInput
+  connect?: Prisma.VideoWhereUniqueInput
+}
+
+export type VideoUpdateOneRequiredWithoutWatchHistoryNestedInput = {
+  create?: Prisma.XOR<Prisma.VideoCreateWithoutWatchHistoryInput, Prisma.VideoUncheckedCreateWithoutWatchHistoryInput>
+  connectOrCreate?: Prisma.VideoCreateOrConnectWithoutWatchHistoryInput
+  upsert?: Prisma.VideoUpsertWithoutWatchHistoryInput
+  connect?: Prisma.VideoWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.VideoUpdateToOneWithWhereWithoutWatchHistoryInput, Prisma.VideoUpdateWithoutWatchHistoryInput>, Prisma.VideoUncheckedUpdateWithoutWatchHistoryInput>
+}
+
 export type VideoCreateWithoutCreatorInput = {
   megaUrl?: string | null
   megaFileId?: string | null
@@ -968,6 +1036,9 @@ export type VideoCreateWithoutCreatorInput = {
   megaFa?: string | null
   megaModifiedAt?: Date | string | null
   megaAccount?: Prisma.MegaAccountCreateNestedOneWithoutVideosInput
+  watchlistedBy?: Prisma.WatchlistItemCreateNestedManyWithoutVideoInput
+  savedBy?: Prisma.SavedVideoCreateNestedManyWithoutVideoInput
+  watchHistory?: Prisma.WatchHistoryCreateNestedManyWithoutVideoInput
 }
 
 export type VideoUncheckedCreateWithoutCreatorInput = {
@@ -995,6 +1066,9 @@ export type VideoUncheckedCreateWithoutCreatorInput = {
   updatedAt?: Date | string
   megaFa?: string | null
   megaModifiedAt?: Date | string | null
+  watchlistedBy?: Prisma.WatchlistItemUncheckedCreateNestedManyWithoutVideoInput
+  savedBy?: Prisma.SavedVideoUncheckedCreateNestedManyWithoutVideoInput
+  watchHistory?: Prisma.WatchHistoryUncheckedCreateNestedManyWithoutVideoInput
 }
 
 export type VideoCreateOrConnectWithoutCreatorInput = {
@@ -1077,6 +1151,9 @@ export type VideoCreateWithoutMegaAccountInput = {
   megaFa?: string | null
   megaModifiedAt?: Date | string | null
   creator?: Prisma.CreatorCreateNestedOneWithoutVideosInput
+  watchlistedBy?: Prisma.WatchlistItemCreateNestedManyWithoutVideoInput
+  savedBy?: Prisma.SavedVideoCreateNestedManyWithoutVideoInput
+  watchHistory?: Prisma.WatchHistoryCreateNestedManyWithoutVideoInput
 }
 
 export type VideoUncheckedCreateWithoutMegaAccountInput = {
@@ -1104,6 +1181,9 @@ export type VideoUncheckedCreateWithoutMegaAccountInput = {
   updatedAt?: Date | string
   megaFa?: string | null
   megaModifiedAt?: Date | string | null
+  watchlistedBy?: Prisma.WatchlistItemUncheckedCreateNestedManyWithoutVideoInput
+  savedBy?: Prisma.SavedVideoUncheckedCreateNestedManyWithoutVideoInput
+  watchHistory?: Prisma.WatchHistoryUncheckedCreateNestedManyWithoutVideoInput
 }
 
 export type VideoCreateOrConnectWithoutMegaAccountInput = {
@@ -1129,6 +1209,408 @@ export type VideoUpdateWithWhereUniqueWithoutMegaAccountInput = {
 export type VideoUpdateManyWithWhereWithoutMegaAccountInput = {
   where: Prisma.VideoScalarWhereInput
   data: Prisma.XOR<Prisma.VideoUpdateManyMutationInput, Prisma.VideoUncheckedUpdateManyWithoutMegaAccountInput>
+}
+
+export type VideoCreateWithoutWatchlistedByInput = {
+  megaUrl?: string | null
+  megaFileId?: string | null
+  megaFileKey?: string | null
+  megaFilename: string
+  megaNodeId?: string | null
+  parentNodeId?: string | null
+  fileKeyEncrypted?: string | null
+  title: string
+  slug: string
+  creatorAssignment?: string | null
+  fileSize?: bigint | number | null
+  mimeType?: string | null
+  duration?: number | null
+  thumbnail?: string | null
+  thumbnailAvailable?: boolean
+  embedUrl?: string | null
+  sortOrder?: number
+  tags?: string | null
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  megaFa?: string | null
+  megaModifiedAt?: Date | string | null
+  creator?: Prisma.CreatorCreateNestedOneWithoutVideosInput
+  megaAccount?: Prisma.MegaAccountCreateNestedOneWithoutVideosInput
+  savedBy?: Prisma.SavedVideoCreateNestedManyWithoutVideoInput
+  watchHistory?: Prisma.WatchHistoryCreateNestedManyWithoutVideoInput
+}
+
+export type VideoUncheckedCreateWithoutWatchlistedByInput = {
+  id?: number
+  megaAccountId?: number | null
+  megaUrl?: string | null
+  megaFileId?: string | null
+  megaFileKey?: string | null
+  megaFilename: string
+  megaNodeId?: string | null
+  parentNodeId?: string | null
+  fileKeyEncrypted?: string | null
+  title: string
+  slug: string
+  creatorId?: number | null
+  creatorAssignment?: string | null
+  fileSize?: bigint | number | null
+  mimeType?: string | null
+  duration?: number | null
+  thumbnail?: string | null
+  thumbnailAvailable?: boolean
+  embedUrl?: string | null
+  sortOrder?: number
+  tags?: string | null
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  megaFa?: string | null
+  megaModifiedAt?: Date | string | null
+  savedBy?: Prisma.SavedVideoUncheckedCreateNestedManyWithoutVideoInput
+  watchHistory?: Prisma.WatchHistoryUncheckedCreateNestedManyWithoutVideoInput
+}
+
+export type VideoCreateOrConnectWithoutWatchlistedByInput = {
+  where: Prisma.VideoWhereUniqueInput
+  create: Prisma.XOR<Prisma.VideoCreateWithoutWatchlistedByInput, Prisma.VideoUncheckedCreateWithoutWatchlistedByInput>
+}
+
+export type VideoUpsertWithoutWatchlistedByInput = {
+  update: Prisma.XOR<Prisma.VideoUpdateWithoutWatchlistedByInput, Prisma.VideoUncheckedUpdateWithoutWatchlistedByInput>
+  create: Prisma.XOR<Prisma.VideoCreateWithoutWatchlistedByInput, Prisma.VideoUncheckedCreateWithoutWatchlistedByInput>
+  where?: Prisma.VideoWhereInput
+}
+
+export type VideoUpdateToOneWithWhereWithoutWatchlistedByInput = {
+  where?: Prisma.VideoWhereInput
+  data: Prisma.XOR<Prisma.VideoUpdateWithoutWatchlistedByInput, Prisma.VideoUncheckedUpdateWithoutWatchlistedByInput>
+}
+
+export type VideoUpdateWithoutWatchlistedByInput = {
+  megaUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  megaFileId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  megaFileKey?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  megaFilename?: Prisma.StringFieldUpdateOperationsInput | string
+  megaNodeId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  parentNodeId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  fileKeyEncrypted?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  title?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
+  creatorAssignment?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  fileSize?: Prisma.NullableBigIntFieldUpdateOperationsInput | bigint | number | null
+  mimeType?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  duration?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  thumbnail?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  thumbnailAvailable?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  embedUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  sortOrder?: Prisma.IntFieldUpdateOperationsInput | number
+  tags?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  megaFa?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  megaModifiedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  creator?: Prisma.CreatorUpdateOneWithoutVideosNestedInput
+  megaAccount?: Prisma.MegaAccountUpdateOneWithoutVideosNestedInput
+  savedBy?: Prisma.SavedVideoUpdateManyWithoutVideoNestedInput
+  watchHistory?: Prisma.WatchHistoryUpdateManyWithoutVideoNestedInput
+}
+
+export type VideoUncheckedUpdateWithoutWatchlistedByInput = {
+  id?: Prisma.IntFieldUpdateOperationsInput | number
+  megaAccountId?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  megaUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  megaFileId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  megaFileKey?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  megaFilename?: Prisma.StringFieldUpdateOperationsInput | string
+  megaNodeId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  parentNodeId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  fileKeyEncrypted?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  title?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
+  creatorId?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  creatorAssignment?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  fileSize?: Prisma.NullableBigIntFieldUpdateOperationsInput | bigint | number | null
+  mimeType?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  duration?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  thumbnail?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  thumbnailAvailable?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  embedUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  sortOrder?: Prisma.IntFieldUpdateOperationsInput | number
+  tags?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  megaFa?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  megaModifiedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  savedBy?: Prisma.SavedVideoUncheckedUpdateManyWithoutVideoNestedInput
+  watchHistory?: Prisma.WatchHistoryUncheckedUpdateManyWithoutVideoNestedInput
+}
+
+export type VideoCreateWithoutSavedByInput = {
+  megaUrl?: string | null
+  megaFileId?: string | null
+  megaFileKey?: string | null
+  megaFilename: string
+  megaNodeId?: string | null
+  parentNodeId?: string | null
+  fileKeyEncrypted?: string | null
+  title: string
+  slug: string
+  creatorAssignment?: string | null
+  fileSize?: bigint | number | null
+  mimeType?: string | null
+  duration?: number | null
+  thumbnail?: string | null
+  thumbnailAvailable?: boolean
+  embedUrl?: string | null
+  sortOrder?: number
+  tags?: string | null
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  megaFa?: string | null
+  megaModifiedAt?: Date | string | null
+  creator?: Prisma.CreatorCreateNestedOneWithoutVideosInput
+  megaAccount?: Prisma.MegaAccountCreateNestedOneWithoutVideosInput
+  watchlistedBy?: Prisma.WatchlistItemCreateNestedManyWithoutVideoInput
+  watchHistory?: Prisma.WatchHistoryCreateNestedManyWithoutVideoInput
+}
+
+export type VideoUncheckedCreateWithoutSavedByInput = {
+  id?: number
+  megaAccountId?: number | null
+  megaUrl?: string | null
+  megaFileId?: string | null
+  megaFileKey?: string | null
+  megaFilename: string
+  megaNodeId?: string | null
+  parentNodeId?: string | null
+  fileKeyEncrypted?: string | null
+  title: string
+  slug: string
+  creatorId?: number | null
+  creatorAssignment?: string | null
+  fileSize?: bigint | number | null
+  mimeType?: string | null
+  duration?: number | null
+  thumbnail?: string | null
+  thumbnailAvailable?: boolean
+  embedUrl?: string | null
+  sortOrder?: number
+  tags?: string | null
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  megaFa?: string | null
+  megaModifiedAt?: Date | string | null
+  watchlistedBy?: Prisma.WatchlistItemUncheckedCreateNestedManyWithoutVideoInput
+  watchHistory?: Prisma.WatchHistoryUncheckedCreateNestedManyWithoutVideoInput
+}
+
+export type VideoCreateOrConnectWithoutSavedByInput = {
+  where: Prisma.VideoWhereUniqueInput
+  create: Prisma.XOR<Prisma.VideoCreateWithoutSavedByInput, Prisma.VideoUncheckedCreateWithoutSavedByInput>
+}
+
+export type VideoUpsertWithoutSavedByInput = {
+  update: Prisma.XOR<Prisma.VideoUpdateWithoutSavedByInput, Prisma.VideoUncheckedUpdateWithoutSavedByInput>
+  create: Prisma.XOR<Prisma.VideoCreateWithoutSavedByInput, Prisma.VideoUncheckedCreateWithoutSavedByInput>
+  where?: Prisma.VideoWhereInput
+}
+
+export type VideoUpdateToOneWithWhereWithoutSavedByInput = {
+  where?: Prisma.VideoWhereInput
+  data: Prisma.XOR<Prisma.VideoUpdateWithoutSavedByInput, Prisma.VideoUncheckedUpdateWithoutSavedByInput>
+}
+
+export type VideoUpdateWithoutSavedByInput = {
+  megaUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  megaFileId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  megaFileKey?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  megaFilename?: Prisma.StringFieldUpdateOperationsInput | string
+  megaNodeId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  parentNodeId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  fileKeyEncrypted?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  title?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
+  creatorAssignment?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  fileSize?: Prisma.NullableBigIntFieldUpdateOperationsInput | bigint | number | null
+  mimeType?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  duration?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  thumbnail?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  thumbnailAvailable?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  embedUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  sortOrder?: Prisma.IntFieldUpdateOperationsInput | number
+  tags?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  megaFa?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  megaModifiedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  creator?: Prisma.CreatorUpdateOneWithoutVideosNestedInput
+  megaAccount?: Prisma.MegaAccountUpdateOneWithoutVideosNestedInput
+  watchlistedBy?: Prisma.WatchlistItemUpdateManyWithoutVideoNestedInput
+  watchHistory?: Prisma.WatchHistoryUpdateManyWithoutVideoNestedInput
+}
+
+export type VideoUncheckedUpdateWithoutSavedByInput = {
+  id?: Prisma.IntFieldUpdateOperationsInput | number
+  megaAccountId?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  megaUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  megaFileId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  megaFileKey?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  megaFilename?: Prisma.StringFieldUpdateOperationsInput | string
+  megaNodeId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  parentNodeId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  fileKeyEncrypted?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  title?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
+  creatorId?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  creatorAssignment?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  fileSize?: Prisma.NullableBigIntFieldUpdateOperationsInput | bigint | number | null
+  mimeType?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  duration?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  thumbnail?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  thumbnailAvailable?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  embedUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  sortOrder?: Prisma.IntFieldUpdateOperationsInput | number
+  tags?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  megaFa?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  megaModifiedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  watchlistedBy?: Prisma.WatchlistItemUncheckedUpdateManyWithoutVideoNestedInput
+  watchHistory?: Prisma.WatchHistoryUncheckedUpdateManyWithoutVideoNestedInput
+}
+
+export type VideoCreateWithoutWatchHistoryInput = {
+  megaUrl?: string | null
+  megaFileId?: string | null
+  megaFileKey?: string | null
+  megaFilename: string
+  megaNodeId?: string | null
+  parentNodeId?: string | null
+  fileKeyEncrypted?: string | null
+  title: string
+  slug: string
+  creatorAssignment?: string | null
+  fileSize?: bigint | number | null
+  mimeType?: string | null
+  duration?: number | null
+  thumbnail?: string | null
+  thumbnailAvailable?: boolean
+  embedUrl?: string | null
+  sortOrder?: number
+  tags?: string | null
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  megaFa?: string | null
+  megaModifiedAt?: Date | string | null
+  creator?: Prisma.CreatorCreateNestedOneWithoutVideosInput
+  megaAccount?: Prisma.MegaAccountCreateNestedOneWithoutVideosInput
+  watchlistedBy?: Prisma.WatchlistItemCreateNestedManyWithoutVideoInput
+  savedBy?: Prisma.SavedVideoCreateNestedManyWithoutVideoInput
+}
+
+export type VideoUncheckedCreateWithoutWatchHistoryInput = {
+  id?: number
+  megaAccountId?: number | null
+  megaUrl?: string | null
+  megaFileId?: string | null
+  megaFileKey?: string | null
+  megaFilename: string
+  megaNodeId?: string | null
+  parentNodeId?: string | null
+  fileKeyEncrypted?: string | null
+  title: string
+  slug: string
+  creatorId?: number | null
+  creatorAssignment?: string | null
+  fileSize?: bigint | number | null
+  mimeType?: string | null
+  duration?: number | null
+  thumbnail?: string | null
+  thumbnailAvailable?: boolean
+  embedUrl?: string | null
+  sortOrder?: number
+  tags?: string | null
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  megaFa?: string | null
+  megaModifiedAt?: Date | string | null
+  watchlistedBy?: Prisma.WatchlistItemUncheckedCreateNestedManyWithoutVideoInput
+  savedBy?: Prisma.SavedVideoUncheckedCreateNestedManyWithoutVideoInput
+}
+
+export type VideoCreateOrConnectWithoutWatchHistoryInput = {
+  where: Prisma.VideoWhereUniqueInput
+  create: Prisma.XOR<Prisma.VideoCreateWithoutWatchHistoryInput, Prisma.VideoUncheckedCreateWithoutWatchHistoryInput>
+}
+
+export type VideoUpsertWithoutWatchHistoryInput = {
+  update: Prisma.XOR<Prisma.VideoUpdateWithoutWatchHistoryInput, Prisma.VideoUncheckedUpdateWithoutWatchHistoryInput>
+  create: Prisma.XOR<Prisma.VideoCreateWithoutWatchHistoryInput, Prisma.VideoUncheckedCreateWithoutWatchHistoryInput>
+  where?: Prisma.VideoWhereInput
+}
+
+export type VideoUpdateToOneWithWhereWithoutWatchHistoryInput = {
+  where?: Prisma.VideoWhereInput
+  data: Prisma.XOR<Prisma.VideoUpdateWithoutWatchHistoryInput, Prisma.VideoUncheckedUpdateWithoutWatchHistoryInput>
+}
+
+export type VideoUpdateWithoutWatchHistoryInput = {
+  megaUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  megaFileId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  megaFileKey?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  megaFilename?: Prisma.StringFieldUpdateOperationsInput | string
+  megaNodeId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  parentNodeId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  fileKeyEncrypted?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  title?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
+  creatorAssignment?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  fileSize?: Prisma.NullableBigIntFieldUpdateOperationsInput | bigint | number | null
+  mimeType?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  duration?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  thumbnail?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  thumbnailAvailable?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  embedUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  sortOrder?: Prisma.IntFieldUpdateOperationsInput | number
+  tags?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  megaFa?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  megaModifiedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  creator?: Prisma.CreatorUpdateOneWithoutVideosNestedInput
+  megaAccount?: Prisma.MegaAccountUpdateOneWithoutVideosNestedInput
+  watchlistedBy?: Prisma.WatchlistItemUpdateManyWithoutVideoNestedInput
+  savedBy?: Prisma.SavedVideoUpdateManyWithoutVideoNestedInput
+}
+
+export type VideoUncheckedUpdateWithoutWatchHistoryInput = {
+  id?: Prisma.IntFieldUpdateOperationsInput | number
+  megaAccountId?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  megaUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  megaFileId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  megaFileKey?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  megaFilename?: Prisma.StringFieldUpdateOperationsInput | string
+  megaNodeId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  parentNodeId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  fileKeyEncrypted?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  title?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
+  creatorId?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  creatorAssignment?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  fileSize?: Prisma.NullableBigIntFieldUpdateOperationsInput | bigint | number | null
+  mimeType?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  duration?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  thumbnail?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  thumbnailAvailable?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  embedUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  sortOrder?: Prisma.IntFieldUpdateOperationsInput | number
+  tags?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  megaFa?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  megaModifiedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  watchlistedBy?: Prisma.WatchlistItemUncheckedUpdateManyWithoutVideoNestedInput
+  savedBy?: Prisma.SavedVideoUncheckedUpdateManyWithoutVideoNestedInput
 }
 
 export type VideoCreateManyCreatorInput = {
@@ -1182,6 +1664,9 @@ export type VideoUpdateWithoutCreatorInput = {
   megaFa?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   megaModifiedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   megaAccount?: Prisma.MegaAccountUpdateOneWithoutVideosNestedInput
+  watchlistedBy?: Prisma.WatchlistItemUpdateManyWithoutVideoNestedInput
+  savedBy?: Prisma.SavedVideoUpdateManyWithoutVideoNestedInput
+  watchHistory?: Prisma.WatchHistoryUpdateManyWithoutVideoNestedInput
 }
 
 export type VideoUncheckedUpdateWithoutCreatorInput = {
@@ -1209,6 +1694,9 @@ export type VideoUncheckedUpdateWithoutCreatorInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   megaFa?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   megaModifiedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  watchlistedBy?: Prisma.WatchlistItemUncheckedUpdateManyWithoutVideoNestedInput
+  savedBy?: Prisma.SavedVideoUncheckedUpdateManyWithoutVideoNestedInput
+  watchHistory?: Prisma.WatchHistoryUncheckedUpdateManyWithoutVideoNestedInput
 }
 
 export type VideoUncheckedUpdateManyWithoutCreatorInput = {
@@ -1289,6 +1777,9 @@ export type VideoUpdateWithoutMegaAccountInput = {
   megaFa?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   megaModifiedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   creator?: Prisma.CreatorUpdateOneWithoutVideosNestedInput
+  watchlistedBy?: Prisma.WatchlistItemUpdateManyWithoutVideoNestedInput
+  savedBy?: Prisma.SavedVideoUpdateManyWithoutVideoNestedInput
+  watchHistory?: Prisma.WatchHistoryUpdateManyWithoutVideoNestedInput
 }
 
 export type VideoUncheckedUpdateWithoutMegaAccountInput = {
@@ -1316,6 +1807,9 @@ export type VideoUncheckedUpdateWithoutMegaAccountInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   megaFa?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   megaModifiedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  watchlistedBy?: Prisma.WatchlistItemUncheckedUpdateManyWithoutVideoNestedInput
+  savedBy?: Prisma.SavedVideoUncheckedUpdateManyWithoutVideoNestedInput
+  watchHistory?: Prisma.WatchHistoryUncheckedUpdateManyWithoutVideoNestedInput
 }
 
 export type VideoUncheckedUpdateManyWithoutMegaAccountInput = {
@@ -1346,6 +1840,53 @@ export type VideoUncheckedUpdateManyWithoutMegaAccountInput = {
 }
 
 
+/**
+ * Count Type VideoCountOutputType
+ */
+
+export type VideoCountOutputType = {
+  watchlistedBy: number
+  savedBy: number
+  watchHistory: number
+}
+
+export type VideoCountOutputTypeSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  watchlistedBy?: boolean | VideoCountOutputTypeCountWatchlistedByArgs
+  savedBy?: boolean | VideoCountOutputTypeCountSavedByArgs
+  watchHistory?: boolean | VideoCountOutputTypeCountWatchHistoryArgs
+}
+
+/**
+ * VideoCountOutputType without action
+ */
+export type VideoCountOutputTypeDefaultArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the VideoCountOutputType
+   */
+  select?: Prisma.VideoCountOutputTypeSelect<ExtArgs> | null
+}
+
+/**
+ * VideoCountOutputType without action
+ */
+export type VideoCountOutputTypeCountWatchlistedByArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.WatchlistItemWhereInput
+}
+
+/**
+ * VideoCountOutputType without action
+ */
+export type VideoCountOutputTypeCountSavedByArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.SavedVideoWhereInput
+}
+
+/**
+ * VideoCountOutputType without action
+ */
+export type VideoCountOutputTypeCountWatchHistoryArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.WatchHistoryWhereInput
+}
+
 
 export type VideoSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
@@ -1375,6 +1916,10 @@ export type VideoSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = 
   megaModifiedAt?: boolean
   creator?: boolean | Prisma.Video$creatorArgs<ExtArgs>
   megaAccount?: boolean | Prisma.Video$megaAccountArgs<ExtArgs>
+  watchlistedBy?: boolean | Prisma.Video$watchlistedByArgs<ExtArgs>
+  savedBy?: boolean | Prisma.Video$savedByArgs<ExtArgs>
+  watchHistory?: boolean | Prisma.Video$watchHistoryArgs<ExtArgs>
+  _count?: boolean | Prisma.VideoCountOutputTypeDefaultArgs<ExtArgs>
 }, ExtArgs["result"]["video"]>
 
 export type VideoSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
@@ -1469,6 +2014,10 @@ export type VideoOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = ru
 export type VideoInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   creator?: boolean | Prisma.Video$creatorArgs<ExtArgs>
   megaAccount?: boolean | Prisma.Video$megaAccountArgs<ExtArgs>
+  watchlistedBy?: boolean | Prisma.Video$watchlistedByArgs<ExtArgs>
+  savedBy?: boolean | Prisma.Video$savedByArgs<ExtArgs>
+  watchHistory?: boolean | Prisma.Video$watchHistoryArgs<ExtArgs>
+  _count?: boolean | Prisma.VideoCountOutputTypeDefaultArgs<ExtArgs>
 }
 export type VideoIncludeCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   creator?: boolean | Prisma.Video$creatorArgs<ExtArgs>
@@ -1484,6 +2033,9 @@ export type $VideoPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs 
   objects: {
     creator: Prisma.$CreatorPayload<ExtArgs> | null
     megaAccount: Prisma.$MegaAccountPayload<ExtArgs> | null
+    watchlistedBy: Prisma.$WatchlistItemPayload<ExtArgs>[]
+    savedBy: Prisma.$SavedVideoPayload<ExtArgs>[]
+    watchHistory: Prisma.$WatchHistoryPayload<ExtArgs>[]
   }
   scalars: runtime.Types.Extensions.GetPayloadResult<{
     id: number
@@ -1913,6 +2465,9 @@ export interface Prisma__VideoClient<T, Null = never, ExtArgs extends runtime.Ty
   readonly [Symbol.toStringTag]: "PrismaPromise"
   creator<T extends Prisma.Video$creatorArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Video$creatorArgs<ExtArgs>>): Prisma.Prisma__CreatorClient<runtime.Types.Result.GetResult<Prisma.$CreatorPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | null, null, ExtArgs, GlobalOmitOptions>
   megaAccount<T extends Prisma.Video$megaAccountArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Video$megaAccountArgs<ExtArgs>>): Prisma.Prisma__MegaAccountClient<runtime.Types.Result.GetResult<Prisma.$MegaAccountPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | null, null, ExtArgs, GlobalOmitOptions>
+  watchlistedBy<T extends Prisma.Video$watchlistedByArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Video$watchlistedByArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$WatchlistItemPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  savedBy<T extends Prisma.Video$savedByArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Video$savedByArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$SavedVideoPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  watchHistory<T extends Prisma.Video$watchHistoryArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Video$watchHistoryArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$WatchHistoryPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   /**
    * Attaches callbacks for the resolution and/or rejection of the Promise.
    * @param onfulfilled The callback to execute when the Promise is resolved.
@@ -2401,6 +2956,78 @@ export type Video$megaAccountArgs<ExtArgs extends runtime.Types.Extensions.Inter
    */
   include?: Prisma.MegaAccountInclude<ExtArgs> | null
   where?: Prisma.MegaAccountWhereInput
+}
+
+/**
+ * Video.watchlistedBy
+ */
+export type Video$watchlistedByArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the WatchlistItem
+   */
+  select?: Prisma.WatchlistItemSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the WatchlistItem
+   */
+  omit?: Prisma.WatchlistItemOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.WatchlistItemInclude<ExtArgs> | null
+  where?: Prisma.WatchlistItemWhereInput
+  orderBy?: Prisma.WatchlistItemOrderByWithRelationInput | Prisma.WatchlistItemOrderByWithRelationInput[]
+  cursor?: Prisma.WatchlistItemWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.WatchlistItemScalarFieldEnum | Prisma.WatchlistItemScalarFieldEnum[]
+}
+
+/**
+ * Video.savedBy
+ */
+export type Video$savedByArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the SavedVideo
+   */
+  select?: Prisma.SavedVideoSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the SavedVideo
+   */
+  omit?: Prisma.SavedVideoOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.SavedVideoInclude<ExtArgs> | null
+  where?: Prisma.SavedVideoWhereInput
+  orderBy?: Prisma.SavedVideoOrderByWithRelationInput | Prisma.SavedVideoOrderByWithRelationInput[]
+  cursor?: Prisma.SavedVideoWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.SavedVideoScalarFieldEnum | Prisma.SavedVideoScalarFieldEnum[]
+}
+
+/**
+ * Video.watchHistory
+ */
+export type Video$watchHistoryArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the WatchHistory
+   */
+  select?: Prisma.WatchHistorySelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the WatchHistory
+   */
+  omit?: Prisma.WatchHistoryOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.WatchHistoryInclude<ExtArgs> | null
+  where?: Prisma.WatchHistoryWhereInput
+  orderBy?: Prisma.WatchHistoryOrderByWithRelationInput | Prisma.WatchHistoryOrderByWithRelationInput[]
+  cursor?: Prisma.WatchHistoryWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.WatchHistoryScalarFieldEnum | Prisma.WatchHistoryScalarFieldEnum[]
 }
 
 /**

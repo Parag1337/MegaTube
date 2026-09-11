@@ -401,7 +401,10 @@ export const ModelName = {
   Video: 'Video',
   User: 'User',
   MegaAccount: 'MegaAccount',
-  Session: 'Session'
+  Session: 'Session',
+  WatchlistItem: 'WatchlistItem',
+  SavedVideo: 'SavedVideo',
+  WatchHistory: 'WatchHistory'
 } as const
 
 export type ModelName = (typeof ModelName)[keyof typeof ModelName]
@@ -417,7 +420,7 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
     omit: GlobalOmitOptions
   }
   meta: {
-    modelProps: "creator" | "video" | "user" | "megaAccount" | "session"
+    modelProps: "creator" | "video" | "user" | "megaAccount" | "session" | "watchlistItem" | "savedVideo" | "watchHistory"
     txIsolationLevel: TransactionIsolationLevel
   }
   model: {
@@ -791,6 +794,228 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         }
       }
     }
+    WatchlistItem: {
+      payload: Prisma.$WatchlistItemPayload<ExtArgs>
+      fields: Prisma.WatchlistItemFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.WatchlistItemFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$WatchlistItemPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.WatchlistItemFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$WatchlistItemPayload>
+        }
+        findFirst: {
+          args: Prisma.WatchlistItemFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$WatchlistItemPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.WatchlistItemFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$WatchlistItemPayload>
+        }
+        findMany: {
+          args: Prisma.WatchlistItemFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$WatchlistItemPayload>[]
+        }
+        create: {
+          args: Prisma.WatchlistItemCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$WatchlistItemPayload>
+        }
+        createMany: {
+          args: Prisma.WatchlistItemCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.WatchlistItemCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$WatchlistItemPayload>[]
+        }
+        delete: {
+          args: Prisma.WatchlistItemDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$WatchlistItemPayload>
+        }
+        update: {
+          args: Prisma.WatchlistItemUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$WatchlistItemPayload>
+        }
+        deleteMany: {
+          args: Prisma.WatchlistItemDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.WatchlistItemUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.WatchlistItemUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$WatchlistItemPayload>[]
+        }
+        upsert: {
+          args: Prisma.WatchlistItemUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$WatchlistItemPayload>
+        }
+        aggregate: {
+          args: Prisma.WatchlistItemAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateWatchlistItem>
+        }
+        groupBy: {
+          args: Prisma.WatchlistItemGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.WatchlistItemGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.WatchlistItemCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.WatchlistItemCountAggregateOutputType> | number
+        }
+      }
+    }
+    SavedVideo: {
+      payload: Prisma.$SavedVideoPayload<ExtArgs>
+      fields: Prisma.SavedVideoFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.SavedVideoFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SavedVideoPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.SavedVideoFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SavedVideoPayload>
+        }
+        findFirst: {
+          args: Prisma.SavedVideoFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SavedVideoPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.SavedVideoFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SavedVideoPayload>
+        }
+        findMany: {
+          args: Prisma.SavedVideoFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SavedVideoPayload>[]
+        }
+        create: {
+          args: Prisma.SavedVideoCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SavedVideoPayload>
+        }
+        createMany: {
+          args: Prisma.SavedVideoCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.SavedVideoCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SavedVideoPayload>[]
+        }
+        delete: {
+          args: Prisma.SavedVideoDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SavedVideoPayload>
+        }
+        update: {
+          args: Prisma.SavedVideoUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SavedVideoPayload>
+        }
+        deleteMany: {
+          args: Prisma.SavedVideoDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.SavedVideoUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.SavedVideoUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SavedVideoPayload>[]
+        }
+        upsert: {
+          args: Prisma.SavedVideoUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SavedVideoPayload>
+        }
+        aggregate: {
+          args: Prisma.SavedVideoAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateSavedVideo>
+        }
+        groupBy: {
+          args: Prisma.SavedVideoGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.SavedVideoGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.SavedVideoCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.SavedVideoCountAggregateOutputType> | number
+        }
+      }
+    }
+    WatchHistory: {
+      payload: Prisma.$WatchHistoryPayload<ExtArgs>
+      fields: Prisma.WatchHistoryFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.WatchHistoryFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$WatchHistoryPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.WatchHistoryFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$WatchHistoryPayload>
+        }
+        findFirst: {
+          args: Prisma.WatchHistoryFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$WatchHistoryPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.WatchHistoryFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$WatchHistoryPayload>
+        }
+        findMany: {
+          args: Prisma.WatchHistoryFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$WatchHistoryPayload>[]
+        }
+        create: {
+          args: Prisma.WatchHistoryCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$WatchHistoryPayload>
+        }
+        createMany: {
+          args: Prisma.WatchHistoryCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.WatchHistoryCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$WatchHistoryPayload>[]
+        }
+        delete: {
+          args: Prisma.WatchHistoryDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$WatchHistoryPayload>
+        }
+        update: {
+          args: Prisma.WatchHistoryUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$WatchHistoryPayload>
+        }
+        deleteMany: {
+          args: Prisma.WatchHistoryDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.WatchHistoryUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.WatchHistoryUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$WatchHistoryPayload>[]
+        }
+        upsert: {
+          args: Prisma.WatchHistoryUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$WatchHistoryPayload>
+        }
+        aggregate: {
+          args: Prisma.WatchHistoryAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateWatchHistory>
+        }
+        groupBy: {
+          args: Prisma.WatchHistoryGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.WatchHistoryGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.WatchHistoryCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.WatchHistoryCountAggregateOutputType> | number
+        }
+      }
+    }
   }
 } & {
   other: {
@@ -915,6 +1140,37 @@ export const SessionScalarFieldEnum = {
 } as const
 
 export type SessionScalarFieldEnum = (typeof SessionScalarFieldEnum)[keyof typeof SessionScalarFieldEnum]
+
+
+export const WatchlistItemScalarFieldEnum = {
+  id: 'id',
+  userId: 'userId',
+  videoId: 'videoId',
+  createdAt: 'createdAt'
+} as const
+
+export type WatchlistItemScalarFieldEnum = (typeof WatchlistItemScalarFieldEnum)[keyof typeof WatchlistItemScalarFieldEnum]
+
+
+export const SavedVideoScalarFieldEnum = {
+  id: 'id',
+  userId: 'userId',
+  videoId: 'videoId',
+  createdAt: 'createdAt'
+} as const
+
+export type SavedVideoScalarFieldEnum = (typeof SavedVideoScalarFieldEnum)[keyof typeof SavedVideoScalarFieldEnum]
+
+
+export const WatchHistoryScalarFieldEnum = {
+  id: 'id',
+  userId: 'userId',
+  videoId: 'videoId',
+  lastWatchedAt: 'lastWatchedAt',
+  createdAt: 'createdAt'
+} as const
+
+export type WatchHistoryScalarFieldEnum = (typeof WatchHistoryScalarFieldEnum)[keyof typeof WatchHistoryScalarFieldEnum]
 
 
 export const SortOrder = {
@@ -1136,6 +1392,9 @@ export type GlobalOmitConfig = {
   user?: Prisma.UserOmit
   megaAccount?: Prisma.MegaAccountOmit
   session?: Prisma.SessionOmit
+  watchlistItem?: Prisma.WatchlistItemOmit
+  savedVideo?: Prisma.SavedVideoOmit
+  watchHistory?: Prisma.WatchHistoryOmit
 }
 
 /* Types for Logging */

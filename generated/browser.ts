@@ -55,3 +55,22 @@ export type MegaAccount = Prisma.MegaAccountModel
  * 
  */
 export type Session = Prisma.SessionModel
+/**
+ * Model WatchlistItem
+ * P2.0 product foundation: a user's Watchlist. One row per (user, video);
+ * video metadata is never duplicated here - always reached via the relation.
+ */
+export type WatchlistItem = Prisma.WatchlistItemModel
+/**
+ * Model SavedVideo
+ * P2.0 product foundation: a user's saved/bookmark videos. Flat bookmarks -
+ * NOT collections/folders. One row per (user, video).
+ */
+export type SavedVideo = Prisma.SavedVideoModel
+/**
+ * Model WatchHistory
+ * P2.0 product foundation: "videos I watched" history. One logical row per
+ * (user, video); re-watching updates lastWatchedAt instead of duplicating.
+ * No analytics, no sessions, no watch-time tracking.
+ */
+export type WatchHistory = Prisma.WatchHistoryModel

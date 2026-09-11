@@ -12,9 +12,15 @@ interface Creator {
 interface VideoCreatorControlProps {
   videoId: number;
   currentCreator: Creator | null;
+  /**
+   * Optional custom trigger (e.g. a dropdown menu item). When provided, the
+   * default "Change creator" button is replaced and calling open() shows the
+   * same assign dialog. Default behavior is unchanged.
+   */
+  trigger?: (open: () => void) => React.ReactNode;
 }
 
-export default function VideoCreatorControl({ videoId, currentCreator }: VideoCreatorControlProps) {
+export default function VideoCreatorControl({ videoId, currentCreator, trigger }: VideoCreatorControlProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [creators, setCreators] = useState<Creator[]>([]);
   const [selectedCreatorId, setSelectedCreatorId] = useState<number | null>(currentCreator?.id || null);
@@ -134,137 +140,155 @@ export default function VideoCreatorControl({ videoId, currentCreator }: VideoCr
 
   return (
     <>
-      <button
-        onClick={() => setIsOpen(true)}
-        className="text-sm text-accent hover:text-accent-hover"
-      >
-        {currentCreator ? 'Change creator' : 'Assign creator'}
-      </button>
+      {trigger ? (
+        trigger(() => setIsOpen(true))
+      ) : (
+        <button
+          onClick={() => setIsOpen(true)}
+          className="text-sm font-medium text-accent hover:underline"
+        >
+          {currentCreator ? 'Change creator' : 'Assign creator'}
+        </button>
+      )}
 
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="w-full max-w-md rounded-lg bg-surface p-6">
-            <h2 className="mb-4 text-lg font-semibold">
-              {currentCreator ? 'Change Creator' : 'Assign Creator'}
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-4 sm:items-center"
+          onClick={() => setIsOpen(false)}
+          role="presentation"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="assign-creator-title"
+            className="w-full max-w-md rounded-3xl border border-border bg-surface-raised p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="assign-creator-title" className="text-lg font-bold tracking-tight">
+              {currentCreator ? 'Change creator' : 'Assign creator'}
             </h2>
 
             {error && (
-              <div className="mb-4 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
+              <p role="alert" className="mt-4 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-sm text-destructive">
                 {error}
-              </div>
+              </p>
             )}
 
             {mode === 'select' ? (
               <>
-                <div className="mb-4 max-h-60 overflow-y-auto">
+                <div className="mb-4 mt-4 max-h-60 overflow-y-auto">
                   {creators.length === 0 ? (
                     <p className="text-sm text-muted">No creators yet. Create one first.</p>
                   ) : (
-                    <div className="space-y-2">
+                    <ul className="space-y-2">
                       {creators.map((creator) => (
-                        <button
-                          key={creator.id}
-                          onClick={() => setSelectedCreatorId(creator.id)}
-                          className={`w-full flex items-center gap-3 rounded-lg border p-3 text-left transition-colors ${
-                            selectedCreatorId === creator.id
-                              ? 'border-accent bg-accent/10'
-                              : 'border-border hover:bg-surface-hover'
-                          }`}
-                        >
-                          {creator.avatar ? (
-                            <img
-                              src={`/api/creators/${creator.id}/photo`}
-                              alt=""
-                              className="h-10 w-10 rounded-full object-cover"
-                            />
-                          ) : (
-                            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-hover text-sm font-bold text-accent">
-                              {creator.name.charAt(0).toUpperCase()}
-                            </span>
-                          )}
-                          <span className="font-medium">{creator.name}</span>
-                        </button>
+                        <li key={creator.id}>
+                          <button
+                            onClick={() => setSelectedCreatorId(creator.id)}
+                            aria-pressed={selectedCreatorId === creator.id}
+                            className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left transition-colors ${
+                              selectedCreatorId === creator.id
+                                ? 'border-accent bg-accent-soft'
+                                : 'border-border hover:bg-surface-hover'
+                            }`}
+                          >
+                            {creator.avatar ? (
+                              <img
+                                src={`/api/creators/${creator.id}/photo`}
+                                alt=""
+                                className="h-10 w-10 rounded-full object-cover"
+                              />
+                            ) : (
+                              <span className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-overlay text-sm font-bold text-accent">
+                                {creator.name.charAt(0).toUpperCase()}
+                              </span>
+                            )}
+                            <span className="truncate text-sm font-medium">{creator.name}</span>
+                          </button>
+                        </li>
                       ))}
-                    </div>
+                    </ul>
                   )}
                 </div>
 
                 <div className="mb-4">
                   <button
                     onClick={() => setMode('create')}
-                    className="w-full rounded-lg border border-dashed border-border py-2 text-sm text-muted transition-colors hover:border-accent hover:text-accent"
+                    className="h-11 w-full rounded-2xl border border-dashed border-border-light text-sm font-medium text-muted transition-colors hover:border-accent hover:text-accent"
                   >
                     + Create new creator
                   </button>
                 </div>
 
-                <div className="flex justify-between">
-                  {currentCreator && (
+                <div className="flex items-center justify-between gap-2">
+                  {currentCreator ? (
                     <button
                       onClick={handleRemoveCreator}
-                      className="rounded-lg border border-destructive/50 px-4 py-2 text-sm font-medium text-destructive transition-colors hover:bg-destructive/10"
+                      className="inline-flex h-10 items-center rounded-full px-4 text-sm font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
                       disabled={isLoading}
                     >
                       Remove
                     </button>
+                  ) : (
+                    <span />
                   )}
-                  <div className="flex gap-3 ml-auto">
+                  <div className="ml-auto flex gap-2">
                     <button
                       onClick={() => setIsOpen(false)}
-                      className="rounded-lg border border-border px-4 py-2 text-sm font-medium transition-colors hover:bg-surface-hover"
+                      className="inline-flex h-10 items-center rounded-full px-4 text-sm font-medium text-muted transition-colors hover:bg-surface-hover hover:text-foreground disabled:opacity-50"
                       disabled={isLoading}
                     >
                       Cancel
                     </button>
                     <button
                       onClick={handleAssign}
-                      className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
+                      className="inline-flex h-10 items-center rounded-full bg-accent px-5 text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
                       disabled={isLoading || creators.length === 0}
                     >
-                      {isLoading ? 'Saving...' : 'Save'}
+                      {isLoading ? 'Saving…' : 'Save'}
                     </button>
                   </div>
                 </div>
               </>
             ) : (
               <>
-                <div className="mb-4">
-                  <label htmlFor="newCreatorName" className="mb-2 block text-sm font-medium">
-                    Creator Name *
+                <div className="mb-4 mt-4">
+                  <label htmlFor="newCreatorName" className="mb-1.5 block text-[13px] font-medium">
+                    Creator name
                   </label>
                   <input
                     id="newCreatorName"
                     type="text"
                     value={newCreatorName}
                     onChange={(e) => setNewCreatorName(e.target.value)}
-                    className="w-full rounded-lg border border-border bg-surface-hover px-3 py-2 text-sm focus:border-accent focus:outline-none"
+                    className="h-11 w-full rounded-xl border border-border bg-surface-overlay px-4 text-sm focus:border-accent focus:outline-none"
                     placeholder="Enter creator name"
                     maxLength={200}
                   />
                 </div>
 
-                <div className="flex justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <button
                     onClick={() => setMode('select')}
-                    className="rounded-lg border border-border px-4 py-2 text-sm font-medium transition-colors hover:bg-surface-hover"
+                    className="inline-flex h-10 items-center rounded-full px-4 text-sm font-medium text-muted transition-colors hover:bg-surface-hover hover:text-foreground disabled:opacity-50"
                     disabled={isLoading}
                   >
                     Back
                   </button>
-                  <div className="flex gap-3">
+                  <div className="flex gap-2">
                     <button
                       onClick={() => setIsOpen(false)}
-                      className="rounded-lg border border-border px-4 py-2 text-sm font-medium transition-colors hover:bg-surface-hover"
+                      className="inline-flex h-10 items-center rounded-full px-4 text-sm font-medium text-muted transition-colors hover:bg-surface-hover hover:text-foreground disabled:opacity-50"
                       disabled={isLoading}
                     >
                       Cancel
                     </button>
                     <button
                       onClick={handleCreateCreator}
-                      className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
+                      className="inline-flex h-10 items-center rounded-full bg-accent px-5 text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
                       disabled={isLoading || !newCreatorName.trim()}
                     >
-                      {isLoading ? 'Creating...' : 'Create & Assign'}
+                      {isLoading ? 'Creating…' : 'Create & assign'}
                     </button>
                   </div>
                 </div>

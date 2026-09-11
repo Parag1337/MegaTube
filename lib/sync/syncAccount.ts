@@ -64,10 +64,59 @@ const defaultDeps: SyncDeps = {
   fetchAccountFileNodes: realFetchAccountFileNodes,
 };
 import { setLastSyncMeta } from '../megaAccounts';
-import { parseVideoMetadata, uniqueSlug, ensureCreatorForUser, normalizeCreatorName } from '../titles';
+import { parseVideoMetadata, uniqueSlug, slugify } from '../titles';
+import { resolveCreatorIdForParsed } from '../creators';
 
 const THUMBS_DIR = path.resolve(process.cwd(), 'data/thumbs');
 const ATTRIBUTE_FETCH_DELAY_MS = 200; // be polite to MEGA's attribute endpoints
+
+/**
+ * P1.4: bounded parallelism for MEGA attribute (thumbnail / media-props)
+ * fetches. The delay above is a politeness rate, not a serial dependency:
+ * with a shared pacer enforcing >=200ms between attribute-call STARTS,
+ * up to ATTR_CONCURRENCY fetches may overlap their network latency while
+ * the request rate MEGA observes never exceeds today's serial loop.
+ * Database writes stay serial (SQLite); only network I/O overlaps.
+ */
+const ATTR_CONCURRENCY = 3;
+
+/** Space out MEGA attribute calls: at most one start per delay window. */
+function createAttributePacer(delayMs: number): () => Promise<void> {
+  let lastStart = 0;
+  let tail: Promise<void> = Promise.resolve();
+  return async () => {
+    const prev = tail;
+    let release!: () => void;
+    tail = new Promise<void>((r) => {
+      release = r;
+    });
+    await prev;
+    try {
+      const wait = lastStart + delayMs - Date.now();
+      if (wait > 0) await sleep(wait);
+      lastStart = Date.now();
+    } finally {
+      release();
+    }
+  };
+}
+
+/** Run items with at most `limit` workers; per-item errors propagate. */
+async function runWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      await fn(items[i]);
+    }
+  });
+  await Promise.all(workers);
+}
 
 /** Wrap a live megajs Storage's API client into the minimal ApiLike surface. */
 function toApiLike(storage: Storage): ApiLike {
@@ -110,6 +159,7 @@ async function existingRowsForAccount(accountId: number): Promise<ExistingVideoR
       megaFa: true,
       thumbnail: true,
       thumbnailAvailable: true,
+      creatorId: true,
       creatorAssignment: true,
     },
   });
@@ -123,6 +173,7 @@ async function existingRowsForAccount(accountId: number): Promise<ExistingVideoR
     megaFa: r.megaFa,
     thumbnail: r.thumbnail,
     thumbnailAvailable: r.thumbnailAvailable,
+    creatorId: r.creatorId,
     creatorAssignment: r.creatorAssignment,
   }));
 }
@@ -248,67 +299,111 @@ export async function syncMegaAccount(
         reportProgress(processed, added, updated, removed);
       };
 
-      // --- additions -------------------------------------------------------
+      // P1.4: one creator lookup per distinct creator per job instead of
+      // one per video (a 1000-video import from 5 creators did 1000
+      // findFirst calls; now it does 5).
+      const creatorCache = new Map<string, number>();
+      const paceAttributeCall = createAttributePacer(ATTRIBUTE_FETCH_DELAY_MS);
+
+      // P1.4: allocate slugs from one snapshot scoped to the current user's
+      // videos. Video.slug is globally unique, so this still guarantees no
+      // duplicates: cross-user collisions fall through to the P2002 handler
+      // which falls back to uniqueSlug() and retries once.
+      const slugSet = new Set(
+        (await prisma.video.findMany({
+          where: { megaAccount: { userId: account.userId } },
+          select: { slug: true },
+        })).map((r) => r.slug),
+      );
+      const allocSlug = (title: string): string => {
+        const base = slugify(title);
+        let slug = base;
+        let n = 2;
+        while (slugSet.has(slug)) slug = `${base}-${n++}`;
+        slugSet.add(slug);
+        return slug;
+      };
+
+      // --- additions, phase 1: create rows (serial DB writes) -------------
+      // Attribute (thumbnail/media) fetches are collected and run in phase
+      // 2 with bounded concurrency; the row is already created and playable
+      // without them, exactly as before.
+      const pendingAttrs: Array<{
+        videoId: number;
+        nodeId: string;
+        fa: string | null;
+        fileKey: Buffer | null;
+        needThumb: boolean;
+        needMedia: boolean;
+      }> = [];
       for (const r of plan.toAdd) {
         try {
           // Real MEGA filename is the source of truth; node-id fallback only
           // when the attributes blob was undecryptable (never invent metadata).
           const name = r.name ?? `video-${r.nodeId}`;
           const parsed = parseVideoMetadata(name);
-          const slug = await uniqueSlug(parsed.title);
+          const fa = parseFa(r.fa);
 
+          // Filename-derived creator, or the user-scoped "Unknown Creator"
+          // grouping when the filename carries no creator (P2.0: never null
+          // for automatic assignments; manual overrides happen later via the
+          // creator PATCH endpoint, which sets assignment 'manual').
           let creatorId: number | null = null;
-          if (parsed.creator && account.userId) {
-            const normalized = normalizeCreatorName(parsed.creator);
-            creatorId = await ensureCreatorForUser(account.userId, normalized);
+          let creatorAssignment = 'none';
+          if (account.userId) {
+            ({ creatorId, assignment: creatorAssignment } = await resolveCreatorIdForParsed(
+              account.userId,
+              parsed.creator,
+              creatorCache,
+            ));
           }
 
-          const row = await prisma.video.create({
-            data: {
-              megaAccountId: accountId,
-              megaUrl: `https://mega.nz/file/${r.nodeId}`,
-              megaNodeId: r.nodeId,
-              parentNodeId: r.parentNodeId,
-              megaFilename: name,
-              title: parsed.title,
-              slug,
-              creatorId,
-              creatorAssignment: parsed.creator ? 'auto' : 'none',
-              fileSize: BigInt(r.size),
-              mimeType: mimeFromVideoExtension(name),
-              megaModifiedAt: r.ts !== null ? new Date(r.ts * 1000) : null,
-              megaFa: r.fa,
-              fileKeyEncrypted: r.fileKey ? encryptSecret(r.fileKey) : null,
-              thumbnailAvailable: Boolean(parseFa(r.fa)[0]),
-              thumbnail: null,
-              embedUrl: null,
-              sortOrder: 0,
-            },
-          });
+          const data = {
+            megaAccountId: accountId,
+            megaUrl: `https://mega.nz/file/${r.nodeId}`,
+            megaNodeId: r.nodeId,
+            parentNodeId: r.parentNodeId,
+            megaFilename: name,
+            title: parsed.title,
+            slug: allocSlug(parsed.title),
+            creatorId,
+            creatorAssignment,
+            fileSize: BigInt(r.size),
+            mimeType: mimeFromVideoExtension(name),
+            megaModifiedAt: r.ts !== null ? new Date(r.ts * 1000) : null,
+            megaFa: r.fa,
+            fileKeyEncrypted: r.fileKey ? encryptSecret(r.fileKey) : null,
+            thumbnailAvailable: Boolean(fa[0]),
+            thumbnail: null,
+            embedUrl: null,
+            sortOrder: 0,
+          };
+          let row;
+          try {
+            row = await prisma.video.create({ data });
+          } catch (err) {
+            // Slug allocated from the snapshot lost a cross-job race: redo
+            // this one row with a live uniqueness probe and retry once.
+            if (typeof err === 'object' && err !== null && (err as { code?: string }).code === 'P2002') {
+              const slug = await uniqueSlug(parsed.title);
+              slugSet.add(slug);
+              row = await prisma.video.create({ data: { ...data, slug } });
+            } else {
+              throw err;
+            }
+          }
           added++;
           tick();
 
-          if (r.fileKey && parseFa(r.fa)[0]) {
-            const thumb = await fetchAndStoreThumbnail(api, row.id, r.fa, r.fileKey);
-            if (thumb) {
-              await prisma.video.update({ where: { id: row.id }, data: { thumbnail: thumb } });
-            }
-            await sleep(ATTRIBUTE_FETCH_DELAY_MS);
-          }
-          if (r.fileKey && parseFa(r.fa)[8]) {
-            try {
-              const media = await getPrivateNodeMediaProperties(api, r.fa, r.fileKey);
-              if (media && media.durationSeconds !== null) {
-                await prisma.video.update({
-                  where: { id: row.id },
-                  data: { duration: media.durationSeconds },
-                });
-              }
-            } catch {
-              // Thumbnail/media attribute fetches are best-effort; the video
-              // row is already created and playable without them.
-            }
-            await sleep(ATTRIBUTE_FETCH_DELAY_MS);
+          if (r.fileKey && (fa[0] || fa[8])) {
+            pendingAttrs.push({
+              videoId: row.id,
+              nodeId: r.nodeId,
+              fa: r.fa,
+              fileKey: r.fileKey,
+              needThumb: Boolean(fa[0]),
+              needMedia: Boolean(fa[8]),
+            });
           }
         } catch (err) {
           console.warn(
@@ -318,6 +413,42 @@ export async function syncMegaAccount(
           tick();
         }
       }
+
+      // --- additions, phase 2: thumbnails + durations (bounded overlap) ---
+      // Same MEGA calls in the same per-video order (thumbnail first, then
+      // media properties) and the same >=200ms start spacing as the old
+      // serial loop; only the network latency overlaps. Follow-up DB
+      // updates stay serial per worker and best-effort as before.
+      await runWithConcurrency(pendingAttrs, ATTR_CONCURRENCY, async (p) => {
+        try {
+          if (p.needThumb && p.fileKey) {
+            await paceAttributeCall();
+            const thumb = await fetchAndStoreThumbnail(api, p.videoId, p.fa, p.fileKey);
+            if (thumb) {
+              await prisma.video.update({ where: { id: p.videoId }, data: { thumbnail: thumb } });
+            }
+          }
+          if (p.needMedia && p.fileKey) {
+            try {
+              await paceAttributeCall();
+              const media = await getPrivateNodeMediaProperties(api, p.fa, p.fileKey);
+              if (media && media.durationSeconds !== null) {
+                await prisma.video.update({
+                  where: { id: p.videoId },
+                  data: { duration: media.durationSeconds },
+                });
+              }
+            } catch {
+              // Thumbnail/media attribute fetches are best-effort; the video
+              // row is already created and playable without them.
+            }
+          }
+        } catch (err) {
+          console.warn(
+            `[sync] MegaAccount ${accountId} failed to fetch attributes for node ${p.nodeId}: ${err instanceof Error ? err.message : 'unknown'}`,
+          );
+        }
+      });
 
       // --- updates ---------------------------------------------------------
       for (const u of plan.toUpdate) {
@@ -332,15 +463,21 @@ export async function syncMegaAccount(
             megaModifiedAt: u.remote.ts !== null ? new Date(u.remote.ts * 1000) : null,
             megaFa: u.remote.fa,
           };
-          // A rename can introduce/upgrade the creator from the filename, but only
-          // when there is no manual override.
-          if (parsed.creator && account.userId && u.row.creatorAssignment !== 'manual') {
-            const normalized = normalizeCreatorName(parsed.creator);
-            data.creatorId = await ensureCreatorForUser(account.userId, normalized);
-            data.creatorAssignment = 'auto';
-          } else if (!parsed.creator && u.row.creatorAssignment === 'auto') {
-            data.creatorId = null;
-            data.creatorAssignment = 'none';
+          // A rename can introduce/change the filename-derived creator
+          // (including falling back to the "Unknown Creator" grouping), but
+          // only when there is no manual override. Writes are skipped when
+          // the assignment would not change, so creator bookkeeping never
+          // dirties reconciliation state.
+          if (account.userId && u.row.creatorAssignment !== 'manual') {
+            const resolved = await resolveCreatorIdForParsed(
+              account.userId,
+              parsed.creator,
+              creatorCache,
+            );
+            if (u.row.creatorId !== resolved.creatorId || u.row.creatorAssignment !== resolved.assignment) {
+              data.creatorId = resolved.creatorId;
+              data.creatorAssignment = resolved.assignment;
+            }
           }
           // A size/timestamp change implies the file content changed (re-upload
           // into the same node is not a MEGA concept) - refresh the key too.
@@ -349,20 +486,21 @@ export async function syncMegaAccount(
           }
           const mimeType = mimeFromVideoExtension(name);
           if (mimeType) data.mimeType = mimeType;
+          const remoteFa = parseFa(u.remote.fa);
           if (u.changes.includes('file-attributes')) {
-            data.thumbnailAvailable = Boolean(parseFa(u.remote.fa)[0]);
+            data.thumbnailAvailable = Boolean(remoteFa[0]);
           }
           await prisma.video.update({ where: { id: u.row.id }, data });
           updated++;
           tick();
 
           // New thumbnail became available? Fetch it once.
-          if (u.changes.includes('file-attributes') && !u.row.thumbnail && u.remote.fileKey && parseFa(u.remote.fa)[0]) {
+          if (u.changes.includes('file-attributes') && !u.row.thumbnail && u.remote.fileKey && remoteFa[0]) {
+            await paceAttributeCall();
             const thumb = await fetchAndStoreThumbnail(api, u.row.id, u.remote.fa, u.remote.fileKey);
             if (thumb) {
               await prisma.video.update({ where: { id: u.row.id }, data: { thumbnail: thumb } });
             }
-            await sleep(ATTRIBUTE_FETCH_DELAY_MS);
           }
         } catch (err) {
           console.warn(
