@@ -35,6 +35,7 @@ export interface ExistingVideoRow {
   megaFa: string;
   thumbnailAvailable: boolean;
   thumbnail: string;
+  creatorId: number | null;
   /** Whether the creator assignment is protected from automatic sync. */
   creatorAssignment: string;
 }

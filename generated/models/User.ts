@@ -185,6 +185,9 @@ export type UserWhereInput = {
   megaAccounts?: Prisma.MegaAccountListRelationFilter
   sessions?: Prisma.SessionListRelationFilter
   creators?: Prisma.CreatorListRelationFilter
+  watchlist?: Prisma.WatchlistItemListRelationFilter
+  savedVideos?: Prisma.SavedVideoListRelationFilter
+  watchHistory?: Prisma.WatchHistoryListRelationFilter
 }
 
 export type UserOrderByWithRelationInput = {
@@ -196,6 +199,9 @@ export type UserOrderByWithRelationInput = {
   megaAccounts?: Prisma.MegaAccountOrderByRelationAggregateInput
   sessions?: Prisma.SessionOrderByRelationAggregateInput
   creators?: Prisma.CreatorOrderByRelationAggregateInput
+  watchlist?: Prisma.WatchlistItemOrderByRelationAggregateInput
+  savedVideos?: Prisma.SavedVideoOrderByRelationAggregateInput
+  watchHistory?: Prisma.WatchHistoryOrderByRelationAggregateInput
 }
 
 export type UserWhereUniqueInput = Prisma.AtLeast<{
@@ -210,6 +216,9 @@ export type UserWhereUniqueInput = Prisma.AtLeast<{
   megaAccounts?: Prisma.MegaAccountListRelationFilter
   sessions?: Prisma.SessionListRelationFilter
   creators?: Prisma.CreatorListRelationFilter
+  watchlist?: Prisma.WatchlistItemListRelationFilter
+  savedVideos?: Prisma.SavedVideoListRelationFilter
+  watchHistory?: Prisma.WatchHistoryListRelationFilter
 }, "id" | "email">
 
 export type UserOrderByWithAggregationInput = {
@@ -243,6 +252,9 @@ export type UserCreateInput = {
   megaAccounts?: Prisma.MegaAccountCreateNestedManyWithoutUserInput
   sessions?: Prisma.SessionCreateNestedManyWithoutUserInput
   creators?: Prisma.CreatorCreateNestedManyWithoutUserInput
+  watchlist?: Prisma.WatchlistItemCreateNestedManyWithoutUserInput
+  savedVideos?: Prisma.SavedVideoCreateNestedManyWithoutUserInput
+  watchHistory?: Prisma.WatchHistoryCreateNestedManyWithoutUserInput
 }
 
 export type UserUncheckedCreateInput = {
@@ -254,6 +266,9 @@ export type UserUncheckedCreateInput = {
   megaAccounts?: Prisma.MegaAccountUncheckedCreateNestedManyWithoutUserInput
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutUserInput
   creators?: Prisma.CreatorUncheckedCreateNestedManyWithoutUserInput
+  watchlist?: Prisma.WatchlistItemUncheckedCreateNestedManyWithoutUserInput
+  savedVideos?: Prisma.SavedVideoUncheckedCreateNestedManyWithoutUserInput
+  watchHistory?: Prisma.WatchHistoryUncheckedCreateNestedManyWithoutUserInput
 }
 
 export type UserUpdateInput = {
@@ -265,6 +280,9 @@ export type UserUpdateInput = {
   megaAccounts?: Prisma.MegaAccountUpdateManyWithoutUserNestedInput
   sessions?: Prisma.SessionUpdateManyWithoutUserNestedInput
   creators?: Prisma.CreatorUpdateManyWithoutUserNestedInput
+  watchlist?: Prisma.WatchlistItemUpdateManyWithoutUserNestedInput
+  savedVideos?: Prisma.SavedVideoUpdateManyWithoutUserNestedInput
+  watchHistory?: Prisma.WatchHistoryUpdateManyWithoutUserNestedInput
 }
 
 export type UserUncheckedUpdateInput = {
@@ -276,6 +294,9 @@ export type UserUncheckedUpdateInput = {
   megaAccounts?: Prisma.MegaAccountUncheckedUpdateManyWithoutUserNestedInput
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutUserNestedInput
   creators?: Prisma.CreatorUncheckedUpdateManyWithoutUserNestedInput
+  watchlist?: Prisma.WatchlistItemUncheckedUpdateManyWithoutUserNestedInput
+  savedVideos?: Prisma.SavedVideoUncheckedUpdateManyWithoutUserNestedInput
+  watchHistory?: Prisma.WatchHistoryUncheckedUpdateManyWithoutUserNestedInput
 }
 
 export type UserCreateManyInput = {
@@ -302,9 +323,9 @@ export type UserUncheckedUpdateManyInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
-export type UserNullableScalarRelationFilter = {
-  is?: Prisma.UserWhereInput | null
-  isNot?: Prisma.UserWhereInput | null
+export type UserScalarRelationFilter = {
+  is?: Prisma.UserWhereInput
+  isNot?: Prisma.UserWhereInput
 }
 
 export type UserCountOrderByAggregateInput = {
@@ -331,23 +352,16 @@ export type UserMinOrderByAggregateInput = {
   updatedAt?: Prisma.SortOrder
 }
 
-export type UserScalarRelationFilter = {
-  is?: Prisma.UserWhereInput
-  isNot?: Prisma.UserWhereInput
-}
-
 export type UserCreateNestedOneWithoutCreatorsInput = {
   create?: Prisma.XOR<Prisma.UserCreateWithoutCreatorsInput, Prisma.UserUncheckedCreateWithoutCreatorsInput>
   connectOrCreate?: Prisma.UserCreateOrConnectWithoutCreatorsInput
   connect?: Prisma.UserWhereUniqueInput
 }
 
-export type UserUpdateOneWithoutCreatorsNestedInput = {
+export type UserUpdateOneRequiredWithoutCreatorsNestedInput = {
   create?: Prisma.XOR<Prisma.UserCreateWithoutCreatorsInput, Prisma.UserUncheckedCreateWithoutCreatorsInput>
   connectOrCreate?: Prisma.UserCreateOrConnectWithoutCreatorsInput
   upsert?: Prisma.UserUpsertWithoutCreatorsInput
-  disconnect?: Prisma.UserWhereInput | boolean
-  delete?: Prisma.UserWhereInput | boolean
   connect?: Prisma.UserWhereUniqueInput
   update?: Prisma.XOR<Prisma.XOR<Prisma.UserUpdateToOneWithWhereWithoutCreatorsInput, Prisma.UserUpdateWithoutCreatorsInput>, Prisma.UserUncheckedUpdateWithoutCreatorsInput>
 }
@@ -380,6 +394,48 @@ export type UserUpdateOneRequiredWithoutSessionsNestedInput = {
   update?: Prisma.XOR<Prisma.XOR<Prisma.UserUpdateToOneWithWhereWithoutSessionsInput, Prisma.UserUpdateWithoutSessionsInput>, Prisma.UserUncheckedUpdateWithoutSessionsInput>
 }
 
+export type UserCreateNestedOneWithoutWatchlistInput = {
+  create?: Prisma.XOR<Prisma.UserCreateWithoutWatchlistInput, Prisma.UserUncheckedCreateWithoutWatchlistInput>
+  connectOrCreate?: Prisma.UserCreateOrConnectWithoutWatchlistInput
+  connect?: Prisma.UserWhereUniqueInput
+}
+
+export type UserUpdateOneRequiredWithoutWatchlistNestedInput = {
+  create?: Prisma.XOR<Prisma.UserCreateWithoutWatchlistInput, Prisma.UserUncheckedCreateWithoutWatchlistInput>
+  connectOrCreate?: Prisma.UserCreateOrConnectWithoutWatchlistInput
+  upsert?: Prisma.UserUpsertWithoutWatchlistInput
+  connect?: Prisma.UserWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.UserUpdateToOneWithWhereWithoutWatchlistInput, Prisma.UserUpdateWithoutWatchlistInput>, Prisma.UserUncheckedUpdateWithoutWatchlistInput>
+}
+
+export type UserCreateNestedOneWithoutSavedVideosInput = {
+  create?: Prisma.XOR<Prisma.UserCreateWithoutSavedVideosInput, Prisma.UserUncheckedCreateWithoutSavedVideosInput>
+  connectOrCreate?: Prisma.UserCreateOrConnectWithoutSavedVideosInput
+  connect?: Prisma.UserWhereUniqueInput
+}
+
+export type UserUpdateOneRequiredWithoutSavedVideosNestedInput = {
+  create?: Prisma.XOR<Prisma.UserCreateWithoutSavedVideosInput, Prisma.UserUncheckedCreateWithoutSavedVideosInput>
+  connectOrCreate?: Prisma.UserCreateOrConnectWithoutSavedVideosInput
+  upsert?: Prisma.UserUpsertWithoutSavedVideosInput
+  connect?: Prisma.UserWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.UserUpdateToOneWithWhereWithoutSavedVideosInput, Prisma.UserUpdateWithoutSavedVideosInput>, Prisma.UserUncheckedUpdateWithoutSavedVideosInput>
+}
+
+export type UserCreateNestedOneWithoutWatchHistoryInput = {
+  create?: Prisma.XOR<Prisma.UserCreateWithoutWatchHistoryInput, Prisma.UserUncheckedCreateWithoutWatchHistoryInput>
+  connectOrCreate?: Prisma.UserCreateOrConnectWithoutWatchHistoryInput
+  connect?: Prisma.UserWhereUniqueInput
+}
+
+export type UserUpdateOneRequiredWithoutWatchHistoryNestedInput = {
+  create?: Prisma.XOR<Prisma.UserCreateWithoutWatchHistoryInput, Prisma.UserUncheckedCreateWithoutWatchHistoryInput>
+  connectOrCreate?: Prisma.UserCreateOrConnectWithoutWatchHistoryInput
+  upsert?: Prisma.UserUpsertWithoutWatchHistoryInput
+  connect?: Prisma.UserWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.UserUpdateToOneWithWhereWithoutWatchHistoryInput, Prisma.UserUpdateWithoutWatchHistoryInput>, Prisma.UserUncheckedUpdateWithoutWatchHistoryInput>
+}
+
 export type UserCreateWithoutCreatorsInput = {
   id?: string
   email: string
@@ -388,6 +444,9 @@ export type UserCreateWithoutCreatorsInput = {
   updatedAt?: Date | string
   megaAccounts?: Prisma.MegaAccountCreateNestedManyWithoutUserInput
   sessions?: Prisma.SessionCreateNestedManyWithoutUserInput
+  watchlist?: Prisma.WatchlistItemCreateNestedManyWithoutUserInput
+  savedVideos?: Prisma.SavedVideoCreateNestedManyWithoutUserInput
+  watchHistory?: Prisma.WatchHistoryCreateNestedManyWithoutUserInput
 }
 
 export type UserUncheckedCreateWithoutCreatorsInput = {
@@ -398,6 +457,9 @@ export type UserUncheckedCreateWithoutCreatorsInput = {
   updatedAt?: Date | string
   megaAccounts?: Prisma.MegaAccountUncheckedCreateNestedManyWithoutUserInput
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutUserInput
+  watchlist?: Prisma.WatchlistItemUncheckedCreateNestedManyWithoutUserInput
+  savedVideos?: Prisma.SavedVideoUncheckedCreateNestedManyWithoutUserInput
+  watchHistory?: Prisma.WatchHistoryUncheckedCreateNestedManyWithoutUserInput
 }
 
 export type UserCreateOrConnectWithoutCreatorsInput = {
@@ -424,6 +486,9 @@ export type UserUpdateWithoutCreatorsInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   megaAccounts?: Prisma.MegaAccountUpdateManyWithoutUserNestedInput
   sessions?: Prisma.SessionUpdateManyWithoutUserNestedInput
+  watchlist?: Prisma.WatchlistItemUpdateManyWithoutUserNestedInput
+  savedVideos?: Prisma.SavedVideoUpdateManyWithoutUserNestedInput
+  watchHistory?: Prisma.WatchHistoryUpdateManyWithoutUserNestedInput
 }
 
 export type UserUncheckedUpdateWithoutCreatorsInput = {
@@ -434,6 +499,9 @@ export type UserUncheckedUpdateWithoutCreatorsInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   megaAccounts?: Prisma.MegaAccountUncheckedUpdateManyWithoutUserNestedInput
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutUserNestedInput
+  watchlist?: Prisma.WatchlistItemUncheckedUpdateManyWithoutUserNestedInput
+  savedVideos?: Prisma.SavedVideoUncheckedUpdateManyWithoutUserNestedInput
+  watchHistory?: Prisma.WatchHistoryUncheckedUpdateManyWithoutUserNestedInput
 }
 
 export type UserCreateWithoutMegaAccountsInput = {
@@ -444,6 +512,9 @@ export type UserCreateWithoutMegaAccountsInput = {
   updatedAt?: Date | string
   sessions?: Prisma.SessionCreateNestedManyWithoutUserInput
   creators?: Prisma.CreatorCreateNestedManyWithoutUserInput
+  watchlist?: Prisma.WatchlistItemCreateNestedManyWithoutUserInput
+  savedVideos?: Prisma.SavedVideoCreateNestedManyWithoutUserInput
+  watchHistory?: Prisma.WatchHistoryCreateNestedManyWithoutUserInput
 }
 
 export type UserUncheckedCreateWithoutMegaAccountsInput = {
@@ -454,6 +525,9 @@ export type UserUncheckedCreateWithoutMegaAccountsInput = {
   updatedAt?: Date | string
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutUserInput
   creators?: Prisma.CreatorUncheckedCreateNestedManyWithoutUserInput
+  watchlist?: Prisma.WatchlistItemUncheckedCreateNestedManyWithoutUserInput
+  savedVideos?: Prisma.SavedVideoUncheckedCreateNestedManyWithoutUserInput
+  watchHistory?: Prisma.WatchHistoryUncheckedCreateNestedManyWithoutUserInput
 }
 
 export type UserCreateOrConnectWithoutMegaAccountsInput = {
@@ -480,6 +554,9 @@ export type UserUpdateWithoutMegaAccountsInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   sessions?: Prisma.SessionUpdateManyWithoutUserNestedInput
   creators?: Prisma.CreatorUpdateManyWithoutUserNestedInput
+  watchlist?: Prisma.WatchlistItemUpdateManyWithoutUserNestedInput
+  savedVideos?: Prisma.SavedVideoUpdateManyWithoutUserNestedInput
+  watchHistory?: Prisma.WatchHistoryUpdateManyWithoutUserNestedInput
 }
 
 export type UserUncheckedUpdateWithoutMegaAccountsInput = {
@@ -490,6 +567,9 @@ export type UserUncheckedUpdateWithoutMegaAccountsInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutUserNestedInput
   creators?: Prisma.CreatorUncheckedUpdateManyWithoutUserNestedInput
+  watchlist?: Prisma.WatchlistItemUncheckedUpdateManyWithoutUserNestedInput
+  savedVideos?: Prisma.SavedVideoUncheckedUpdateManyWithoutUserNestedInput
+  watchHistory?: Prisma.WatchHistoryUncheckedUpdateManyWithoutUserNestedInput
 }
 
 export type UserCreateWithoutSessionsInput = {
@@ -500,6 +580,9 @@ export type UserCreateWithoutSessionsInput = {
   updatedAt?: Date | string
   megaAccounts?: Prisma.MegaAccountCreateNestedManyWithoutUserInput
   creators?: Prisma.CreatorCreateNestedManyWithoutUserInput
+  watchlist?: Prisma.WatchlistItemCreateNestedManyWithoutUserInput
+  savedVideos?: Prisma.SavedVideoCreateNestedManyWithoutUserInput
+  watchHistory?: Prisma.WatchHistoryCreateNestedManyWithoutUserInput
 }
 
 export type UserUncheckedCreateWithoutSessionsInput = {
@@ -510,6 +593,9 @@ export type UserUncheckedCreateWithoutSessionsInput = {
   updatedAt?: Date | string
   megaAccounts?: Prisma.MegaAccountUncheckedCreateNestedManyWithoutUserInput
   creators?: Prisma.CreatorUncheckedCreateNestedManyWithoutUserInput
+  watchlist?: Prisma.WatchlistItemUncheckedCreateNestedManyWithoutUserInput
+  savedVideos?: Prisma.SavedVideoUncheckedCreateNestedManyWithoutUserInput
+  watchHistory?: Prisma.WatchHistoryUncheckedCreateNestedManyWithoutUserInput
 }
 
 export type UserCreateOrConnectWithoutSessionsInput = {
@@ -536,6 +622,9 @@ export type UserUpdateWithoutSessionsInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   megaAccounts?: Prisma.MegaAccountUpdateManyWithoutUserNestedInput
   creators?: Prisma.CreatorUpdateManyWithoutUserNestedInput
+  watchlist?: Prisma.WatchlistItemUpdateManyWithoutUserNestedInput
+  savedVideos?: Prisma.SavedVideoUpdateManyWithoutUserNestedInput
+  watchHistory?: Prisma.WatchHistoryUpdateManyWithoutUserNestedInput
 }
 
 export type UserUncheckedUpdateWithoutSessionsInput = {
@@ -546,6 +635,213 @@ export type UserUncheckedUpdateWithoutSessionsInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   megaAccounts?: Prisma.MegaAccountUncheckedUpdateManyWithoutUserNestedInput
   creators?: Prisma.CreatorUncheckedUpdateManyWithoutUserNestedInput
+  watchlist?: Prisma.WatchlistItemUncheckedUpdateManyWithoutUserNestedInput
+  savedVideos?: Prisma.SavedVideoUncheckedUpdateManyWithoutUserNestedInput
+  watchHistory?: Prisma.WatchHistoryUncheckedUpdateManyWithoutUserNestedInput
+}
+
+export type UserCreateWithoutWatchlistInput = {
+  id?: string
+  email: string
+  passwordHash: string
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  megaAccounts?: Prisma.MegaAccountCreateNestedManyWithoutUserInput
+  sessions?: Prisma.SessionCreateNestedManyWithoutUserInput
+  creators?: Prisma.CreatorCreateNestedManyWithoutUserInput
+  savedVideos?: Prisma.SavedVideoCreateNestedManyWithoutUserInput
+  watchHistory?: Prisma.WatchHistoryCreateNestedManyWithoutUserInput
+}
+
+export type UserUncheckedCreateWithoutWatchlistInput = {
+  id?: string
+  email: string
+  passwordHash: string
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  megaAccounts?: Prisma.MegaAccountUncheckedCreateNestedManyWithoutUserInput
+  sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutUserInput
+  creators?: Prisma.CreatorUncheckedCreateNestedManyWithoutUserInput
+  savedVideos?: Prisma.SavedVideoUncheckedCreateNestedManyWithoutUserInput
+  watchHistory?: Prisma.WatchHistoryUncheckedCreateNestedManyWithoutUserInput
+}
+
+export type UserCreateOrConnectWithoutWatchlistInput = {
+  where: Prisma.UserWhereUniqueInput
+  create: Prisma.XOR<Prisma.UserCreateWithoutWatchlistInput, Prisma.UserUncheckedCreateWithoutWatchlistInput>
+}
+
+export type UserUpsertWithoutWatchlistInput = {
+  update: Prisma.XOR<Prisma.UserUpdateWithoutWatchlistInput, Prisma.UserUncheckedUpdateWithoutWatchlistInput>
+  create: Prisma.XOR<Prisma.UserCreateWithoutWatchlistInput, Prisma.UserUncheckedCreateWithoutWatchlistInput>
+  where?: Prisma.UserWhereInput
+}
+
+export type UserUpdateToOneWithWhereWithoutWatchlistInput = {
+  where?: Prisma.UserWhereInput
+  data: Prisma.XOR<Prisma.UserUpdateWithoutWatchlistInput, Prisma.UserUncheckedUpdateWithoutWatchlistInput>
+}
+
+export type UserUpdateWithoutWatchlistInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  email?: Prisma.StringFieldUpdateOperationsInput | string
+  passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  megaAccounts?: Prisma.MegaAccountUpdateManyWithoutUserNestedInput
+  sessions?: Prisma.SessionUpdateManyWithoutUserNestedInput
+  creators?: Prisma.CreatorUpdateManyWithoutUserNestedInput
+  savedVideos?: Prisma.SavedVideoUpdateManyWithoutUserNestedInput
+  watchHistory?: Prisma.WatchHistoryUpdateManyWithoutUserNestedInput
+}
+
+export type UserUncheckedUpdateWithoutWatchlistInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  email?: Prisma.StringFieldUpdateOperationsInput | string
+  passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  megaAccounts?: Prisma.MegaAccountUncheckedUpdateManyWithoutUserNestedInput
+  sessions?: Prisma.SessionUncheckedUpdateManyWithoutUserNestedInput
+  creators?: Prisma.CreatorUncheckedUpdateManyWithoutUserNestedInput
+  savedVideos?: Prisma.SavedVideoUncheckedUpdateManyWithoutUserNestedInput
+  watchHistory?: Prisma.WatchHistoryUncheckedUpdateManyWithoutUserNestedInput
+}
+
+export type UserCreateWithoutSavedVideosInput = {
+  id?: string
+  email: string
+  passwordHash: string
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  megaAccounts?: Prisma.MegaAccountCreateNestedManyWithoutUserInput
+  sessions?: Prisma.SessionCreateNestedManyWithoutUserInput
+  creators?: Prisma.CreatorCreateNestedManyWithoutUserInput
+  watchlist?: Prisma.WatchlistItemCreateNestedManyWithoutUserInput
+  watchHistory?: Prisma.WatchHistoryCreateNestedManyWithoutUserInput
+}
+
+export type UserUncheckedCreateWithoutSavedVideosInput = {
+  id?: string
+  email: string
+  passwordHash: string
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  megaAccounts?: Prisma.MegaAccountUncheckedCreateNestedManyWithoutUserInput
+  sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutUserInput
+  creators?: Prisma.CreatorUncheckedCreateNestedManyWithoutUserInput
+  watchlist?: Prisma.WatchlistItemUncheckedCreateNestedManyWithoutUserInput
+  watchHistory?: Prisma.WatchHistoryUncheckedCreateNestedManyWithoutUserInput
+}
+
+export type UserCreateOrConnectWithoutSavedVideosInput = {
+  where: Prisma.UserWhereUniqueInput
+  create: Prisma.XOR<Prisma.UserCreateWithoutSavedVideosInput, Prisma.UserUncheckedCreateWithoutSavedVideosInput>
+}
+
+export type UserUpsertWithoutSavedVideosInput = {
+  update: Prisma.XOR<Prisma.UserUpdateWithoutSavedVideosInput, Prisma.UserUncheckedUpdateWithoutSavedVideosInput>
+  create: Prisma.XOR<Prisma.UserCreateWithoutSavedVideosInput, Prisma.UserUncheckedCreateWithoutSavedVideosInput>
+  where?: Prisma.UserWhereInput
+}
+
+export type UserUpdateToOneWithWhereWithoutSavedVideosInput = {
+  where?: Prisma.UserWhereInput
+  data: Prisma.XOR<Prisma.UserUpdateWithoutSavedVideosInput, Prisma.UserUncheckedUpdateWithoutSavedVideosInput>
+}
+
+export type UserUpdateWithoutSavedVideosInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  email?: Prisma.StringFieldUpdateOperationsInput | string
+  passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  megaAccounts?: Prisma.MegaAccountUpdateManyWithoutUserNestedInput
+  sessions?: Prisma.SessionUpdateManyWithoutUserNestedInput
+  creators?: Prisma.CreatorUpdateManyWithoutUserNestedInput
+  watchlist?: Prisma.WatchlistItemUpdateManyWithoutUserNestedInput
+  watchHistory?: Prisma.WatchHistoryUpdateManyWithoutUserNestedInput
+}
+
+export type UserUncheckedUpdateWithoutSavedVideosInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  email?: Prisma.StringFieldUpdateOperationsInput | string
+  passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  megaAccounts?: Prisma.MegaAccountUncheckedUpdateManyWithoutUserNestedInput
+  sessions?: Prisma.SessionUncheckedUpdateManyWithoutUserNestedInput
+  creators?: Prisma.CreatorUncheckedUpdateManyWithoutUserNestedInput
+  watchlist?: Prisma.WatchlistItemUncheckedUpdateManyWithoutUserNestedInput
+  watchHistory?: Prisma.WatchHistoryUncheckedUpdateManyWithoutUserNestedInput
+}
+
+export type UserCreateWithoutWatchHistoryInput = {
+  id?: string
+  email: string
+  passwordHash: string
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  megaAccounts?: Prisma.MegaAccountCreateNestedManyWithoutUserInput
+  sessions?: Prisma.SessionCreateNestedManyWithoutUserInput
+  creators?: Prisma.CreatorCreateNestedManyWithoutUserInput
+  watchlist?: Prisma.WatchlistItemCreateNestedManyWithoutUserInput
+  savedVideos?: Prisma.SavedVideoCreateNestedManyWithoutUserInput
+}
+
+export type UserUncheckedCreateWithoutWatchHistoryInput = {
+  id?: string
+  email: string
+  passwordHash: string
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  megaAccounts?: Prisma.MegaAccountUncheckedCreateNestedManyWithoutUserInput
+  sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutUserInput
+  creators?: Prisma.CreatorUncheckedCreateNestedManyWithoutUserInput
+  watchlist?: Prisma.WatchlistItemUncheckedCreateNestedManyWithoutUserInput
+  savedVideos?: Prisma.SavedVideoUncheckedCreateNestedManyWithoutUserInput
+}
+
+export type UserCreateOrConnectWithoutWatchHistoryInput = {
+  where: Prisma.UserWhereUniqueInput
+  create: Prisma.XOR<Prisma.UserCreateWithoutWatchHistoryInput, Prisma.UserUncheckedCreateWithoutWatchHistoryInput>
+}
+
+export type UserUpsertWithoutWatchHistoryInput = {
+  update: Prisma.XOR<Prisma.UserUpdateWithoutWatchHistoryInput, Prisma.UserUncheckedUpdateWithoutWatchHistoryInput>
+  create: Prisma.XOR<Prisma.UserCreateWithoutWatchHistoryInput, Prisma.UserUncheckedCreateWithoutWatchHistoryInput>
+  where?: Prisma.UserWhereInput
+}
+
+export type UserUpdateToOneWithWhereWithoutWatchHistoryInput = {
+  where?: Prisma.UserWhereInput
+  data: Prisma.XOR<Prisma.UserUpdateWithoutWatchHistoryInput, Prisma.UserUncheckedUpdateWithoutWatchHistoryInput>
+}
+
+export type UserUpdateWithoutWatchHistoryInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  email?: Prisma.StringFieldUpdateOperationsInput | string
+  passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  megaAccounts?: Prisma.MegaAccountUpdateManyWithoutUserNestedInput
+  sessions?: Prisma.SessionUpdateManyWithoutUserNestedInput
+  creators?: Prisma.CreatorUpdateManyWithoutUserNestedInput
+  watchlist?: Prisma.WatchlistItemUpdateManyWithoutUserNestedInput
+  savedVideos?: Prisma.SavedVideoUpdateManyWithoutUserNestedInput
+}
+
+export type UserUncheckedUpdateWithoutWatchHistoryInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  email?: Prisma.StringFieldUpdateOperationsInput | string
+  passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  megaAccounts?: Prisma.MegaAccountUncheckedUpdateManyWithoutUserNestedInput
+  sessions?: Prisma.SessionUncheckedUpdateManyWithoutUserNestedInput
+  creators?: Prisma.CreatorUncheckedUpdateManyWithoutUserNestedInput
+  watchlist?: Prisma.WatchlistItemUncheckedUpdateManyWithoutUserNestedInput
+  savedVideos?: Prisma.SavedVideoUncheckedUpdateManyWithoutUserNestedInput
 }
 
 
@@ -557,12 +853,18 @@ export type UserCountOutputType = {
   megaAccounts: number
   sessions: number
   creators: number
+  watchlist: number
+  savedVideos: number
+  watchHistory: number
 }
 
 export type UserCountOutputTypeSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   megaAccounts?: boolean | UserCountOutputTypeCountMegaAccountsArgs
   sessions?: boolean | UserCountOutputTypeCountSessionsArgs
   creators?: boolean | UserCountOutputTypeCountCreatorsArgs
+  watchlist?: boolean | UserCountOutputTypeCountWatchlistArgs
+  savedVideos?: boolean | UserCountOutputTypeCountSavedVideosArgs
+  watchHistory?: boolean | UserCountOutputTypeCountWatchHistoryArgs
 }
 
 /**
@@ -596,6 +898,27 @@ export type UserCountOutputTypeCountCreatorsArgs<ExtArgs extends runtime.Types.E
   where?: Prisma.CreatorWhereInput
 }
 
+/**
+ * UserCountOutputType without action
+ */
+export type UserCountOutputTypeCountWatchlistArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.WatchlistItemWhereInput
+}
+
+/**
+ * UserCountOutputType without action
+ */
+export type UserCountOutputTypeCountSavedVideosArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.SavedVideoWhereInput
+}
+
+/**
+ * UserCountOutputType without action
+ */
+export type UserCountOutputTypeCountWatchHistoryArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.WatchHistoryWhereInput
+}
+
 
 export type UserSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
@@ -606,6 +929,9 @@ export type UserSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = r
   megaAccounts?: boolean | Prisma.User$megaAccountsArgs<ExtArgs>
   sessions?: boolean | Prisma.User$sessionsArgs<ExtArgs>
   creators?: boolean | Prisma.User$creatorsArgs<ExtArgs>
+  watchlist?: boolean | Prisma.User$watchlistArgs<ExtArgs>
+  savedVideos?: boolean | Prisma.User$savedVideosArgs<ExtArgs>
+  watchHistory?: boolean | Prisma.User$watchHistoryArgs<ExtArgs>
   _count?: boolean | Prisma.UserCountOutputTypeDefaultArgs<ExtArgs>
 }, ExtArgs["result"]["user"]>
 
@@ -638,6 +964,9 @@ export type UserInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = 
   megaAccounts?: boolean | Prisma.User$megaAccountsArgs<ExtArgs>
   sessions?: boolean | Prisma.User$sessionsArgs<ExtArgs>
   creators?: boolean | Prisma.User$creatorsArgs<ExtArgs>
+  watchlist?: boolean | Prisma.User$watchlistArgs<ExtArgs>
+  savedVideos?: boolean | Prisma.User$savedVideosArgs<ExtArgs>
+  watchHistory?: boolean | Prisma.User$watchHistoryArgs<ExtArgs>
   _count?: boolean | Prisma.UserCountOutputTypeDefaultArgs<ExtArgs>
 }
 export type UserIncludeCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {}
@@ -649,6 +978,9 @@ export type $UserPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs =
     megaAccounts: Prisma.$MegaAccountPayload<ExtArgs>[]
     sessions: Prisma.$SessionPayload<ExtArgs>[]
     creators: Prisma.$CreatorPayload<ExtArgs>[]
+    watchlist: Prisma.$WatchlistItemPayload<ExtArgs>[]
+    savedVideos: Prisma.$SavedVideoPayload<ExtArgs>[]
+    watchHistory: Prisma.$WatchHistoryPayload<ExtArgs>[]
   }
   scalars: runtime.Types.Extensions.GetPayloadResult<{
     id: string
@@ -1053,6 +1385,9 @@ export interface Prisma__UserClient<T, Null = never, ExtArgs extends runtime.Typ
   megaAccounts<T extends Prisma.User$megaAccountsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.User$megaAccountsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$MegaAccountPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   sessions<T extends Prisma.User$sessionsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.User$sessionsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$SessionPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   creators<T extends Prisma.User$creatorsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.User$creatorsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$CreatorPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  watchlist<T extends Prisma.User$watchlistArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.User$watchlistArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$WatchlistItemPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  savedVideos<T extends Prisma.User$savedVideosArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.User$savedVideosArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$SavedVideoPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  watchHistory<T extends Prisma.User$watchHistoryArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.User$watchHistoryArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$WatchHistoryPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   /**
    * Attaches callbacks for the resolution and/or rejection of the Promise.
    * @param onfulfilled The callback to execute when the Promise is resolved.
@@ -1547,6 +1882,78 @@ export type User$creatorsArgs<ExtArgs extends runtime.Types.Extensions.InternalA
   take?: number
   skip?: number
   distinct?: Prisma.CreatorScalarFieldEnum | Prisma.CreatorScalarFieldEnum[]
+}
+
+/**
+ * User.watchlist
+ */
+export type User$watchlistArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the WatchlistItem
+   */
+  select?: Prisma.WatchlistItemSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the WatchlistItem
+   */
+  omit?: Prisma.WatchlistItemOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.WatchlistItemInclude<ExtArgs> | null
+  where?: Prisma.WatchlistItemWhereInput
+  orderBy?: Prisma.WatchlistItemOrderByWithRelationInput | Prisma.WatchlistItemOrderByWithRelationInput[]
+  cursor?: Prisma.WatchlistItemWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.WatchlistItemScalarFieldEnum | Prisma.WatchlistItemScalarFieldEnum[]
+}
+
+/**
+ * User.savedVideos
+ */
+export type User$savedVideosArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the SavedVideo
+   */
+  select?: Prisma.SavedVideoSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the SavedVideo
+   */
+  omit?: Prisma.SavedVideoOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.SavedVideoInclude<ExtArgs> | null
+  where?: Prisma.SavedVideoWhereInput
+  orderBy?: Prisma.SavedVideoOrderByWithRelationInput | Prisma.SavedVideoOrderByWithRelationInput[]
+  cursor?: Prisma.SavedVideoWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.SavedVideoScalarFieldEnum | Prisma.SavedVideoScalarFieldEnum[]
+}
+
+/**
+ * User.watchHistory
+ */
+export type User$watchHistoryArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the WatchHistory
+   */
+  select?: Prisma.WatchHistorySelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the WatchHistory
+   */
+  omit?: Prisma.WatchHistoryOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.WatchHistoryInclude<ExtArgs> | null
+  where?: Prisma.WatchHistoryWhereInput
+  orderBy?: Prisma.WatchHistoryOrderByWithRelationInput | Prisma.WatchHistoryOrderByWithRelationInput[]
+  cursor?: Prisma.WatchHistoryWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.WatchHistoryScalarFieldEnum | Prisma.WatchHistoryScalarFieldEnum[]
 }
 
 /**

@@ -53,12 +53,15 @@ model Video {
   megaModifiedAt     DateTime?
   creator            Creator?     @relation(fields: [creatorId], references: [id])
   megaAccount        MegaAccount? @relation(fields: [megaAccountId], references: [id], onDelete: Cascade)
+  watchlistedBy      WatchlistItem[]
+  savedBy            SavedVideo[]
+  watchHistory       WatchHistory[]
 
   @@unique([megaAccountId, megaNodeId])
-  @@index([creatorId])
+  @@index([creatorId, createdAt])
   @@index([sortOrder])
   @@index([title])
-  @@index([megaAccountId])
+  @@index([megaAccountId, createdAt])
 }
 
 model User {
@@ -70,6 +73,9 @@ model User {
   megaAccounts MegaAccount[]
   sessions     Session[]
   creators     Creator[]
+  watchlist    WatchlistItem[]
+  savedVideos  SavedVideo[]
+  watchHistory WatchHistory[]
 }
 
 /// A MEGA account linked to a website user. One website user can link many
@@ -132,6 +138,49 @@ model Session {
   createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([token])
   @@index([userId])
+}
+
+/// P2.0 product foundation: a user's Watchlist. One row per (user, video);
+/// video metadata is never duplicated here - always reached via the relation.
+model WatchlistItem {
+  id        Int      @id @default(autoincrement())
+  userId    String
+  videoId   Int
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video     Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, videoId])
+  @@index([userId, createdAt])
+}
+
+/// P2.0 product foundation: a user's saved/bookmark videos. Flat bookmarks -
+/// NOT collections/folders. One row per (user, video).
+model SavedVideo {
+  id        Int      @id @default(autoincrement())
+  userId    String
+  videoId   Int
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video     Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, videoId])
+  @@index([userId, createdAt])
+}
+
+/// P2.0 product foundation: "videos I watched" history. One logical row per
+/// (user, video); re-watching updates lastWatchedAt instead of duplicating.
+/// No analytics, no sessions, no watch-time tracking.
+model WatchHistory {
+  id            Int      @id @default(autoincrement())
+  userId        String
+  videoId       Int
+  lastWatchedAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video         Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, videoId])
+  @@index([userId, lastWatchedAt])
 }

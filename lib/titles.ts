@@ -42,6 +42,17 @@ export function titleFromFilename(filename: string): string {
   return stem.replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * Remove a leading "Watch "/"Watch_" download-source prefix from a creator
+ * candidate ("Watch Kristie Bish" -> "Kristie Bish"). Only the creator
+ * candidate is stripped - a title-only filename such as "Watch Me Dance.mp4"
+ * keeps its full title. Requires a separator after "Watch" so names like
+ * "Watchful Eyes" are never mangled. Case-insensitive ("watch "/"WATCH_").
+ */
+export function stripWatchPrefix(candidate: string): string {
+  return candidate.replace(/^watch[_\s]+/i, '').trim();
+}
+
 export interface ParsedVideoMetadata {
   /** Creator derived from the filename, or null when the filename has no creator pattern. */
   creator: string | null;
@@ -61,12 +72,14 @@ export interface ParsedVideoMetadata {
  *
  * Conventions supported, in priority order:
  *   1. "Creator Name - Video Title.mp4"   (spaced " - " delimiter)
+ *   1b. "Watch Creator Name - Video Title.mp4" (same, "Watch " prefix removed
+ *       from the creator candidate only - never from a title-only filename)
  *   2. "Creator_Name_-_Video_Title.mp4"   (site underscore convention)
  *   3. no delimiter                       -> title only, creator stays null
  *
  * Only the file extension is removed from the title. Nothing is invented:
- * when no creator pattern matches, creator is null (the UI shows its own
- * "Unknown Creator" fallback).
+ * when no creator pattern matches, creator is null (the caller groups such
+ * videos under the user-scoped "Unknown Creator").
  */
 export function parseVideoMetadata(filename: string): ParsedVideoMetadata {
   const cleaned = cleanMegaFilename(filename);
@@ -74,20 +87,31 @@ export function parseVideoMetadata(filename: string): ParsedVideoMetadata {
 
   // 1) Spaced " - " delimiter: everything before the FIRST delimiter is the
   //    creator, everything after it is the title (remaining delimiters stay
-  //    part of the title).
+  //    part of the title). A leading "Watch " on the creator candidate is a
+  //    download-source prefix, not part of the name.
   const spaced = stem.indexOf(' - ');
   if (spaced > 0) {
-    const creator = stem.slice(0, spaced).replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
+    const rawCreator = stem.slice(0, spaced).replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
     const title = stem.slice(spaced + 3).replace(/\s+/g, ' ').trim();
-    if (creator && title) return { creator, title };
+    if (title) {
+      const creator = stripWatchPrefix(rawCreator);
+      if (creator) return { creator, title };
+      // The candidate was just the "Watch " prefix (e.g. "Watch - Title"):
+      // no creator, but the post-delimiter title is still the real title.
+      return { creator: null, title };
+    }
   }
 
   // 2) Underscore convention "Creator_-_Title" (also tolerate en/em dashes).
   const under = stem.indexOf('_-_');
   if (under > 0) {
-    const creator = stem.slice(0, under).replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
+    const rawCreator = stem.slice(0, under).replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
     const title = stem.slice(under + 3).replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
-    if (creator && title) return { creator, title };
+    if (title) {
+      const creator = stripWatchPrefix(rawCreator);
+      if (creator) return { creator, title };
+      return { creator: null, title };
+    }
   }
 
   // 3) No creator pattern: keep the filename-derived title, invent nothing.
@@ -162,20 +186,49 @@ export async function findCreatorIdForUser(
 export async function ensureCreatorForUser(
   userId: string,
   rawName: string,
+  cache?: Map<string, number>,
 ): Promise<number> {
   const normalized = normalizeCreatorName(rawName);
   const slug = slugify(normalized);
+  // Per-job cache (P1.4): a library sync resolves the same creator once
+  // instead of once per video. Keyed by user+slug; callers that pass no
+  // cache get exactly the old behavior.
+  const key = `${userId}\n${slug}`;
+  const cached = cache?.get(key);
+  if (cached !== undefined) return cached;
+
   const existing = await prisma.creator.findFirst({
     where: { userId, slug },
     select: { id: true },
   });
-  if (existing) return existing.id;
+  if (existing) {
+    cache?.set(key, existing.id);
+    return existing.id;
+  }
 
-  return prisma.creator.create({
-    data: {
-      userId,
-      name: normalized,
-      slug,
-    },
-  }).then((c) => c.id);
+  try {
+    const created = await prisma.creator.create({
+      data: {
+        userId,
+        name: normalized,
+        slug,
+      },
+    });
+    cache?.set(key, created.id);
+    return created.id;
+  } catch (err) {
+    // Lost a create race with a concurrent sync job for another account of
+    // the same user: the row exists now, so resolve it instead of failing.
+    if (typeof err === 'object' && err !== null && (err as { code?: string }).code === 'P2002') {
+      const winner = await prisma.creator.findFirst({
+        where: { userId, slug },
+        select: { id: true },
+      });
+      if (winner) {
+        cache?.set(key, winner.id);
+        return winner.id;
+      }
+    }
+    throw err;
+  }
 }
