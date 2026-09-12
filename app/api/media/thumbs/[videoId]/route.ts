@@ -49,14 +49,17 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   if (video.megaAccount.status === MEGA_ACCOUNT_STATUSES.DISCONNECTED) {
     return new NextResponse(null, { status: 410 });
   }
-  if (!video.thumbnailAvailable) {
-    return new NextResponse(null, { status: 404 });
-  }
-
   for (const ext of ['png', 'jpg']) {
     if (await readableFile(path.join(THUMBS_DIR, `${videoId}.${ext}`))) {
       return serveThumbFile(videoId, ext);
     }
+  }
+
+  // No file on disk (missing, or removed as broken): without a MEGA-side
+  // thumbnail attribute there is nothing to heal from here - use the
+  // thumbnail repair action instead, which extracts a real video frame.
+  if (!video.thumbnailAvailable) {
+    return new NextResponse(null, { status: 404 });
   }
 
   // thumbnailAvailable but no file on disk: the sync-time fetch failed

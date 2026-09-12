@@ -577,3 +577,36 @@ test('no password login and no destructive MEGA operations during sync', async (
     assert.ok(!DESTRUCTIVE_COMMANDS.has(cmd), `command ${cmd} is destructive and forbidden`);
   }
 });
+
+// Thumbnails must never fail a sync: when the MEGA thumbnail/media attribute
+// fetch throws, the video row is still created (playable, key stored) with a
+// null thumbnail, and the sync reports success.
+test('thumbnail attribute failure never fails the sync (row created, playable)', async () => {
+  const u = await makeUser('thumbfail');
+  const acc = await link(u.id, 'thumbfail@example.com');
+  scene.nodes = [videoNode('tf1')];
+  const storage = {
+    key: Buffer.alloc(16, 3),
+    user: 'Uowner',
+    api: {
+      request: async (cmd: Record<string, unknown>) => {
+        if (cmd.a === 'ufa') throw new Error('transient attribute outage');
+        return null;
+      },
+    },
+  };
+  const deps: SyncDeps = {
+    withMegaSession: async (_accountId, _encryptedSession, fn) => fn(storage as never),
+    fetchAccountFileNodes: async () => scene.nodes,
+  };
+  const result = await syncMegaAccount(acc.id, deps);
+  assert.ok(result, 'sync must succeed despite thumbnail failure');
+  assert.equal(result.added, 1);
+  const rows = await rowsOf(acc.id);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].thumbnail, null);
+  assert.equal(rows[0].thumbnailAvailable, true, 'MEGA still advertises a thumbnail');
+  assert.ok(rows[0].fileKeyEncrypted, 'playback key stored - video stays playable');
+  const after = await prisma.megaAccount.findUniqueOrThrow({ where: { id: acc.id } });
+  assert.equal(after.status, MEGA_ACCOUNT_STATUSES.SYNCED);
+});
