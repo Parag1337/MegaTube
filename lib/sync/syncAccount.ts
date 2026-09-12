@@ -181,6 +181,12 @@ async function existingRowsForAccount(accountId: number): Promise<ExistingVideoR
 /**
  * Fetch a thumbnail for a new video and store it under data/thumbs.
  * Returns the public URL to persist, or null when unavailable.
+ *
+ * A stored MEGA thumbnail is inspected, not trusted: when the file itself
+ * is genuinely black it is removed and null is returned, so the caller
+ * queues frame extraction exactly like a missing thumbnail (CASE 3 == CASE 2).
+ * When the brightness probe itself fails the stored file is kept (fail-open:
+ * sync never deletes content it cannot verify).
  */
 async function fetchAndStoreThumbnail(
   api: ApiLike,
@@ -193,7 +199,21 @@ async function fetchAndStoreThumbnail(
     if (!image) return null;
     const ext = image.mimeType === 'image/png' ? 'png' : 'jpg';
     fs.mkdirSync(THUMBS_DIR, { recursive: true });
-    fs.writeFileSync(thumbnailFileFor(videoId, ext), image.data);
+    const absPath = thumbnailFileFor(videoId, ext);
+    fs.writeFileSync(absPath, image.data);
+    try {
+      const { thumbMeanBrightness, verdictThumbMean } = await import('../thumbs/repair');
+      if (verdictThumbMean(await thumbMeanBrightness(absPath)) === 'black') {
+        fs.rmSync(absPath, { force: true });
+        console.warn(
+          `[sync] stored MEGA thumbnail is black (videoId=${videoId}) - queuing frame extraction`,
+        );
+        return null;
+      }
+    } catch {
+      // Brightness probe is best-effort: keep the stored file when the
+      // check itself cannot run.
+    }
     return thumbnailPathForVideo(videoId);
   } catch (err) {
     console.warn(
@@ -235,6 +255,10 @@ export async function syncMegaAccount(
 
   let result: SyncResult | null = null;
   let sessionExpired = false;
+  // New rows that still need a thumbnail after sync (no MEGA thumbnail
+  // attribute, or the attribute fetch failed). Handed to the bounded
+  // post-sync background repair - sync itself never waits for frames.
+  const needsFrameIds: number[] = [];
 
   const progressStartedAt = Date.now();
 
@@ -395,6 +419,12 @@ export async function syncMegaAccount(
           added++;
           tick();
 
+          if (!fa[0] && r.fileKey) {
+            // No MEGA thumbnail attribute: only a real extracted frame can
+            // cover this video (frame extraction needs the playback key).
+            needsFrameIds.push(row.id);
+          }
+
           if (r.fileKey && (fa[0] || fa[8])) {
             pendingAttrs.push({
               videoId: row.id,
@@ -426,6 +456,10 @@ export async function syncMegaAccount(
             const thumb = await fetchAndStoreThumbnail(api, p.videoId, p.fa, p.fileKey);
             if (thumb) {
               await prisma.video.update({ where: { id: p.videoId }, data: { thumbnail: thumb } });
+            } else {
+              // Transient attribute failure: the row is playable without a
+              // thumbnail; a real frame is extracted in the background.
+              needsFrameIds.push(p.videoId);
             }
           }
           if (p.needMedia && p.fileKey) {
@@ -500,6 +534,8 @@ export async function syncMegaAccount(
             const thumb = await fetchAndStoreThumbnail(api, u.row.id, u.remote.fa, u.remote.fileKey);
             if (thumb) {
               await prisma.video.update({ where: { id: u.row.id }, data: { thumbnail: thumb } });
+            } else {
+              needsFrameIds.push(u.row.id);
             }
           }
         } catch (err) {
@@ -585,6 +621,23 @@ export async function syncMegaAccount(
   } else if (!sessionExpired) {
     // result null without reauth = unexpected path; make sure status is sane
     // (the error branches above already set ERROR/REAUTH_REQUIRED)
+  }
+
+  // Videos that still lack a thumbnail get one from a real extracted frame,
+  // asynchronously: scheduling returns immediately and can never fail this
+  // sync (dynamic import keeps the sync module free of the repair graph and
+  // the timer is unref'd, so tests and shutdowns are unaffected).
+  if (result && needsFrameIds.length > 0 && account.userId) {
+    const userId = account.userId;
+    const ids = [...new Set(needsFrameIds)];
+    try {
+      void import('../thumbs/repair').then(
+        (m) => m.schedulePostSyncRepair(userId, ids),
+        () => {},
+      );
+    } catch {
+      // Best-effort only: the manual repair action covers leftovers.
+    }
   }
 
   clearSyncProgress(accountId);

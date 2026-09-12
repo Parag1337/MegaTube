@@ -11,6 +11,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Pagination } from '@/components/Pagination';
+import { ThumbImage } from '@/components/ThumbImage';
 import { EmptyState } from '@/components/ui';
 import { CreatorsIcon, HistoryIcon, TrashIcon } from '@/components/icons';
 
@@ -146,13 +147,7 @@ export function HistoryList({
                   aria-label={video.title}
                 >
                   {video.thumbnail ? (
-                    <img
-                      src={video.thumbnail}
-                      alt=""
-                      loading="lazy"
-                      decoding="async"
-                      className="h-full w-full object-cover"
-                    />
+                    <ThumbImage src={video.thumbnail} />
                   ) : (
                     <span className="flex h-full w-full items-center justify-center text-muted-light">
                       <CreatorsIcon className="h-6 w-6" />

@@ -6,6 +6,7 @@ import { tryMegaFileUrlToPreviewUrl } from '@/lib/mega/embed';
 import { acquirePreview, releasePreview } from '@/lib/preview-manager';
 import { previewDelayMs } from '@/lib/config';
 import { formatDuration } from '@/components/format';
+import { ThumbImage } from '@/components/ThumbImage';
 import { VideoCardMenu } from '@/components/VideoCardMenu';
 
 interface VideoCardProps {
@@ -163,13 +164,10 @@ export function VideoCard({
       <VideoCardMenu videoId={id} creator={creator} isPrivate={isPrivate} />
       <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-surface">
         {thumbnail ? (
-          <img
+          <ThumbImage
             src={thumbnail}
-            alt=""
             loading={priority ? 'eager' : 'lazy'}
-            decoding="async"
-            draggable={false}
-            className={`h-full w-full object-cover transition-opacity duration-200 ${
+            className={`transition-opacity duration-200 ${
               showPreview ? 'opacity-0' : 'opacity-100 group-hover:opacity-95'
             }`}
           />

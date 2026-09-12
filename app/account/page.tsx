@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { getCurrentUser } from '@/lib/auth';
 import { LogoutButton } from './logout-button';
+import { RepairThumbsButton } from './RepairThumbsButton';
 import { MegaAccountsPanel } from '@/components/MegaAccountsPanel';
 import { Avatar } from '@/components/ui';
 import { BookmarkIcon, ChevronRightIcon, HistoryIcon } from '@/components/icons';
@@ -68,6 +69,18 @@ export default async function AccountPage() {
         </section>
 
         <MegaAccountsPanel />
+
+        <section aria-labelledby="maintenance-heading" className="mt-6 rounded-2xl border border-border bg-surface p-5 sm:p-6">
+          <h2 id="maintenance-heading" className="text-[15px] font-semibold">
+            Maintenance
+          </h2>
+          <p className="mt-1 text-[13px] text-muted">
+            Replace missing or black thumbnails with real frames from your videos. Good thumbnails are left alone.
+          </p>
+          <div className="mt-3">
+            <RepairThumbsButton />
+          </div>
+        </section>
       </div>
     </div>
   );
