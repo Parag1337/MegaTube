@@ -3,10 +3,11 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { getCurrentUser } from '@/lib/auth';
 import { LogoutButton } from './logout-button';
+import { ManageAccountButton } from '@/components/ManageAccountButton';
 import { RepairThumbsButton } from './RepairThumbsButton';
 import { MegaAccountsPanel } from '@/components/MegaAccountsPanel';
 import { Avatar } from '@/components/ui';
-import { BookmarkIcon, ChevronRightIcon } from '@/components/icons';
+import { BookmarkIcon, ChevronRightIcon, HistoryIcon } from '@/components/icons';
 
 export const metadata: Metadata = { title: 'Account' };
 
@@ -14,7 +15,7 @@ export const dynamic = 'force-dynamic';
 
 export default async function AccountPage() {
   const user = await getCurrentUser();
-  if (!user) redirect('/login');
+  if (!user) redirect('/sign-in');
 
   return (
     <div className="px-4 py-6 md:px-6">
@@ -32,6 +33,7 @@ export default async function AccountPage() {
             </div>
           </div>
           <div className="mt-4 flex flex-wrap gap-2 border-t border-border pt-4">
+            <ManageAccountButton />
             <Link
               href="/account/settings"
               className="inline-flex h-9 items-center rounded-full bg-surface-raised px-4 text-sm font-medium text-foreground hover:bg-surface-overlay"
@@ -47,6 +49,18 @@ export default async function AccountPage() {
             Your library
           </h2>
           <nav aria-label="Personal library">
+            <LibraryRow
+              href="/watchlist"
+              icon={<BookmarkIcon className="h-[20px] w-[20px]" />}
+              title="Watchlist"
+              body="Videos you bookmarked for later"
+            />
+            <LibraryRow
+              href="/account/history"
+              icon={<HistoryIcon className="h-[20px] w-[20px]" />}
+              title="Watch history"
+              body="Everything you've watched, newest first"
+            />
             <LibraryRow
               href="/account/saved"
               icon={<BookmarkIcon className="h-[20px] w-[20px]" />}

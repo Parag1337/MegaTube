@@ -18,7 +18,7 @@ interface SavedPageProps {
 
 export default async function SavedVideosPage({ searchParams }: SavedPageProps) {
   const user = await getCurrentUser();
-  if (!user) redirect('/login');
+  if (!user) redirect('/sign-in');
 
   const params = await searchParams;
   const page = Math.max(1, Number(params.page) || 1);

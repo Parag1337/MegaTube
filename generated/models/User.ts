@@ -28,6 +28,7 @@ export type UserMinAggregateOutputType = {
   id: string | null
   email: string | null
   passwordHash: string | null
+  clerkUserId: string | null
   createdAt: Date | null
   updatedAt: Date | null
 }
@@ -36,6 +37,7 @@ export type UserMaxAggregateOutputType = {
   id: string | null
   email: string | null
   passwordHash: string | null
+  clerkUserId: string | null
   createdAt: Date | null
   updatedAt: Date | null
 }
@@ -44,6 +46,7 @@ export type UserCountAggregateOutputType = {
   id: number
   email: number
   passwordHash: number
+  clerkUserId: number
   createdAt: number
   updatedAt: number
   _all: number
@@ -54,6 +57,7 @@ export type UserMinAggregateInputType = {
   id?: true
   email?: true
   passwordHash?: true
+  clerkUserId?: true
   createdAt?: true
   updatedAt?: true
 }
@@ -62,6 +66,7 @@ export type UserMaxAggregateInputType = {
   id?: true
   email?: true
   passwordHash?: true
+  clerkUserId?: true
   createdAt?: true
   updatedAt?: true
 }
@@ -70,6 +75,7 @@ export type UserCountAggregateInputType = {
   id?: true
   email?: true
   passwordHash?: true
+  clerkUserId?: true
   createdAt?: true
   updatedAt?: true
   _all?: true
@@ -151,6 +157,7 @@ export type UserGroupByOutputType = {
   id: string
   email: string
   passwordHash: string
+  clerkUserId: string | null
   createdAt: Date
   updatedAt: Date
   _count: UserCountAggregateOutputType | null
@@ -180,6 +187,7 @@ export type UserWhereInput = {
   id?: Prisma.StringFilter<"User"> | string
   email?: Prisma.StringFilter<"User"> | string
   passwordHash?: Prisma.StringFilter<"User"> | string
+  clerkUserId?: Prisma.StringNullableFilter<"User"> | string | null
   createdAt?: Prisma.DateTimeFilter<"User"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"User"> | Date | string
   megaAccounts?: Prisma.MegaAccountListRelationFilter
@@ -195,6 +203,7 @@ export type UserOrderByWithRelationInput = {
   id?: Prisma.SortOrder
   email?: Prisma.SortOrder
   passwordHash?: Prisma.SortOrder
+  clerkUserId?: Prisma.SortOrderInput | Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
   megaAccounts?: Prisma.MegaAccountOrderByRelationAggregateInput
@@ -209,6 +218,7 @@ export type UserOrderByWithRelationInput = {
 export type UserWhereUniqueInput = Prisma.AtLeast<{
   id?: string
   email?: string
+  clerkUserId?: string
   AND?: Prisma.UserWhereInput | Prisma.UserWhereInput[]
   OR?: Prisma.UserWhereInput[]
   NOT?: Prisma.UserWhereInput | Prisma.UserWhereInput[]
@@ -222,12 +232,13 @@ export type UserWhereUniqueInput = Prisma.AtLeast<{
   savedVideos?: Prisma.SavedVideoListRelationFilter
   savedFolders?: Prisma.SavedFolderListRelationFilter
   watchHistory?: Prisma.WatchHistoryListRelationFilter
-}, "id" | "email">
+}, "id" | "email" | "clerkUserId">
 
 export type UserOrderByWithAggregationInput = {
   id?: Prisma.SortOrder
   email?: Prisma.SortOrder
   passwordHash?: Prisma.SortOrder
+  clerkUserId?: Prisma.SortOrderInput | Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
   _count?: Prisma.UserCountOrderByAggregateInput
@@ -242,6 +253,7 @@ export type UserScalarWhereWithAggregatesInput = {
   id?: Prisma.StringWithAggregatesFilter<"User"> | string
   email?: Prisma.StringWithAggregatesFilter<"User"> | string
   passwordHash?: Prisma.StringWithAggregatesFilter<"User"> | string
+  clerkUserId?: Prisma.StringNullableWithAggregatesFilter<"User"> | string | null
   createdAt?: Prisma.DateTimeWithAggregatesFilter<"User"> | Date | string
   updatedAt?: Prisma.DateTimeWithAggregatesFilter<"User"> | Date | string
 }
@@ -250,6 +262,7 @@ export type UserCreateInput = {
   id?: string
   email: string
   passwordHash: string
+  clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   megaAccounts?: Prisma.MegaAccountCreateNestedManyWithoutUserInput
@@ -265,6 +278,7 @@ export type UserUncheckedCreateInput = {
   id?: string
   email: string
   passwordHash: string
+  clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   megaAccounts?: Prisma.MegaAccountUncheckedCreateNestedManyWithoutUserInput
@@ -280,6 +294,7 @@ export type UserUpdateInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   email?: Prisma.StringFieldUpdateOperationsInput | string
   passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   megaAccounts?: Prisma.MegaAccountUpdateManyWithoutUserNestedInput
@@ -295,6 +310,7 @@ export type UserUncheckedUpdateInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   email?: Prisma.StringFieldUpdateOperationsInput | string
   passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   megaAccounts?: Prisma.MegaAccountUncheckedUpdateManyWithoutUserNestedInput
@@ -310,6 +326,7 @@ export type UserCreateManyInput = {
   id?: string
   email: string
   passwordHash: string
+  clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
 }
@@ -318,6 +335,7 @@ export type UserUpdateManyMutationInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   email?: Prisma.StringFieldUpdateOperationsInput | string
   passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -326,6 +344,7 @@ export type UserUncheckedUpdateManyInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   email?: Prisma.StringFieldUpdateOperationsInput | string
   passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -339,6 +358,7 @@ export type UserCountOrderByAggregateInput = {
   id?: Prisma.SortOrder
   email?: Prisma.SortOrder
   passwordHash?: Prisma.SortOrder
+  clerkUserId?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
 }
@@ -347,6 +367,7 @@ export type UserMaxOrderByAggregateInput = {
   id?: Prisma.SortOrder
   email?: Prisma.SortOrder
   passwordHash?: Prisma.SortOrder
+  clerkUserId?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
 }
@@ -355,6 +376,7 @@ export type UserMinOrderByAggregateInput = {
   id?: Prisma.SortOrder
   email?: Prisma.SortOrder
   passwordHash?: Prisma.SortOrder
+  clerkUserId?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
 }
@@ -461,6 +483,7 @@ export type UserCreateWithoutCreatorsInput = {
   id?: string
   email: string
   passwordHash: string
+  clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   megaAccounts?: Prisma.MegaAccountCreateNestedManyWithoutUserInput
@@ -475,6 +498,7 @@ export type UserUncheckedCreateWithoutCreatorsInput = {
   id?: string
   email: string
   passwordHash: string
+  clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   megaAccounts?: Prisma.MegaAccountUncheckedCreateNestedManyWithoutUserInput
@@ -505,6 +529,7 @@ export type UserUpdateWithoutCreatorsInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   email?: Prisma.StringFieldUpdateOperationsInput | string
   passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   megaAccounts?: Prisma.MegaAccountUpdateManyWithoutUserNestedInput
@@ -519,6 +544,7 @@ export type UserUncheckedUpdateWithoutCreatorsInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   email?: Prisma.StringFieldUpdateOperationsInput | string
   passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   megaAccounts?: Prisma.MegaAccountUncheckedUpdateManyWithoutUserNestedInput
@@ -533,6 +559,7 @@ export type UserCreateWithoutMegaAccountsInput = {
   id?: string
   email: string
   passwordHash: string
+  clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   sessions?: Prisma.SessionCreateNestedManyWithoutUserInput
@@ -547,6 +574,7 @@ export type UserUncheckedCreateWithoutMegaAccountsInput = {
   id?: string
   email: string
   passwordHash: string
+  clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutUserInput
@@ -577,6 +605,7 @@ export type UserUpdateWithoutMegaAccountsInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   email?: Prisma.StringFieldUpdateOperationsInput | string
   passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   sessions?: Prisma.SessionUpdateManyWithoutUserNestedInput
@@ -591,6 +620,7 @@ export type UserUncheckedUpdateWithoutMegaAccountsInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   email?: Prisma.StringFieldUpdateOperationsInput | string
   passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutUserNestedInput
@@ -605,6 +635,7 @@ export type UserCreateWithoutSessionsInput = {
   id?: string
   email: string
   passwordHash: string
+  clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   megaAccounts?: Prisma.MegaAccountCreateNestedManyWithoutUserInput
@@ -619,6 +650,7 @@ export type UserUncheckedCreateWithoutSessionsInput = {
   id?: string
   email: string
   passwordHash: string
+  clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   megaAccounts?: Prisma.MegaAccountUncheckedCreateNestedManyWithoutUserInput
@@ -649,6 +681,7 @@ export type UserUpdateWithoutSessionsInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   email?: Prisma.StringFieldUpdateOperationsInput | string
   passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   megaAccounts?: Prisma.MegaAccountUpdateManyWithoutUserNestedInput
@@ -663,6 +696,7 @@ export type UserUncheckedUpdateWithoutSessionsInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   email?: Prisma.StringFieldUpdateOperationsInput | string
   passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   megaAccounts?: Prisma.MegaAccountUncheckedUpdateManyWithoutUserNestedInput
@@ -677,6 +711,7 @@ export type UserCreateWithoutWatchlistInput = {
   id?: string
   email: string
   passwordHash: string
+  clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   megaAccounts?: Prisma.MegaAccountCreateNestedManyWithoutUserInput
@@ -691,6 +726,7 @@ export type UserUncheckedCreateWithoutWatchlistInput = {
   id?: string
   email: string
   passwordHash: string
+  clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   megaAccounts?: Prisma.MegaAccountUncheckedCreateNestedManyWithoutUserInput
@@ -721,6 +757,7 @@ export type UserUpdateWithoutWatchlistInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   email?: Prisma.StringFieldUpdateOperationsInput | string
   passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   megaAccounts?: Prisma.MegaAccountUpdateManyWithoutUserNestedInput
@@ -735,6 +772,7 @@ export type UserUncheckedUpdateWithoutWatchlistInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   email?: Prisma.StringFieldUpdateOperationsInput | string
   passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   megaAccounts?: Prisma.MegaAccountUncheckedUpdateManyWithoutUserNestedInput
@@ -749,6 +787,7 @@ export type UserCreateWithoutSavedVideosInput = {
   id?: string
   email: string
   passwordHash: string
+  clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   megaAccounts?: Prisma.MegaAccountCreateNestedManyWithoutUserInput
@@ -763,6 +802,7 @@ export type UserUncheckedCreateWithoutSavedVideosInput = {
   id?: string
   email: string
   passwordHash: string
+  clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   megaAccounts?: Prisma.MegaAccountUncheckedCreateNestedManyWithoutUserInput
@@ -793,6 +833,7 @@ export type UserUpdateWithoutSavedVideosInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   email?: Prisma.StringFieldUpdateOperationsInput | string
   passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   megaAccounts?: Prisma.MegaAccountUpdateManyWithoutUserNestedInput
@@ -807,6 +848,7 @@ export type UserUncheckedUpdateWithoutSavedVideosInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   email?: Prisma.StringFieldUpdateOperationsInput | string
   passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   megaAccounts?: Prisma.MegaAccountUncheckedUpdateManyWithoutUserNestedInput
@@ -821,6 +863,7 @@ export type UserCreateWithoutSavedFoldersInput = {
   id?: string
   email: string
   passwordHash: string
+  clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   megaAccounts?: Prisma.MegaAccountCreateNestedManyWithoutUserInput
@@ -835,6 +878,7 @@ export type UserUncheckedCreateWithoutSavedFoldersInput = {
   id?: string
   email: string
   passwordHash: string
+  clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   megaAccounts?: Prisma.MegaAccountUncheckedCreateNestedManyWithoutUserInput
@@ -865,6 +909,7 @@ export type UserUpdateWithoutSavedFoldersInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   email?: Prisma.StringFieldUpdateOperationsInput | string
   passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   megaAccounts?: Prisma.MegaAccountUpdateManyWithoutUserNestedInput
@@ -879,6 +924,7 @@ export type UserUncheckedUpdateWithoutSavedFoldersInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   email?: Prisma.StringFieldUpdateOperationsInput | string
   passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   megaAccounts?: Prisma.MegaAccountUncheckedUpdateManyWithoutUserNestedInput
@@ -893,6 +939,7 @@ export type UserCreateWithoutWatchHistoryInput = {
   id?: string
   email: string
   passwordHash: string
+  clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   megaAccounts?: Prisma.MegaAccountCreateNestedManyWithoutUserInput
@@ -907,6 +954,7 @@ export type UserUncheckedCreateWithoutWatchHistoryInput = {
   id?: string
   email: string
   passwordHash: string
+  clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   megaAccounts?: Prisma.MegaAccountUncheckedCreateNestedManyWithoutUserInput
@@ -937,6 +985,7 @@ export type UserUpdateWithoutWatchHistoryInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   email?: Prisma.StringFieldUpdateOperationsInput | string
   passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   megaAccounts?: Prisma.MegaAccountUpdateManyWithoutUserNestedInput
@@ -951,6 +1000,7 @@ export type UserUncheckedUpdateWithoutWatchHistoryInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   email?: Prisma.StringFieldUpdateOperationsInput | string
   passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   megaAccounts?: Prisma.MegaAccountUncheckedUpdateManyWithoutUserNestedInput
@@ -1050,6 +1100,7 @@ export type UserSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = r
   id?: boolean
   email?: boolean
   passwordHash?: boolean
+  clerkUserId?: boolean
   createdAt?: boolean
   updatedAt?: boolean
   megaAccounts?: boolean | Prisma.User$megaAccountsArgs<ExtArgs>
@@ -1066,6 +1117,7 @@ export type UserSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Extensio
   id?: boolean
   email?: boolean
   passwordHash?: boolean
+  clerkUserId?: boolean
   createdAt?: boolean
   updatedAt?: boolean
 }, ExtArgs["result"]["user"]>
@@ -1074,6 +1126,7 @@ export type UserSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensio
   id?: boolean
   email?: boolean
   passwordHash?: boolean
+  clerkUserId?: boolean
   createdAt?: boolean
   updatedAt?: boolean
 }, ExtArgs["result"]["user"]>
@@ -1082,11 +1135,12 @@ export type UserSelectScalar = {
   id?: boolean
   email?: boolean
   passwordHash?: boolean
+  clerkUserId?: boolean
   createdAt?: boolean
   updatedAt?: boolean
 }
 
-export type UserOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "email" | "passwordHash" | "createdAt" | "updatedAt", ExtArgs["result"]["user"]>
+export type UserOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "email" | "passwordHash" | "clerkUserId" | "createdAt" | "updatedAt", ExtArgs["result"]["user"]>
 export type UserInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   megaAccounts?: boolean | Prisma.User$megaAccountsArgs<ExtArgs>
   sessions?: boolean | Prisma.User$sessionsArgs<ExtArgs>
@@ -1115,6 +1169,14 @@ export type $UserPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs =
     id: string
     email: string
     passwordHash: string
+    /**
+     * Clerk user ID (e.g. "user_...") linking this MegaTube user to its
+     * Clerk identity. Null for legacy password-only accounts until they
+     * sign in through Clerk, at which point they are linked by email.
+     * Never replaces the internal id - all user-owned data stays keyed
+     * by the existing id.
+     */
+    clerkUserId: string | null
     createdAt: Date
     updatedAt: Date
   }, ExtArgs["result"]["user"]>
@@ -1550,6 +1612,7 @@ export interface UserFieldRefs {
   readonly id: Prisma.FieldRef<"User", 'String'>
   readonly email: Prisma.FieldRef<"User", 'String'>
   readonly passwordHash: Prisma.FieldRef<"User", 'String'>
+  readonly clerkUserId: Prisma.FieldRef<"User", 'String'>
   readonly createdAt: Prisma.FieldRef<"User", 'DateTime'>
   readonly updatedAt: Prisma.FieldRef<"User", 'DateTime'>
 }

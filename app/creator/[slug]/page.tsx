@@ -27,7 +27,7 @@ export default async function CreatorPage({ params, searchParams }: CreatorPageP
             title="Sign in to view this creator"
             body="Creator pages are part of your private library."
             action={
-              <Button href="/login" variant="primary">
+              <Button href="/sign-in" variant="primary">
                 Sign in
               </Button>
             }

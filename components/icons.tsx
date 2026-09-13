@@ -109,6 +109,35 @@ export function PlayIcon({ className }: IconProps) {
   );
 }
 
+/**
+ * MegaTube brand mark - an original geometric identity, deliberately NOT a
+ * play triangle in a rounded box.
+ *
+ * Construction (32x32 grid):
+ * - A bold angular "M" built from connected geometric planes (flat tops,
+ *   sharp inner valley) for MEGA / geometric-technical character.
+ * - A deep vertical aperture slot cut through the valley (even-odd
+ *   knockout, open through the baseline) - a film-gate / media cue in
+ *   negative space without using a play triangle.
+ * - A single "media shelf" bar beneath the M - stacked-library / stored
+ *   files character. One bar only, so the mark stays legible at 16px.
+ *
+ * The mark is monochrome (currentColor): parents color it with text-accent
+ * for brand-red on any theme, muted for placeholders. No container box is
+ * part of the mark - never place it inside a red rounded square.
+ */
+export function MegaTubeMark({ className }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 32 32" fill="currentColor" aria-hidden>
+      <path
+        fillRule="evenodd"
+        d="M4 22V6h6.5L16 15l5.5-9H28v16h-4.6V12.5L16 21.5l-5.4-9V22H4zM14.4 15.5h3.2V23h-3.2v-7.5z"
+      />
+      <rect x="4" y="24.2" width="24" height="3" rx="1.5" />
+    </svg>
+  );
+}
+
 export function PlusIcon({ className }: IconProps) {
   return (
     <Base className={className}>

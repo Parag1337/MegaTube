@@ -1,0 +1,34 @@
+import { chromium } from 'playwright';
+
+const BASE = process.env.BASE ?? 'http://localhost:3102';
+const target = process.argv[2] ?? 'landing-desktop-dark';
+
+const shots: Record<string, { path: string; width: number; height: number; full: boolean; dark: boolean }> = {
+  'landing-desktop-dark': { path: '/', width: 1440, height: 900, full: true, dark: true },
+  'landing-mobile-dark': { path: '/', width: 390, height: 844, full: true, dark: true },
+  'signin-dark': { path: '/sign-in', width: 1440, height: 900, full: false, dark: true },
+};
+
+const s = shots[target];
+const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome' });
+try {
+  const ctx = await browser.newContext({
+    viewport: { width: s.width, height: s.height },
+    colorScheme: s.dark ? 'dark' : 'light',
+  });
+  const page = await ctx.newPage();
+  page.on('pageerror', (e) => console.log('PAGEERROR:', String(e).slice(0, 300)));
+  await page.goto(`${BASE}${s.path}`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(1500);
+  const height = await page.evaluate(() => document.body.scrollHeight);
+  for (let y = 0; y < height; y += 500) {
+    await page.evaluate((pos) => window.scrollTo(0, pos), y);
+    await page.waitForTimeout(90);
+  }
+  await page.waitForTimeout(700);
+  await page.screenshot({ path: `/tmp/mt-shots/${target}.png`, fullPage: s.full });
+  console.log(`saved ${target}`);
+  await ctx.close();
+} finally {
+  await browser.close();
+}

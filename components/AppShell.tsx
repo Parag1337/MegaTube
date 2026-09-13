@@ -7,8 +7,9 @@
  */
 
 import Link from 'next/link';
-import { usePathname, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { UserButton, useClerk, useUser } from '@clerk/nextjs';
 import { SearchBar } from '@/components/SearchBar';
 import { useSession } from '@/components/useSession';
 import { Avatar } from '@/components/ui';
@@ -17,11 +18,11 @@ import {
   AccountIcon,
   BookmarkIcon,
   CloseIcon,
-  ExploreIcon,
   HistoryIcon,
   HomeIcon,
   LibraryIcon,
   LogOutIcon,
+  MegaTubeMark,
   MenuIcon,
   SearchIcon,
   SettingsIcon,
@@ -71,17 +72,43 @@ function useSidebarCollapsed(): [boolean, () => void] {
 function Logo({ compact = false }: { compact?: boolean }) {
   return (
     <Link href="/" className="flex shrink-0 items-center gap-2" aria-label={`${SITE_NAME} home`}>
-      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent">
-        <svg className="h-4.5 w-4.5 text-white" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-          <path d="M8 5v14l11-7z" />
-        </svg>
-      </span>
+      <MegaTubeMark className="h-8 w-8 shrink-0 text-accent" />
       {!compact && (
         <span className="text-[17px] font-bold tracking-tight text-foreground">
           Mega<span className="text-accent">Tube</span>
         </span>
       )}
     </Link>
+  );
+}
+
+/**
+ * Dedicated public navigation for marketing/auth-adjacent pages: brand mark
+ * plus Sign in / Get started. No application sidebar, no search, no bottom
+ * tab bar - public pages must never look like the logged-in application is
+ * already open.
+ */
+function PublicHeader() {
+  return (
+    <header className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur">
+      <div className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-4 lg:px-6">
+        <Logo />
+        <nav aria-label="Public" className="ml-auto flex items-center gap-1">
+          <Link
+            href="/sign-in"
+            className="hidden h-9 items-center rounded-full px-4 text-sm font-medium text-muted hover:bg-surface-hover hover:text-foreground sm:inline-flex"
+          >
+            Sign in
+          </Link>
+          <Link
+            href="/sign-up"
+            className="inline-flex h-9 items-center rounded-full bg-accent px-4 text-sm font-medium text-white hover:bg-accent-hover"
+          >
+            Get started
+          </Link>
+        </nav>
+      </div>
+    </header>
   );
 }
 
@@ -93,7 +120,7 @@ interface NavItem {
   authed?: boolean;
 }
 
-const NAV_ITEMS: NavItem[] = [
+const NAV_MAIN: NavItem[] = [
   {
     href: '/',
     label: 'Home',
@@ -129,6 +156,17 @@ const NAV_ITEMS: NavItem[] = [
   },
 ];
 
+const NAV_ACCOUNT: NavItem[] = [
+  {
+    href: '/account',
+    label: 'Account',
+    icon: AccountIcon,
+    // History has its own main-nav entry - don't double-highlight.
+    active: (p) => p === '/account' || !!p?.startsWith('/account/settings') || !!p?.startsWith('/account/saved'),
+    authed: true,
+  },
+];
+
 function SidebarLink({
   item,
   collapsed,
@@ -157,7 +195,11 @@ function SidebarLink({
     >
       <Icon className="h-[22px] w-[22px] shrink-0" />
       {!collapsed && <span className="truncate text-sm">{item.label}</span>}
-      {!collapsed && active && <span aria-hidden className="ml-auto h-5 w-1 rounded-full bg-accent" />}
+      {!collapsed && (
+        <span aria-hidden className="ml-auto h-5 w-1 shrink-0">
+          <span className="mt-nav-active-indicator block h-full w-full rounded-full bg-accent" />
+        </span>
+      )}
     </Link>
   );
 }
@@ -165,7 +207,21 @@ function SidebarLink({
 function UserMenu({ email }: { email: string }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+  const { signOut: clerkSignOut, user: clerkUser } = useClerk();
   const close = () => setOpen(false);
+
+  async function handleSignOut() {
+    // Clear the legacy website session, then Clerk (if present), so the
+    // user is signed out of both identity layers. /sign-in is the public
+    // authentication entry point (the home page requires auth).
+    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+    if (clerkUser) {
+      await clerkSignOut({ redirectUrl: '/sign-in' }).catch(() => {});
+    }
+    router.push('/sign-in');
+    router.refresh();
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -220,7 +276,16 @@ function UserMenu({ email }: { email: string }) {
               <SettingsIcon className="h-[18px] w-[18px] text-muted" />
               Settings
             </Link>
-            <form action="/api/auth/logout" method="POST">
+            <form
+              action="/api/auth/logout"
+              method="POST"
+              onSubmit={(e) => {
+                // Sign out of both layers via JS; the form action remains as
+                // a no-JS fallback for the legacy session.
+                e.preventDefault();
+                void handleSignOut();
+              }}
+            >
               <button
                 type="submit"
                 role="menuitem"
@@ -237,14 +302,121 @@ function UserMenu({ email }: { email: string }) {
   );
 }
 
+/**
+ * Clerk account control for Clerk-signed-in users. The UserButton carries
+ * MegaTube's own destinations (Account, Settings) alongside Clerk's profile
+ * management. Clerk sign-outs land on /sign-out (see ClerkProvider in the
+ * root layout), which clears any legacy website session before continuing
+ * to /sign-in - signing out of both layers.
+ */
+function ClerkAccountButton() {
+  return (
+    <UserButton
+      appearance={{
+        elements: {
+          userButtonAvatarBox: 'h-8 w-8',
+        },
+      }}
+    >
+      <UserButton.MenuItems>
+        <UserButton.Link
+          label="Your account"
+          href="/account"
+          labelIcon={<AccountIcon className="h-4 w-4" />}
+        />
+        <UserButton.Link
+          label="Settings"
+          href="/account/settings"
+          labelIcon={<SettingsIcon className="h-4 w-4" />}
+        />
+      </UserButton.MenuItems>
+    </UserButton>
+  );
+}
+
 function ShellInner({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const search = searchParams?.toString() ?? '';
+
+  // Hooks must run unconditionally on every render (Rules of Hooks).
+  // They are hoisted above the auth-route early return so navigating
+  // between auth and app routes doesn't change the hook order.
   const { user, loading } = useSession();
+  const { isSignedIn: clerkSignedIn } = useUser();
   const [collapsed, toggleCollapsed] = useSidebarCollapsed();
 
-  const visibleItems = NAV_ITEMS.filter((i) => !i.authed || user);
+  // Authentication routes use a standalone auth shell: MegaTube branding
+  // with no application sidebar, search, or bottom nav. The Clerk
+  // sign-in/sign-up components render inside the page itself.
+  if (
+    pathname === '/sign-in' ||
+    pathname?.startsWith('/sign-in/') ||
+    pathname === '/sign-up' ||
+    pathname?.startsWith('/sign-up/') ||
+    pathname === '/login' ||
+    pathname?.startsWith('/login/') ||
+    pathname === '/register' ||
+    pathname?.startsWith('/register/')
+  ) {
+    const onSignUp =
+      pathname === '/sign-up' || pathname?.startsWith('/sign-up/');
+    return (
+      <div className="flex min-h-full flex-col">
+        <header className="border-b border-border">
+          <div className="mx-auto flex h-14 max-w-6xl items-center px-4 lg:px-6">
+            <Logo />
+            <nav aria-label="Public" className="ml-auto flex items-center gap-1">
+              {onSignUp ? (
+                <Link
+                  href="/sign-in"
+                  className="inline-flex h-9 items-center rounded-full px-4 text-sm font-medium text-muted hover:bg-surface-hover hover:text-foreground"
+                >
+                  Sign in
+                </Link>
+              ) : (
+                <Link
+                  href="/sign-up"
+                  className="inline-flex h-9 items-center rounded-full bg-accent px-4 text-sm font-medium text-white hover:bg-accent-hover"
+                >
+                  Sign up
+                </Link>
+              )}
+            </nav>
+          </div>
+        </header>
+        <main className="flex flex-1 flex-col">{children}</main>
+      </div>
+    );
+  }
+
+  /*
+   * Public marketing/media routes for signed-out visitors use the dedicated
+   * public header (no sidebar, search, or bottom nav). The check runs on the
+   * client session: while it is loading `user` is null, so visitors never
+   * see the application sidebar flash - at the cost of a brief public
+   * header for logged-in users on these routes before their session
+   * resolves and the app shell below takes over.
+   */
+  const isPublicRoute =
+    pathname === '/' ||
+    pathname?.startsWith('/video/') ||
+    pathname?.startsWith('/creator/') ||
+    pathname === '/creators' ||
+    pathname?.startsWith('/creators/');
+
+  if (isPublicRoute && !user) {
+    return (
+      <div className="flex min-h-full flex-col">
+        <PublicHeader />
+        <main className="flex flex-1 flex-col">{children}</main>
+      </div>
+    );
+  }
+
+  const showAuthed = !!user;
+  const mainItems = NAV_MAIN.filter((i) => !i.authed || showAuthed);
+  const accountItems = NAV_ACCOUNT.filter((i) => !i.authed || showAuthed);
 
   return (
     <div className="flex min-h-full flex-col">
@@ -272,17 +444,21 @@ function ShellInner({ children }: { children: React.ReactNode }) {
             {loading ? (
               <span aria-hidden className="mt-skeleton h-8 w-8 rounded-full" />
             ) : user ? (
-              <UserMenu email={user.email} />
+              clerkSignedIn ? (
+                <ClerkAccountButton />
+              ) : (
+                <UserMenu email={user.email} />
+              )
             ) : (
               <div className="flex items-center gap-1">
                 <Link
-                  href="/login"
+                  href="/sign-in"
                   className="hidden h-9 items-center rounded-full px-4 text-sm font-medium text-muted hover:bg-surface-hover hover:text-foreground sm:inline-flex"
                 >
                   Sign in
                 </Link>
                 <Link
-                  href="/register"
+                  href="/sign-up"
                   className="inline-flex h-9 items-center rounded-full bg-accent px-4 text-sm font-medium text-white hover:bg-accent-hover"
                 >
                   Sign up
@@ -301,8 +477,8 @@ function ShellInner({ children }: { children: React.ReactNode }) {
           }`}
           aria-label="Primary"
         >
-          <nav className="flex flex-col gap-1">
-            {visibleItems.map((item) => (
+          <nav className="flex flex-col gap-1" aria-label="Main">
+            {mainItems.map((item) => (
               <SidebarLink
                 key={item.href}
                 item={item}
@@ -311,45 +487,25 @@ function ShellInner({ children }: { children: React.ReactNode }) {
               />
             ))}
           </nav>
-          {!collapsed && user && (
-            <div className="mt-6 border-t border-border pt-4">
-              <p className="px-3 text-xs font-medium text-muted">You</p>
-              <div className="mt-1">
-                <SidebarLink
-                  item={{
-                    href: '/account',
-                    label: 'Account',
-                    icon: AccountIcon,
-                    // History has its own main-nav entry - don't double-highlight.
-                    active: (p) => p === '/account' || !!p?.startsWith('/account/settings') || !!p?.startsWith('/account/saved'),
-                  }}
-                  collapsed={false}
-                  active={
-                    pathname === '/account' ||
-                    !!pathname?.startsWith('/account/settings') ||
-                    !!pathname?.startsWith('/account/saved')
-                  }
-                />
-              </div>
-            </div>
-          )}
-          {collapsed && user && (
-            <nav className="mt-4 flex flex-col gap-1 border-t border-border pt-4" aria-label="Account">
-              <SidebarLink
-                item={{
-                  href: '/account',
-                  label: 'Account',
-                  icon: AccountIcon,
-                  active: (p) => p === '/account' || !!p?.startsWith('/account/settings') || !!p?.startsWith('/account/saved'),
-                }}
-                collapsed
-                active={
-                  pathname === '/account' ||
-                  !!pathname?.startsWith('/account/settings') ||
-                  !!pathname?.startsWith('/account/saved')
-                }
-              />
-            </nav>
+          {accountItems.length > 0 && (
+            <>
+              {!collapsed && (
+                <p className="mb-1 mt-6 px-3 text-xs font-medium text-muted">ACCOUNT</p>
+              )}
+              <nav
+                className={`flex flex-col gap-1 ${collapsed ? 'mt-4 border-t border-border pt-4' : ''}`}
+                aria-label="Account"
+              >
+                {accountItems.map((item) => (
+                  <SidebarLink
+                    key={item.href}
+                    item={item}
+                    collapsed={collapsed}
+                    active={item.active(pathname, search)}
+                  />
+                ))}
+              </nav>
+            </>
           )}
           {!collapsed && (
             <p className="mt-6 px-3 text-xs leading-relaxed text-muted-light">
@@ -371,7 +527,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
         aria-label="Primary"
         className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur md:hidden"
       >
-        <div className="grid grid-cols-6">
+        <div className="grid grid-cols-5">
           <MobileTab
             href="/"
             label="Home"
@@ -402,16 +558,6 @@ function ShellInner({ children }: { children: React.ReactNode }) {
             icon={HistoryIcon}
             active={!!pathname?.startsWith('/account/history')}
           />
-          {user || loading ? (
-            <MobileTab
-              href="/account"
-              label="Account"
-              icon={AccountIcon}
-              active={pathname === '/account' || !!pathname?.startsWith('/account/settings')}
-            />
-          ) : (
-            <MobileTab href="/login" label="Sign in" icon={ExploreIcon} active={false} />
-          )}
         </div>
       </nav>
     </div>

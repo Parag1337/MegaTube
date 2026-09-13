@@ -1,13 +1,20 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { useClerk } from '@clerk/nextjs';
 
 export function LogoutButton() {
   const router = useRouter();
+  const { signOut: clerkSignOut, user: clerkUser } = useClerk();
 
   async function handleLogout() {
-    await fetch('/api/auth/logout', { method: 'POST' });
-    router.push('/');
+    // Clear the legacy website session, then Clerk (if present).
+    // /sign-in is the public authentication entry point.
+    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+    if (clerkUser) {
+      await clerkSignOut({ redirectUrl: '/sign-in' }).catch(() => {});
+    }
+    router.push('/sign-in');
     router.refresh();
   }
 

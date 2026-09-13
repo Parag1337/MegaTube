@@ -199,6 +199,13 @@ export async function buildHomeFeedPage(
 
   const probe = await listNewVideosForUser(userId, 1);
   const total = probe.total;
+  // A user with no private videos gets an empty Home feed. Without this,
+  // the random pool (which also sees the shared public catalog) would leak
+  // catalog videos into the private Home view of a fresh user whose library
+  // is empty - the page instead renders its connect-a-MEGA-account state.
+  if (total === 0) {
+    return { items: [], page: 1, perPage, total: 0, totalPages: 1 };
+  }
   const totalPages = Math.max(1, Math.ceil(total / perPage));
   const historyAll = await getHistoryRelatedVideos(userId, perPage);
   const quotas = calculateQuotas(perPage, historyAll.length > 0);

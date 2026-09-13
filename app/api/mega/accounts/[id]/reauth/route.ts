@@ -41,7 +41,10 @@ export async function POST(
     typeof body?.mfaCode === 'string' && body.mfaCode ? body.mfaCode.trim() : undefined;
 
   const outcome = await reconnectMegaAccount(id, user.id, password, mfaCode);
-  if (!outcome.ok) {
+  // NOTE: `outcome.ok === false` (not `!outcome.ok`) — the project's tsconfig
+  // runs with strictNullChecks off, which disables negated discriminant
+  // narrowing; the explicit comparison narrows the union correctly.
+  if (outcome.ok === false) {
     const mapped = RECONNECT_ERROR_RESPONSES[outcome.reason];
     return NextResponse.json({ error: outcome.message }, { status: mapped.status });
   }

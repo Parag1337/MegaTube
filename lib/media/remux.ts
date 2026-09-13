@@ -33,6 +33,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { Readable, Transform } from 'node:stream';
+import { needsRemuxForContainer } from './container';
 import {
   MAX_SOURCE_FETCH_ATTEMPTS,
   isResumeableUpstreamStatus,
@@ -123,9 +124,11 @@ export function nodeToWebSafe(nodeStream: Readable): ReadableStream<Uint8Array> 
   });
 }
 
-/** True when the source container needs remuxing before browsers can play it. */
+/** True when the source container needs remuxing before browsers can play it.
+ * Historical rule (only `video/mp2t` remuxes), delegated to the shared
+ * routing rule in `lib/media/container` so playback routing never forks. */
 export function needsRemuxPlayback(mimeType: string | null | undefined): boolean {
-  return mimeType === 'video/mp2t';
+  return needsRemuxForContainer(mimeType);
 }
 
 /** Cache directory for remuxed MP4s (override with MEDIA_CACHE_DIR in tests). */
@@ -1311,7 +1314,6 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
   // own preflight (session + a=g + sniff + ready + init can exceed any
   // safe grace bound on slow MEGA) and self-cancel healthy new jobs.
   // Warm jobs retain an explicit holder instead (see retainLiveRemuxJob).
-  armGraceTimer(job);
   const spoolPath = path.join(mediaCacheDir(), `${src.videoId}.live.spool`);
   job.spoolPath = spoolPath;
   // The spool must start EMPTY so replay readers are byte-continuous from 0.

@@ -20,7 +20,7 @@ export default async function CreatorsPage() {
             icon={<CreatorsIcon className="h-7 w-7" />}
             title="Sign in to see your creators"
             body="Creators are extracted from your video filenames when you sync."
-            action={<Button href="/login" variant="primary">Sign in</Button>}
+            action={<Button href="/sign-in" variant="primary">Sign in</Button>}
           />
         </div>
       </div>
