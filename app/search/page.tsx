@@ -3,10 +3,10 @@ import { redirect } from 'next/navigation';
 import { randomBytes } from 'node:crypto';
 import { getCurrentUser } from '@/lib/auth';
 import { isRandomSearchCommand, listRandomVideos, searchVideos } from '@/lib/videos';
+import { SearchSyntaxError } from '@/lib/search';
 import { VideoGrid } from '@/components/VideoGrid';
 import { VideoGridSkeleton, EmptyState, Button } from '@/components/ui';
 import { Pagination } from '@/components/Pagination';
-import { SearchBar } from '@/components/SearchBar';
 import { SearchIcon, ShuffleIcon, FilmIcon } from '@/components/icons';
 
 export const metadata = { title: 'Search' };
@@ -29,9 +29,26 @@ async function Results({
   randomSeed: string;
 }) {
   const isRandom = isRandomSearchCommand(query);
-  const { items, total, page: currentPage, totalPages } = isRandom
-    ? await listRandomVideos(userId, page, randomSeed)
-    : await searchVideos(query, page, userId);
+  let result;
+  try {
+    result = isRandom
+      ? await listRandomVideos(userId, page, randomSeed)
+      : await searchVideos(query, page, userId);
+  } catch (e) {
+    // Malformed boolean syntax is a user error, not a crash: explain the
+    // query language instead of failing the page.
+    if (!isRandom && e instanceof SearchSyntaxError) {
+      return (
+        <EmptyState
+          icon={<SearchIcon className="h-7 w-7" />}
+          title={`Couldn't understand “${query}”`}
+          body={`${e.message} Use && for AND, || for OR, ! for NOT, and (...) to group terms.`}
+        />
+      );
+    }
+    throw e;
+  }
+  const { items, total, page: currentPage, totalPages } = result;
 
   if (!query.trim()) {
     return (
@@ -126,10 +143,6 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
         {!isRandom && query.trim() && (
           <p className="mb-5 text-[13px] text-muted">Matching titles, creators, and filenames</p>
         )}
-
-        <div className="mb-6 max-w-xl">
-          <SearchBar initialValue={isRandom ? '' : query} />
-        </div>
 
         <Suspense fallback={<VideoGridSkeleton />}>
           <Results query={query} page={page} userId={user.id} randomSeed={randomSeed} />

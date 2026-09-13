@@ -14,6 +14,7 @@ import { sniffMimeType } from '@/lib/mega/nodes';
 import { getPrivateNodeMediaProperties } from '@/lib/mega/attributes';
 import { keepAliveFetch, withTransientRetry, isTransientNetworkError } from '@/lib/net-resilience';
 import {
+  cancelLiveRemuxJob,
   canServeSeekFromSpool,
   createCachedFileResponse,
   createLiveResponse,
@@ -738,6 +739,21 @@ export async function handleMediaRequest(
     // The warm holds a retained (non-viewer) subscriber so the
     // zero-subscriber grace logic leaves server-initiated warming alone;
     // it is released when the job settles (cache still carries the outcome).
+    //
+    // Resumable acquisition (Phase 1): the job can ask for a FRESH download
+    // URL/session when its in-flight URL stalls or expires mid-download.
+    // The resolver bypasses the 5-minute g-URL cache (the cached URL may be
+    // the stale one) and resumes the stored session. Called only on the
+    // failure path — never for videos that acquire normally.
+    const refreshUpstreamUrl = async (): Promise<string> => {
+      evictCachedDownloadUrl(video.megaNodeId!);
+      const fresh = await deps.withMegaSession(
+        account.id,
+        account.encryptedSession,
+        async (storage) => getCachedDownloadUrl(video.megaNodeId!, storage, deps.getDownloadUrl),
+      );
+      return fresh.url;
+    };
     const kickCacheWarm = () => {
       try {
         const warmJob = getOrCreateLiveRemuxJob({
@@ -752,6 +768,7 @@ export async function handleMediaRequest(
           },
           fetchCiphertext: (url, signal) =>
             fetchCiphertextWithRetry(url, signal, logCtx, videoId, deps.fetchCiphertext),
+          refreshUpstreamUrl,
         });
         const release = retainLiveRemuxJob(warmJob);
         warmJob.cache.then(
@@ -855,6 +872,7 @@ export async function handleMediaRequest(
           // never retries an aborted request).
           fetchCiphertext: (url, signal) =>
             fetchCiphertextWithRetry(url, signal, logCtx, videoId, deps.fetchCiphertext),
+          refreshUpstreamUrl,
         });
       } catch (err) {
         // P1-C: temp-budget/disk admission failed before any work started
@@ -950,6 +968,12 @@ export async function handleMediaRequest(
                 // settle); it simply no longer blocks this video's slot in the
                 // map, and its finally still releases its slot + temps.
                 evictLiveRemuxJob(video.id, job);
+                // Abort the superseded pipeline promptly: without this, the
+                // old job would keep appending its stale-URL download to the
+                // same ts.part while the new job resumes from a frontier the
+                // old job is still moving (overlapping ranges -> duplicates).
+                // The preserved prefix stays on disk; the new job adopts it.
+                cancelLiveRemuxJob(job, 'superseded by fresh-URL retry');
                 job = getOrCreateLiveRemuxJob({
                   videoId: video.id,
                   megaNodeId: video.megaNodeId,
@@ -962,6 +986,7 @@ export async function handleMediaRequest(
                   },
                   fetchCiphertext: (url, signal) =>
                     fetchCiphertextWithRetry(url, signal, logCtx, videoId, deps.fetchCiphertext),
+                  refreshUpstreamUrl,
                 });
               } catch (refreshErr) {
                 // URL refresh failed — fall through to honest error below.

@@ -18,7 +18,6 @@ let prisma: typeof import('@/lib/db')['prisma'];
 let videos: typeof import('@/lib/videos');
 let MEGA_ACCOUNT_STATUSES: typeof import('@/lib/megaAccounts')['MEGA_ACCOUNT_STATUSES'];
 let searchVideos: typeof videos.searchVideos;
-let buildSearchMatchExpression: typeof videos.buildSearchMatchExpression;
 
 after(() => {
   db.close();
@@ -65,7 +64,7 @@ before(async () => {
   ({ prisma } = await import('@/lib/db'));
   videos = await import('@/lib/videos');
   ({ MEGA_ACCOUNT_STATUSES } = await import('@/lib/megaAccounts'));
-  ({ searchVideos, buildSearchMatchExpression } = videos);
+  ({ searchVideos } = videos);
 
   userA = await makeUser('fts-a@example.com');
   userB = await makeUser('fts-b@example.com');
@@ -167,10 +166,16 @@ test('special characters never break the query', async () => {
   assert.ok(dash.items.some((v) => v.slug === 'fts-deep'));
 });
 
-test('short-token queries use the LIKE fallback without regressing', async () => {
-  assert.equal(buildSearchMatchExpression('ab'), null);
-  assert.equal(buildSearchMatchExpression('a'), null);
-  assert.ok(buildSearchMatchExpression('Alpha') !== null);
+test('multi-word queries use implicit OR (never phrase/AND)', async () => {
+  // 'Alpha' matches fts-alpha + fts-pub; 'Galaxy' matches fts-galaxy.
+  // Implicit OR must return all of them (a phrase query would match none).
+  const r = await searchVideos('Alpha Galaxy', 1, userA.id);
+  const found = r.items.map((v) => v.slug);
+  assert.ok(found.includes('fts-alpha'), 'alpha term matches');
+  assert.ok(found.includes('fts-galaxy'), 'galaxy term matches');
+});
+
+test('short-token queries match inline via LIKE without regressing', async () => {
   // 'Al' (2 chars) cannot use trigrams but must still find Alpha (LIKE path).
   const r = await searchVideos('Al', 1, userA.id);
   assert.ok(r.items.some((v) => v.slug === 'fts-alpha'));

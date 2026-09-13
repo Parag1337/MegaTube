@@ -13,6 +13,17 @@ import { prisma } from './db';
 import { videosPerPage } from './config';
 import { MEGA_ACCOUNT_STATUSES } from './megaAccounts';
 import { Prisma } from '../generated/client';
+import {
+  SearchNode,
+  SearchSyntaxError,
+  buildSearchFilterSql,
+  buildSearchPrismaWhere,
+  buildSearchRankSql,
+  literalSearchNode,
+  parseSearchQuery,
+} from './search';
+
+export { SearchSyntaxError };
 
 export type VideoWithCreator = {
   id: number;
@@ -288,42 +299,26 @@ export async function getVideoBySlug(slug: string) {
 }
 
 /**
- * Build an FTS5 MATCH expression for a user query, or null when the query
- * cannot use the trigram index and must take the LIKE path.
+ * Database-side boolean search over the VideoSearch trigram index.
  *
- * The expression is ONE double-quoted phrase of the raw whitespace-separated
- * tokens (embedded quotes escaped by doubling). A phrase preserves the
- * current contiguous-substring semantics ("my video" matches titles
- * containing exactly that run, like LIKE '%my video%'), while the trigram
- * index makes it a Seek instead of a full-table SCAN. Matching stays
- * case-insensitive (ASCII, like LIKE) with diacritic folding as a bonus.
+ * The AST filter decides WHICH videos are eligible (each TERM is one
+ * index-backed EXISTS(MATCH) probe - or an inline LIKE for sub-3-character
+ * terms the trigram index cannot serve - composed with SQL AND/OR/NOT).
+ * BM25 over the positive terms decides the ORDER. Ownership uses the exact
+ * same rule as the LIKE path (own non-disconnected accounts plus the public
+ * catalog); the user id never enters the MATCH expression itself.
  *
- * FTS5 trigrams cannot index tokens shorter than 3 characters, so any query
- * containing one falls back to LIKE - semantics are then exactly today's.
- */
-export function buildSearchMatchExpression(query: string): string | null {
-  const tokens = query.trim().split(/\s+/).filter((t) => t.length > 0);
-  if (tokens.length === 0) return null;
-  if (tokens.some((t) => t.length < 3)) return null;
-  const phrase = tokens.map((t) => t.replace(/"/g, '""')).join(' ');
-  return `"${phrase}"`;
-}
-
-/**
- * FTS5-backed search over the VideoSearch trigram index.
- *
- * Ownership uses the exact same rule as the LIKE path (own non-disconnected
- * accounts plus the public catalog); the user id never enters the MATCH
- * expression itself. Returns null when the query is ineligible for FTS or
- * the index is unavailable, so the caller can use the LIKE fallback.
+ * Returns null when the FTS index is unavailable (pre-migration database),
+ * so the caller can use the Prisma/LIKE fallback. SearchSyntaxError is
+ * never swallowed here - malformed queries propagate to the caller.
  */
 async function searchVideosFts(
-  query: string,
+  ast: SearchNode,
   page: number,
   userId?: string,
 ): Promise<PageResult<ReturnType<typeof serializeVideo>> | null> {
-  const match = buildSearchMatchExpression(query);
-  if (!match) return null;
+  const filter = buildSearchFilterSql(ast);
+  const rank = buildSearchRankSql(ast);
 
   const perPage = videosPerPage();
   const safePage = Math.max(1, page);
@@ -335,18 +330,25 @@ async function searchVideosFts(
       ? Prisma.sql`v."megaAccountId" IS NULL`
       : Prisma.sql`(v."megaAccountId" IS NULL OR v."megaAccountId" IN (SELECT "id" FROM "MegaAccount" WHERE "userId" = ${userId} AND "status" <> ${MEGA_ACCOUNT_STATUSES.DISCONNECTED}))`;
 
+  // BM25 is more negative for better matches; rows with no positive-term
+  // match (pure-NOT results) get NULL and sort after ranked rows. SQLite
+  // sorts NULLs first on ASC, hence the explicit NULL guard.
+  const orderBy =
+    rank === null
+      ? Prisma.sql`v."createdAt" DESC, v."id" DESC`
+      : Prisma.sql`CASE WHEN "rank" IS NULL THEN 1 ELSE 0 END, "rank" ASC, v."createdAt" DESC, v."id" DESC`;
+  const rankSelect = rank ?? Prisma.sql`NULL`;
+
   try {
     const [idRows, countRows] = await Promise.all([
-      prisma.$queryRaw<Array<{ id: number }>>`
-        SELECT v."id" AS id FROM "VideoSearch" AS s
-        JOIN "Video" AS v ON v."id" = s."rowid"
-        WHERE s."VideoSearch" MATCH ${match} AND ${scope}
-        ORDER BY v."createdAt" DESC, v."id" DESC
+      prisma.$queryRaw<Array<{ id: number; rank: number | null }>>`
+        SELECT v."id" AS id, ${rankSelect} AS rank FROM "Video" AS v
+        WHERE ${scope} AND ${filter}
+        ORDER BY ${orderBy}
         LIMIT ${take} OFFSET ${skip}`,
       prisma.$queryRaw<Array<{ total: bigint }>>`
-        SELECT COUNT(*) AS total FROM "VideoSearch" AS s
-        JOIN "Video" AS v ON v."id" = s."rowid"
-        WHERE s."VideoSearch" MATCH ${match} AND ${scope}`,
+        SELECT COUNT(*) AS total FROM "Video" AS v
+        WHERE ${scope} AND ${filter}`,
     ]);
 
     const total = Number(countRows[0]?.total ?? 0);
@@ -379,35 +381,19 @@ async function searchVideosFts(
 }
 
 /**
- * Search the catalog visible to ONE website user.
- *
- * Scope: every video linked through the user's own MEGA accounts (all linked
- * accounts, not disconnected ones - same rule as the library) plus the
- * public catalog. Never another user's videos, and never filtered by MEGA
- * folders, paths, node ids or account labels.
- *
- * Matches against: video title, creator name, and the real MEGA filename
- * (which is the "Creator - Title" source of truth from Phase 4).
- *
- * Fast path: native SQLite FTS5 trigram index (substring + case-insensitive,
- * contiguous-phrase semantics). Short-token queries use the LIKE fallback
- * with identical behavior to before.
+ * Execute an already-parsed search AST: FTS fast path first, Prisma/LIKE
+ * fallback when the index is unavailable.
  */
-export async function searchVideos(
-  query: string,
-  page = 1,
+async function executeSearchAst(
+  ast: SearchNode,
+  page: number,
   userId?: string,
 ): Promise<PageResult<ReturnType<typeof serializeVideo>>> {
   const perPage = videosPerPage();
   const safePage = Math.max(1, page);
-  const q = query.trim();
 
-  if (!q) {
-    return { items: [], total: 0, page: 1, perPage, totalPages: 1 };
-  }
-
-  // Native-index fast path; LIKE fallback when ineligible/unavailable.
-  const fast = await searchVideosFts(q, safePage, userId);
+  // Native-index fast path; LIKE fallback when unavailable.
+  const fast = await searchVideosFts(ast, safePage, userId);
   if (fast) return fast;
 
   const scope = libraryScope(userId);
@@ -416,16 +402,7 @@ export async function searchVideos(
   // the scope's own OR cannot be clobbered by the match OR (a flat spread
   // would silently drop user isolation!).
   const where = {
-    AND: [
-      scope,
-      {
-        OR: [
-          { title: { contains: q } },
-          { megaFilename: { contains: q } },
-          { creator: { is: { name: { contains: q } } } },
-        ],
-      },
-    ],
+    AND: [scope, buildSearchPrismaWhere(ast)],
   };
 
   const [items, total] = await Promise.all([
@@ -446,6 +423,59 @@ export async function searchVideos(
     perPage,
     totalPages: Math.max(1, Math.ceil(total / perPage)),
   };
+}
+
+/**
+ * Search the catalog visible to ONE website user.
+ *
+ * Scope: every video linked through the user's own MEGA accounts (all linked
+ * accounts, not disconnected ones - same rule as the library) plus the
+ * public catalog. Never another user's videos, and never filtered by MEGA
+ * folders, paths, node ids or account labels.
+ *
+ * Matches against: video title, creator name, and the real MEGA filename
+ * (which is the "Creator - Title" source of truth from Phase 4).
+ *
+ * Query language (lib/search.ts): whitespace is implicit OR, `||` explicit
+ * OR, `&&` AND, `!` NOT, `(...)` grouping, `"..."` phrase terms. Results
+ * are ranked by FTS5 BM25 over the positive terms (title weighted first);
+ * NOT-only queries fall back to recency order. Throws SearchSyntaxError for
+ * malformed boolean syntax.
+ */
+export async function searchVideos(
+  query: string,
+  page = 1,
+  userId?: string,
+): Promise<PageResult<ReturnType<typeof serializeVideo>>> {
+  const perPage = videosPerPage();
+  const q = query.trim();
+
+  if (!q) {
+    return { items: [], total: 0, page: 1, perPage, totalPages: 1 };
+  }
+
+  return executeSearchAst(parseSearchQuery(q), page, userId);
+}
+
+/**
+ * Literal (non-boolean) search for internal callers that feed derived text
+ * such as video titles into the engine. The whole query is ONE phrase term,
+ * so titles containing `&&`, `||`, `!` or parentheses can never become
+ * syntax errors or change meaning.
+ */
+export async function searchVideosLiteral(
+  query: string,
+  page = 1,
+  userId?: string,
+): Promise<PageResult<ReturnType<typeof serializeVideo>>> {
+  const perPage = videosPerPage();
+  const ast = literalSearchNode(query.trim());
+
+  if (!ast) {
+    return { items: [], total: 0, page: 1, perPage, totalPages: 1 };
+  }
+
+  return executeSearchAst(ast, page, userId);
 }
 
 /** Videos by a creator for a specific user (private videos only). */
