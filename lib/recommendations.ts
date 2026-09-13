@@ -17,7 +17,7 @@
 
 import { prisma } from './db';
 import { MEGA_ACCOUNT_STATUSES } from './megaAccounts';
-import { listRandomVideos, searchVideos, serializeVideo } from './videos';
+import { listRandomVideos, searchVideosLiteral, serializeVideo } from './videos';
 import { listRecentHistoryRefs } from './personal';
 
 type SerializedVideo = ReturnType<typeof serializeVideo>;
@@ -99,9 +99,11 @@ export async function getSameCreatorVideos(
 // ---------------------------------------------------------------------------
 
 /**
- * Videos related to a supplied title, using the existing searchVideos()
+ * Videos related to a supplied title, using the existing searchVideosLiteral()
  * path (FTS5 trigram fast path + LIKE fallback) - no second search engine.
- * Excludes the given video ids. Deterministic search ranking is preserved.
+ * The title is matched literally (never parsed as boolean syntax), so titles
+ * containing `&&`, `||`, `!` or parentheses are safe. Excludes the given
+ * video ids. Deterministic search ranking is preserved.
  */
 export async function getTitleRelatedVideos(
   userId: string,
@@ -113,12 +115,12 @@ export async function getTitleRelatedVideos(
   if (!q) return [];
   const excluded = new Set(opts?.excludeVideoIds ?? []);
 
-  // searchVideos() pages by videosPerPage(); walk pages until the limit is
+  // searchVideosLiteral() pages by videosPerPage(); walk pages until the limit is
   // filled (bounded: at most 3 pages - this stays a cheap primitive).
   const found: SerializedVideo[] = [];
   const seen = new Set<number>(excluded);
   for (let page = 1; page <= 3 && found.length < take; page++) {
-    const result = await searchVideos(q, page, userId);
+    const result = await searchVideosLiteral(q, page, userId);
     if (result.items.length === 0) break;
     for (const item of result.items) {
       if (seen.has(item.id)) continue;

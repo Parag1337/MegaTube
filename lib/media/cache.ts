@@ -183,7 +183,7 @@ function parseVideoId(name: string): number | null {
  */
 export const TEMP_ORPHAN_AGE_MS = 2 * 60 * 60_000; // 2 h
 
-const TEMP_NAME_RE = /^(\d+)\.(ts\.part|live\.spool|part\.mp4)$/;
+const TEMP_NAME_RE = /^(\d+)\.(ts\.part|live\.spool|part\.mp4|ts\.frontier\.json)$/;
 
 /**
  * One eviction pass. Scans the cache dir (no full-content reads: one
@@ -286,6 +286,11 @@ export async function evictMediaCache(options?: {
       result.reclaimedTempOrphans++;
       result.tempBytes -= o.size;
       result.totalBytes -= o.size;
+      // A reclaimed .ts.part must not leave a dangling frontier manifest
+      // (it would otherwise pin a stale "resumable" claim with no bytes).
+      if (o.file.endsWith('.ts.part')) {
+        await fs.promises.rm(o.file.replace(/\.ts\.part$/, '.ts.frontier.json'), { force: true });
+      }
     } catch {
       // raced with a new job reusing the name - leave it
     }

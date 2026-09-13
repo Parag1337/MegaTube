@@ -32,7 +32,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
+import {
+  MAX_SOURCE_FETCH_ATTEMPTS,
+  isResumeableUpstreamStatus,
+  maxSourceFetchAttempts,
+  reconcileSourcePrefix,
+  removeSourceFrontier,
+  resumeBackoffMs,
+  resumeRequestParams,
+  sleepAbortable,
+  storeSourceFrontierAtomic,
+} from './source-acquisition';
 
 export const REMUXED_MIME_TYPE = 'video/mp4';
 
@@ -237,6 +248,15 @@ export interface RemuxSource {
   fetchCiphertext: (url: string, signal?: AbortSignal) => Promise<Response>;
   signal?: AbortSignal;
   /**
+   * Resolve a FRESH MEGA download URL/session for the same node (used by the
+   * resumable acquisition path after a failure: stale/expired g-URLs are a
+   * common cause of mid-download stalls). Called only on the failure path —
+   * never for videos whose acquisition succeeds normally. Must reject when
+   * no fresh URL can be obtained (the resume loop treats that as a failed
+   * attempt and backs off).
+   */
+  refreshUpstreamUrl?: () => Promise<string>;
+  /**
    * Exact source duration in whole seconds (MEGA fa:8 media properties,
    * persisted on Video.duration). Patched into the live fMP4 mvhd so the
    * player shows the true final duration from the first bytes. Null when
@@ -254,6 +274,271 @@ export interface RemuxSource {
 function ffmpegBin(): string {
   const override = process.env.FFMPEG_PATH;
   return override && override.length > 0 ? override : 'ffmpeg';
+}
+
+/** Drop the first `n` plaintext bytes of a stream (CTR resume overlap). */
+function skipFirstBytes(n: number): Transform {
+  let remaining = n;
+  return new Transform({
+    transform(chunk: Buffer, _enc, cb) {
+      if (remaining <= 0) return cb(null, chunk);
+      if (chunk.length <= remaining) {
+        remaining -= chunk.length;
+        return cb(null);
+      }
+      const rest = chunk.subarray(remaining);
+      remaining = 0;
+      cb(null, rest);
+    },
+  });
+}
+
+/**
+ * Truncate a stream to exactly `n` bytes (drops any surplus tail). Guards
+ * resume appends against a storage server that ignores the Range and sends
+ * more than requested: the source file can never grow past the known source
+ * size, so a duplicated/overlong tail cannot corrupt the prefix.
+ */
+function capBytes(n: number): Transform {
+  let remaining = n;
+  return new Transform({
+    transform(chunk: Buffer, _enc, cb) {
+      if (remaining <= 0) return cb(null);
+      if (chunk.length <= remaining) {
+        remaining -= chunk.length;
+        return cb(null, chunk);
+      }
+      const head = chunk.subarray(0, remaining);
+      remaining = 0;
+      cb(null, head);
+    },
+  });
+}
+
+/**
+ * Best-effort fsync of a file (durability before the frontier manifest is
+ * allowed to advance). Never throws: callers treat fsync failure as a
+ * non-fatal degradation, never as playback breakage.
+ */
+async function fsyncFileBestEffort(absPath: string): Promise<void> {
+  try {
+    const fh = await fs.promises.open(absPath, 'r');
+    try {
+      await fh.sync();
+    } finally {
+      await fh.close();
+    }
+  } catch {
+    // ignore: OS flush on close still applies; manifest ordering is kept
+  }
+}
+
+/**
+ * Best-effort frontier persist after bytes are durable. Records the ACTUAL
+ * file length (never a speculative value). Never throws.
+ */
+async function persistFrontierBestEffort(
+  videoId: number,
+  megaNodeId: string,
+  sourceSize: number,
+): Promise<number> {
+  try {
+    const { tsPartPath } = await import('./source-acquisition');
+    const stat = await fs.promises.stat(tsPartPath(videoId));
+    const frontier = Math.max(0, Math.min(stat.size, sourceSize));
+    if (frontier > 0 && frontier < sourceSize) {
+      await fsyncFileBestEffort(tsPartPath(videoId));
+      await storeSourceFrontierAtomic({ videoId, megaNodeId, sourceSize, frontier, updatedAt: '' });
+    } else if (frontier >= sourceSize) {
+      await removeSourceFrontier(videoId);
+    }
+    return frontier;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Pump an already-acquired plaintext prefix into ffmpeg stdin (resume jobs):
+ * the new live process receives the byte-exact sequential source
+ * (prefix + incoming tail), so it transmuxes exactly as if the download had
+ * never been interrupted. Resolves when the prefix is fully fed; never ends
+ * the destination (the tail follows).
+ */
+function pumpPrefixInto(prefixPath: string, frontier: number, dest: NodeJS.WritableStream): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (frontier <= 0) {
+      resolve();
+      return;
+    }
+    const rs = fs.createReadStream(prefixPath, { start: 0, end: frontier - 1 });
+    rs.on('error', reject);
+    rs.on('end', () => resolve());
+    rs.on('data', (c: Buffer) => {
+      try {
+        (dest as unknown as { write: (c: Buffer) => void }).write(c);
+      } catch {
+        // stdin already gone - the exit handler reports the real cause
+      }
+    });
+  });
+}
+
+/**
+ * Append one ciphertext range body (plaintext after decrypt) to the source
+ * file. Returns the plaintext bytes appended. Rejects on any stream error;
+ * bytes already written stay on disk (the caller re-stats and resumes from
+ * the true frontier — never re-fetches from 0).
+ *
+ * Exported for unit tests (byte-exact resume reconstruction); production
+ * callers use it only through getOrCreateLiveRemuxJob.
+ */
+export function appendCipherRangeBody(
+  body: ReadableStream<Uint8Array>,
+  fileKey: Buffer,
+  decryptStart: number,
+  skipBytes: number,
+  destPath: string,
+  maxBytes: number,
+  signal?: AbortSignal,
+): Promise<number> {
+  return new Promise<number>((resolve, reject) => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { decrypt } = require('megajs') as typeof import('megajs');
+    let decryptor: ReturnType<typeof import('megajs').decrypt>;
+    try {
+      // Partial ranges cannot MAC-verify (the MAC covers the whole file);
+      // transport integrity (TLS/TCP) still applies, and the final file
+      // remux validates container parsability before anything is published.
+      decryptor = decrypt(fileKey, { start: decryptStart, disableVerification: true });
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    const nodeUpstream = Readable.fromWeb(
+      body as unknown as Parameters<typeof Readable.fromWeb>[0],
+    );
+    const ws = fs.createWriteStream(destPath, { flags: 'a' });
+    let written = 0;
+    const counter = new Transform({
+      transform(chunk: Buffer, _enc, cb) {
+        // Never grow the source past its known size, even if upstream
+        // ignores the Range and sends surplus bytes.
+        const remaining = maxBytes - written;
+        if (remaining <= 0) return cb(null);
+        const head = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
+        written += head.length;
+        cb(null, head);
+      },
+    });
+    const onAbort = () => {
+      try {
+        nodeUpstream.destroy();
+      } catch {
+        // ignore
+      }
+      try {
+        decryptor.destroy();
+      } catch {
+        // ignore
+      }
+      try {
+        ws.destroy();
+      } catch {
+        // ignore
+      }
+      reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+    };
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
+    // Mid-body failure (connection reset, decrypt error): preserve whatever
+    // arrived BEFORE the break, then report the error. The caller re-stats
+    // the file and resumes from the true frontier, so a torn tail can never
+    // become a gap or a ghost claim — at worst a few KB are re-fetched with
+    // the 16-byte overlap.
+    //
+    // Drain, don't destroy, on UPSTREAM failure: bytes already handed to the
+    // decryptor are still in its input buffer (pipe delivery is synchronous;
+    // transform processing is not), so destroying it would vaporize them.
+    // Half-closing lets them flush through the tail into the file
+    // deterministically; the file stream ends via the normal pipe cascade
+    // and its finish reports the ORIGINAL error. On DECRYPTOR failure the
+    // input itself is corrupt, so destroy + end (in-flight bytes are
+    // untrustworthy anyway).
+    let errored: unknown = null;
+    let errorReported = false;
+    const failAfterFlush = (err: unknown, corrupt: boolean) => {
+      if (errorReported) return;
+      errorReported = true;
+      errored = err;
+      signal?.removeEventListener('abort', onAbort);
+      try {
+        nodeUpstream.destroy();
+      } catch {
+        // ignore
+      }
+      if (corrupt) {
+        try {
+          decryptor.destroy();
+        } catch {
+          // ignore
+        }
+        try {
+          ws.end();
+        } catch {
+          reject(err);
+        }
+      } else {
+        // Drain the healthy decryptor: buffered ciphertext still transforms
+        // out through tail -> counter -> ws; ws finishes via the cascade.
+        try {
+          decryptor.end();
+        } catch {
+          try {
+            decryptor.destroy();
+          } catch {
+            // ignore
+          }
+          try {
+            ws.end();
+          } catch {
+            reject(err);
+          }
+        }
+      }
+    };
+    nodeUpstream.on('error', (err) => {
+      failAfterFlush(err, false);
+    });
+    decryptor.on('error', (err) => {
+      failAfterFlush(err, true);
+    });
+    ws.on('finish', () => {
+      signal?.removeEventListener('abort', onAbort);
+      // A finish AFTER a mid-body error is the flush completing: report the
+      // original error (bytes preserved on disk) rather than success.
+      if (errorReported) {
+        reject(errored);
+        return;
+      }
+      resolve(written);
+    });
+    ws.on('error', (err) => {
+      signal?.removeEventListener('abort', onAbort);
+      if (errorReported) {
+        reject(errored);
+        return;
+      }
+      reject(err);
+    });
+    let tail: Readable = decryptor as unknown as Readable;
+    if (skipBytes > 0) tail = (decryptor as unknown as Readable).pipe(skipFirstBytes(skipBytes));
+    nodeUpstream.pipe(decryptor as unknown as NodeJS.WritableStream);
+    tail.pipe(counter).pipe(ws);
+  });
 }
 
 /** Stream-copy remux (no re-encode) into a faststart MP4 file. */
@@ -662,7 +947,7 @@ export class MediaTempBudgetError extends Error {
   }
 }
 
-const TEMP_FILE_RE = /^(\d+)\.(ts\.part|live\.spool|part\.mp4)$/;
+const TEMP_FILE_RE = /^(\d+)\.(ts\.part|live\.spool|part\.mp4|ts\.frontier\.json)$/;
 
 /** Current temp-media footprint (never throws; best-effort accounting). */
 export function mediaTempUsage(): { bytes: number; files: number } {
@@ -1122,24 +1407,252 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
       // from the filename and rejects unknown extensions like `.part`.
       const mp4Tmp = path.join(dir, `${src.videoId}.part.mp4`);
 
-      // 1. Sequential full download + decrypt (MAC verified, same as a
-      // full-range direct GET) teed to the cache file AND live ffmpeg.
+      // Publish a fully-acquired source to the faststart cache (shared by
+      // the first-attempt path and the background resume path below).
+      const publishFinishedCache = async (): Promise<{ path: string; size: number } | null> => {
+        try {
+          await runFfmpegRemux(tsTmp, mp4Tmp);
+        } catch (err) {
+          // Poison valve: a complete source that cannot be remuxed is either
+          // corrupt (e.g. resumed bytes that fail the container parse) or
+          // untransmuxable input. Keeping it would poison every future visit
+          // (the locally-complete shortcut would trust it forever without
+          // ever hitting MEGA again). Discard prefix + manifest so the next
+          // job retries from scratch — exactly today's failure outcome.
+          console.warn(
+            `[livejob] ${src.videoId} cache publish failed — discarding source prefix: ${err instanceof Error ? `${err.name} ${err.message.slice(0, 100)}` : typeof err}`,
+          );
+          await fs.promises.rm(tsTmp, { force: true });
+          try {
+            await removeSourceFrontier(src.videoId);
+          } catch {
+            // ignore cleanup errors
+          }
+          throw err;
+        }
+        const stat = await fs.promises.stat(mp4Tmp);
+        if (stat.size <= 0) throw new Error('ffmpeg produced an empty file');
+        await fs.promises.rename(mp4Tmp, mp4Path);
+        // P1-B: the mp4 rename above is atomic; the sidecar MUST be too (see
+        // the original comment preserved on the call below).
+        await writeSidecarAtomic(sidecarPath, {
+          megaNodeId: src.megaNodeId,
+          sourceSize: src.size,
+          outputSize: stat.size,
+          lastAccessedAt: new Date().toISOString(),
+        });
+        await fs.promises.rm(tsTmp, { force: true });
+        try {
+          await removeSourceFrontier(src.videoId);
+        } catch {
+          // ignore cleanup errors
+        }
+        return { path: mp4Path, size: stat.size };
+      };
+
+      /**
+       * Background source recovery (Phase 1): extend the preserved plaintext
+       * prefix `startFrontier -> src.size` with sequential, 16-aligned range
+       * fetches against a fresh URL when needed. File-only work: the live
+       * ffmpeg/spool from Phase A is already settled (current viewers keep
+       * their valid prefix); this loop only completes the source file and
+       * then rejoins the normal publish path. Bounded attempts + backoff, no
+       * parallel fan-out, no restart from 0. On exhaustion the partial prefix
+       * is KEPT (fail preserves it in the finally below).
+       */
+      const runBackgroundResume = async (
+        startFrontier: number,
+      ): Promise<{ path: string; size: number } | null> => {
+        let frontier = startFrontier;
+        let baseUrl = src.upstreamUrl;
+        let consecutiveFailures = 0;
+        // 403/404 budget: a genuinely gone node must fail fast with its
+        // status (so seekers get an honest answer) instead of burning every
+        // attempt on fresh-URL retries. Transport stalls keep the full budget.
+        let notFoundCount = 0;
+        let attempts = 1; // Phase A counts as the first attempt
+        const maxAttempts = maxSourceFetchAttempts();
+        while (frontier < src.size) {
+          if (attempts >= maxAttempts) {
+            console.warn(
+              `[livejob] ${src.videoId} resume budget exhausted at frontier=${frontier}/${src.size} — keeping partial prefix`,
+            );
+            return fail(new Error(`incomplete source: got ${frontier} of ${src.size} bytes after ${attempts} attempts`));
+          }
+          if (job.abortController.signal.aborted) {
+            return fail(new LiveJobCancelledError('zero subscribers'));
+          }
+          attempts++;
+          const p = resumeRequestParams(frontier, src.size);
+          let res: Response | null = null;
+          try {
+            res = await src.fetchCiphertext(
+              `${baseUrl}/${p.rangeStart}-${src.size - 1}`,
+              job.abortController.signal,
+            );
+          } catch (err) {
+            consecutiveFailures++;
+            console.warn(
+              `[livejob] ${src.videoId} resume fetch threw (attempt ${attempts}/${MAX_SOURCE_FETCH_ATTEMPTS}): ${err instanceof Error ? `${err.name} ${err.message.slice(0, 80)}` : typeof err}`,
+            );
+            if (src.refreshUpstreamUrl) {
+              try {
+                baseUrl = await src.refreshUpstreamUrl();
+              } catch {
+                // refresh failure is just another failed attempt
+              }
+            }
+            await sleepAbortable(resumeBackoffMs(consecutiveFailures), job.abortController.signal).catch(() => {});
+            continue;
+          }
+          if (!res.ok || !res.body) {
+            const st = res.status;
+            try {
+              await res.body?.cancel();
+            } catch {
+              // ignore
+            }
+            consecutiveFailures++;
+            if (st === 403 || st === 404) {
+              notFoundCount++;
+              if (notFoundCount > 2) {
+                console.warn(
+                  `[livejob] ${src.videoId} resume upstream ${st} persists at frontier=${frontier} — failing with status`,
+                );
+                return fail(Object.assign(new Error(`upstream ${st}`), { upstreamStatus: st }));
+              }
+            }
+            if (isResumeableUpstreamStatus(st)) {
+              console.warn(
+                `[livejob] ${src.videoId} resume upstream ${st} at frontier=${frontier} (attempt ${attempts}/${MAX_SOURCE_FETCH_ATTEMPTS}) — backing off`,
+              );
+              if ((st === 403 || st === 404 || (st >= 500 && st !== 509)) && src.refreshUpstreamUrl) {
+                try {
+                  baseUrl = await src.refreshUpstreamUrl();
+                } catch {
+                  // refresh failure is just another failed attempt
+                }
+              }
+              await sleepAbortable(resumeBackoffMs(consecutiveFailures), job.abortController.signal).catch(() => {});
+              continue;
+            }
+            return fail(Object.assign(new Error(`upstream ${st}`), { upstreamStatus: st }));
+          }
+          try {
+            const written = await appendCipherRangeBody(
+              res.body as unknown as ReadableStream<Uint8Array>,
+              src.fileKey,
+              p.decryptStart,
+              p.skipBytes,
+              tsTmp,
+              Math.max(0, src.size - frontier),
+              job.abortController.signal,
+            );
+            const st = await fs.promises.stat(tsTmp).catch(() => null);
+            frontier = st ? Math.max(0, Math.min(st.size, src.size)) : frontier + written;
+            await fsyncFileBestEffort(tsTmp);
+            try {
+              await storeSourceFrontierAtomic({
+                videoId: src.videoId,
+                megaNodeId: src.megaNodeId,
+                sourceSize: src.size,
+                frontier,
+                updatedAt: '',
+              });
+            } catch {
+              // manifest lag is safe: the file length stays the truth
+            }
+            consecutiveFailures = 0;
+            console.warn(`[livejob] ${src.videoId} resume progress frontier=${frontier}/${src.size}`);
+          } catch (err) {
+            if (
+              job.abortController.signal.aborted ||
+              (err instanceof Error && (err.name === 'AbortError' || err instanceof LiveJobCancelledError))
+            ) {
+              return fail(err);
+            }
+            consecutiveFailures++;
+            const st = await fs.promises.stat(tsTmp).catch(() => null);
+            if (st) {
+              frontier = Math.max(0, Math.min(st.size, src.size));
+              try {
+                await storeSourceFrontierAtomic({
+                  videoId: src.videoId,
+                  megaNodeId: src.megaNodeId,
+                  sourceSize: src.size,
+                  frontier,
+                  updatedAt: '',
+                });
+              } catch {
+                // ignore
+              }
+            }
+            console.warn(
+              `[livejob] ${src.videoId} resume append failed at frontier=${frontier} (attempt ${attempts}/${MAX_SOURCE_FETCH_ATTEMPTS}): ${err instanceof Error ? `${err.name} ${err.message.slice(0, 80)}` : typeof err}`,
+            );
+            if (src.refreshUpstreamUrl) {
+              try {
+                baseUrl = await src.refreshUpstreamUrl();
+              } catch {
+                // ignore
+              }
+            }
+            await sleepAbortable(resumeBackoffMs(consecutiveFailures), job.abortController.signal).catch(() => {});
+            continue;
+          }
+        }
+        console.log(
+          `[media] live remux download video ${src.videoId}: ${(src.size / 1048576).toFixed(1)} MB in ${Date.now() - startedAt}ms (completed via resume)`,
+        );
+        return publishFinishedCache();
+      };
+
+      // 1. Resumable source acquisition (Phase 1): reconcile any preserved
+      // prefix from an earlier interrupted attempt. Fresh videos reconcile
+      // to frontier 0 and behave EXACTLY as before (single 0..SIZE-1 fetch,
+      // MAC-verified, teed to the cache file AND live ffmpeg). Resume jobs
+      // start from the actual file length with a 16-aligned range and skip
+      // the CTR overlap AFTER decryption — never a restart from 0.
       // The fetch runs through the caller's retry wrapper; a reached-here
       // non-OK status (509 bandwidth, 404/410 gone) is reported via
       // job.ready so the route can answer honest JSON BEFORE headers.
       // The job abort signal lets zero-subscriber cancellation stop the
       // download promptly instead of running it to completion unwatched.
-      const upstream = await src.fetchCiphertext(
-        `${src.upstreamUrl}/0-${src.size - 1}`,
-        job.abortController.signal,
-      );
-      if (!upstream.ok || !upstream.body) {
-        const err = Object.assign(new Error(`upstream ${upstream.status}`), {
-          upstreamStatus: upstream.status,
-          retryAfter: upstream.status === 509 ? upstream.headers.get('x-mega-time-left') : null,
+      const reconciled = await reconcileSourcePrefix(src.videoId, src.megaNodeId, src.size);
+      const initialFrontier = reconciled.frontier;
+      if (reconciled.resumed) {
+        console.warn(`[livejob] ${src.videoId} resuming source acquisition at frontier=${initialFrontier}/${src.size}`);
+      }
+      const firstParams = resumeRequestParams(initialFrontier, src.size);
+      // Crash-between-download-and-publish recovery: the source is already
+      // complete on disk — serve live from the file and skip MEGA entirely
+      // (no fetch, no extra request).
+      const sourceCompleteLocally = src.size > 0 && initialFrontier >= src.size;
+      const upstream = sourceCompleteLocally
+        ? null
+        : await src.fetchCiphertext(
+            `${src.upstreamUrl}/${firstParams.rangeStart}-${src.size - 1}`,
+            job.abortController.signal,
+          );
+      if (!sourceCompleteLocally && (!upstream || !upstream.ok || !upstream.body)) {
+        const st = upstream?.status ?? 0;
+        const err = Object.assign(new Error(`upstream ${st}`), {
+          upstreamStatus: st,
+          retryAfter: st === 509 ? (upstream?.headers.get('x-mega-time-left') ?? null) : null,
         });
+        if (initialFrontier > 0) {
+          // A preserved prefix exists: keep it (persist the frontier for
+          // crash safety) and recover in the background against a fresh URL.
+          // The route already answers honestly from `ready`.
+          await persistFrontierBestEffort(src.videoId, src.megaNodeId, src.size);
+          readyReject(err);
+          return runBackgroundResume(initialFrontier);
+        }
         readyReject(err);
         return fail(err);
+      }
+      if (sourceCompleteLocally) {
+        console.warn(`[livejob] ${src.videoId} source already complete locally (${src.size}B) — skipping MEGA download`);
       }
       readyResolve();
       console.warn(`[livejob] ${src.videoId} upstream-headers OK at +${Date.now() - job.xStartedAt}ms`);
@@ -1219,10 +1732,26 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
       );
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { decrypt } = require('megajs') as typeof import('megajs');
-      const decryptor = decrypt(src.fileKey, { start: 0, disableVerification: false });
-      const nodeUpstream = Readable.fromWeb(
-        upstream.body as unknown as Parameters<typeof Readable.fromWeb>[0],
-      );
+      // Resumable acquisition (Phase 1): MAC verification is ALWAYS off in
+      // the live pipeline. The MAC covers the whole file and can only be
+      // checked at stream end — after the viewer already consumed the prefix
+      // — so it never protected live viewers; and any truncation (the 1:17
+      // stall shape) turns into a MAC error that destroys the prefix instead
+      // of a clean EOF we can resume from. Integrity is enforced where it
+      // matters: exact source size + successful container remux before
+      // anything is published to the cache (poison valve discards
+      // complete-but-untransmuxable sources). The direct-MP4 path keeps its
+      // own MAC convention untouched.
+      const resumeMode = !sourceCompleteLocally && initialFrontier > 0;
+      const decryptor = decrypt(src.fileKey, {
+        start: resumeMode ? firstParams.decryptStart : 0,
+        disableVerification: true,
+      });
+      const nodeUpstream = sourceCompleteLocally || !upstream?.body
+        ? null
+        : Readable.fromWeb(
+            upstream.body as unknown as Parameters<typeof Readable.fromWeb>[0],
+          );
 
       liveProc = spawn(ffmpegBin(), [
         '-v', 'error',
@@ -1353,69 +1882,212 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
         });
       });
 
-      const downloadDone = new Promise<void>((resolveDl, rejectDl) => {
-        const ws = fs.createWriteStream(tsTmp);
-        nodeUpstream.on('error', rejectDl);
-        decryptor.on('error', rejectDl);
-        ws.on('finish', () => resolveDl());
-        ws.on('error', rejectDl);
-        // Zero-subscriber cancellation tears the pipeline down promptly.
-        // Stream destroy alone does not reliably reject (plain destroy()
-        // emits 'close', not 'error'), so reject explicitly too: promise
-        // settlement is once-only, so a later genuine outcome is unaffected.
-        // Rejection flows through the normal fail -> finally path (single
-        // slot release, guarded temp cleanup). No-ops when already finished.
-        const onJobAbort = () => {
-          try {
-            nodeUpstream.destroy();
-          } catch {
-            // ignore
+      // Phase A: live download attempt. Fresh jobs (frontier 0) run EXACTLY
+      // the original pipeline: network plaintext tees to the cache file and
+      // live ffmpeg. Resume jobs first pump the preserved prefix into the
+      // new ffmpeg stdin (byte-exact sequential source), then tee the tail.
+      // Locally-complete sources pump the whole file with no network at all.
+      const downloadDone = (async (): Promise<void> => {
+        if (sourceCompleteLocally || initialFrontier > 0) {
+          if (job.abortController.signal.aborted) {
+            throw new LiveJobCancelledError('zero subscribers');
           }
-          try {
-            decryptor.destroy();
-          } catch {
-            // ignore
-          }
-          try {
-            ws.destroy();
-          } catch {
-            // ignore
-          }
-          rejectDl(new LiveJobCancelledError('zero subscribers'));
-        };
-        if (job.abortController.signal.aborted) {
-          onJobAbort();
-        } else {
-          job.abortController.signal.addEventListener('abort', onJobAbort, { once: true });
+          await pumpPrefixInto(tsTmp, initialFrontier, ffIn);
         }
-        decryptor.on('data', (c: Buffer) => {
-          if (!ffIn.destroyed) {
-            try {
-              ffIn.write(c);
-            } catch {
-              // stdin already gone - download still completes for the cache
-            }
-          }
-        });
-        decryptor.on('end', () => {
+        if (sourceCompleteLocally || !nodeUpstream) {
           try {
-            ffIn.end();
+            if (!ffIn.destroyed) ffIn.end();
           } catch {
             // ignore
           }
+          return;
+        }
+        await new Promise<void>((resolvePipe, rejectPipe) => {
+          const ws = fs.createWriteStream(tsTmp, { flags: initialFrontier > 0 ? 'a' : 'w' });
+          // Mid-body failure: preserve what arrived (drain, then report) so
+          // the background resume inherits the true frontier instead of a
+          // torn shortfall. A finish after an error is the drain completing —
+          // the original error still wins. Drain (not destroy) on upstream
+          // failure; destroy only on corrupt decryptor output. See
+          // appendCipherRangeBody for the full rationale.
+          let pipeError: unknown = null;
+          let pipeErrored = false;
+          const failPipeAfterFlush = (err: unknown, corrupt: boolean) => {
+            if (pipeErrored) return;
+            pipeErrored = true;
+            pipeError = err;
+            try {
+              nodeUpstream.destroy();
+            } catch {
+              // ignore
+            }
+            if (corrupt) {
+              try {
+                decryptor.destroy();
+              } catch {
+                // ignore
+              }
+              try {
+                ws.end();
+              } catch {
+                rejectPipe(err);
+              }
+            } else {
+              try {
+                decryptor.end();
+              } catch {
+                try {
+                  decryptor.destroy();
+                } catch {
+                  // ignore
+                }
+                try {
+                  ws.end();
+                } catch {
+                  rejectPipe(err);
+                }
+              }
+            }
+          };
+          nodeUpstream.on('error', (err) => failPipeAfterFlush(err, false));
+          decryptor.on('error', (err) => failPipeAfterFlush(err, true));
+          ws.on('finish', () => {
+            if (pipeErrored) {
+              rejectPipe(pipeError);
+              return;
+            }
+            resolvePipe();
+          });
+          ws.on('error', (err) => {
+            if (pipeErrored) {
+              rejectPipe(pipeError);
+              return;
+            }
+            rejectPipe(err);
+          });
+          // Zero-subscriber cancellation tears the pipeline down promptly.
+          // Stream destroy alone does not reliably reject (plain destroy()
+          // emits 'close', not 'error'), so reject explicitly too: promise
+          // settlement is once-only, so a later genuine outcome is unaffected.
+          // Rejection flows through the normal fail -> finally path (single
+          // slot release, guarded temp cleanup). No-ops when already finished.
+          const onJobAbort = () => {
+            try {
+              nodeUpstream.destroy();
+            } catch {
+              // ignore
+            }
+            try {
+              decryptor.destroy();
+            } catch {
+              // ignore
+            }
+            try {
+              ws.destroy();
+            } catch {
+              // ignore
+            }
+            rejectPipe(new LiveJobCancelledError('zero subscribers'));
+          };
+          if (job.abortController.signal.aborted) {
+            onJobAbort();
+          } else {
+            job.abortController.signal.addEventListener('abort', onJobAbort, { once: true });
+          }
+          // The CTR overlap (resumeMode) is skipped AFTER decryption: the
+          // keystream is positioned by decryptStart, so the decryptor must
+          // see the ciphertext exactly as stored, and ffmpeg/the file must
+          // see only the new bytes.
+          let tailPlain: Readable = decryptor as unknown as Readable;
+          if (firstParams.skipBytes > 0) {
+            tailPlain = (decryptor as unknown as Readable).pipe(skipFirstBytes(firstParams.skipBytes));
+          }
+          // Cap the tail at exactly the missing bytes (same surplus guard as
+          // the background path): the file can never exceed the source size.
+          const cappedTail = tailPlain.pipe(capBytes(Math.max(0, src.size - initialFrontier)));
+          cappedTail.on('data', (c: Buffer) => {
+            if (!ffIn.destroyed) {
+              try {
+                ffIn.write(c);
+              } catch {
+                // stdin already gone - download still completes for the cache
+              }
+            }
+          });
+          cappedTail.on('end', () => {
+            try {
+              ffIn.end();
+            } catch {
+              // ignore
+            }
+          });
+          nodeUpstream.pipe(decryptor as unknown as NodeJS.WritableStream);
+          cappedTail.pipe(ws);
         });
-        nodeUpstream.pipe(decryptor).pipe(ws);
-      });
+      })();
 
-      await downloadDone;
-      // A clean early-EOF (MEGA closing a throttled connection, e.g. mid-
-      // download 509 pressure) resolves the pipe WITHOUT error - but the
-      // file is then short. Verify exact size; anything else fails the job
-      // instead of publishing a truncated cache / ending live early.
-      const tsStat = await fs.promises.stat(tsTmp);
-      if (tsStat.size !== src.size) {
+      let phaseAErr: unknown = null;
+      try {
+        await downloadDone;
+      } catch (err) {
+        phaseAErr = err;
+      }
+      // Trustworthy frontier: the actual durable file length (the manifest
+      // may lag; it is healed here). Never a speculative value.
+      const acquired = await persistFrontierBestEffort(src.videoId, src.megaNodeId, src.size);
+      const cancelled =
+        job.abortController.signal.aborted ||
+        phaseAErr instanceof LiveJobCancelledError ||
+        (phaseAErr instanceof Error && phaseAErr.name === 'AbortError');
+      if (cancelled) {
+        return fail(phaseAErr ?? new LiveJobCancelledError('zero subscribers'));
+      }
+      if (phaseAErr || acquired !== src.size) {
+        if (acquired > 0 && acquired < src.size) {
+          // Partial prefix preserved (the 1:17 stall shape, whether the pipe
+          // errored or EOFed cleanly short). Current viewers keep their valid
+          // output; recovery continues in the background and rejoins the
+          // normal publish path when the source completes.
+          console.warn(
+            `[livejob] ${src.videoId} phase-A incomplete at frontier=${acquired}/${src.size} — continuing in background`,
+          );
+          try {
+            if (!ffIn.destroyed) ffIn.end();
+          } catch {
+            // ignore
+          }
+          await Promise.race([liveDone, sleepAbortable(15_000).catch(() => {})]);
+          if (!job.liveEnded) {
+            endBroadcast(job, phaseAErr ?? new Error(`truncated download: got ${acquired} of ${src.size} bytes`));
+          }
+          try {
+            liveProc?.kill('SIGKILL');
+          } catch {
+            // ignore
+          }
+          // Await (not bare-return): the finally below tears down the
+          // registry entry, slot, and temps, so it must run AFTER the
+          // background recovery + publish settle — otherwise
+          // hasLiveRemuxJob==false would be observable while recovery is
+          // still running (duplicate jobs, premature temp assertions).
+           
+          return await runBackgroundResume(acquired);
+        }
+        if (phaseAErr && acquired >= src.size && src.size > 0) {
+          // Complete-but-broken: every byte arrived yet the pipe failed
+          // (decrypt/MAC failure on untransmuxable input). Resuming cannot
+          // help (nothing is missing) and keeping it would poison the
+          // locally-complete shortcut — discard so the next job retries
+          // from scratch. The finally below then finds no residue.
+          await fs.promises.rm(tsTmp, { force: true });
+          try {
+            await removeSourceFrontier(src.videoId);
+          } catch {
+            // ignore cleanup errors
+          }
+        }
         return fail(
-          new Error(`truncated download: got ${tsStat.size} of ${src.size} bytes`),
+          phaseAErr ?? new Error(`truncated download: got ${acquired} of ${src.size} bytes`),
         );
       }
       console.log(
@@ -1425,31 +2097,10 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
       endBroadcast(job, liveFailed ? job.liveError ?? new Error('live transmux failed') : null);
 
       // 2. Faststart cache publish for seeks/refresh (stream-copy, fast).
-      await runFfmpegRemux(tsTmp, mp4Tmp);
-      const stat = await fs.promises.stat(mp4Tmp);
-      if (stat.size <= 0) throw new Error('ffmpeg produced an empty file');
-      await fs.promises.rename(mp4Tmp, mp4Path);
-      // P1-B: the mp4 rename above is atomic; the sidecar MUST be too, or a
-      // crash between the two leaves a valid mp4 unservable (lookup treats
-      // a missing/partial sidecar as stale and eviction eventually DELETES
-      // the good file). Order stays rename-then-sidecar: the reverse crash
-      // window (sidecar without mp4) is invisible to the *.mp4-scanning
-      // eviction and would linger; an mp4 without sidecar self-heals via
-      // stale reclaim, and the live job stays registered (joinable) until
-      // its finally runs, so no duplicate cold work starts in the window.
-      await writeSidecarAtomic(
-        sidecarPath,
-        // lastAccessedAt seeds LRU tracking (P1.5); old sidecars without it
-        // fall back to file mtime, so pre-existing caches keep working.
-        {
-          megaNodeId: src.megaNodeId,
-          sourceSize: src.size,
-          outputSize: stat.size,
-          lastAccessedAt: new Date().toISOString(),
-        },
-      );
-      await fs.promises.rm(tsTmp, { force: true });
-      return { path: mp4Path, size: stat.size };
+      // Await (not bare-return): the finally below must run AFTER publish
+      // settles, so hasLiveRemuxJob==false implies the final temp state.
+       
+      return await publishFinishedCache();
     } catch (err) {
       readyReject(err);
       return fail(err);
@@ -1461,15 +2112,25 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
       if (slotHeld) releaseRemuxSlot();
       job.settled = true;
       cancelGraceTimer(job);
-      if (liveJobs.get(src.videoId) === job) liveJobs.delete(src.videoId);
+      // NOTE: the registry entry is removed AFTER temp cleanup below (not
+      // here): tests and the route poll hasLiveRemuxJob to know the job is
+      // fully torn down, and the temp-file assertions must observe the final
+      // state (poison-valve discard / prefix preserve), not a mid-cleanup
+      // window. The identity guard on cleanup still sees this job in the map
+      // while it runs, which is exactly the "own files" case.
       try {
         liveJobProbeAborts.get(job)?.abort();
       } catch {
         // ignore
       }
-      // Bug 6: this job's temp files must never outlive it. The temp .ts
-      // download is removed here whether the remux succeeded, failed, or was
-      // interrupted - a successful cache (mp4Path + sidecar) is untouched.
+      // Bug 6: this job's temp files must never outlive it — EXCEPT the
+      // resumable source prefix. The .ts.part bytes + frontier manifest are
+      // intentionally PRESERVED on failure/cancel so the next job resumes
+      // from the true frontier instead of restarting at 0 (Phase 1). They
+      // are removed only by publish (success), identity mismatch
+      // (reconcile), or the 2h temp-orphan sweep. The spool is still removed
+      // (the next job rebuilds it from the preserved source); a successful
+      // cache (mp4Path + sidecar) is untouched.
       //
       // Identity-guarded: temp names are per-videoId, so a FRESHER job for
       // the same video (created after this one was evicted/cancelled) may
@@ -1480,13 +2141,29 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
           const dir = mediaCacheDir();
           await Promise.all([
             fs.promises.rm(path.join(dir, `${src.videoId}.part.mp4`), { force: true }),
-            fs.promises.rm(path.join(dir, `${src.videoId}.ts.part`), { force: true }),
             fs.promises.rm(path.join(dir, `${src.videoId}.live.spool`), { force: true }),
           ]);
+          // Preserve genuine progress; drop only empty/absent prefixes (same
+          // residue-free outcome as before when nothing was obtained).
+          const partPath = path.join(dir, `${src.videoId}.ts.part`);
+          const partStat = await fs.promises.stat(partPath).catch(() => null);
+          if (!partStat || partStat.size <= 0) {
+            await fs.promises.rm(partPath, { force: true });
+            try {
+              await removeSourceFrontier(src.videoId);
+            } catch {
+              // ignore
+            }
+          } else {
+            await persistFrontierBestEffort(src.videoId, src.megaNodeId, src.size);
+          }
         }
       } catch {
         // ignore cleanup errors
       }
+      // Registry removal LAST: hasLiveRemuxJob==false now implies temp
+      // cleanup (including poison-valve discard) already ran.
+      if (liveJobs.get(src.videoId) === job) liveJobs.delete(src.videoId);
     }
   })();
 
@@ -1517,8 +2194,14 @@ export function hasLiveRemuxJob(videoId: number): boolean {
  * hard process exit (the per-job finally cannot run for those). Runs once
  * per process at startup, BEFORE the media route can start new jobs, so it
  * never races a live job's own cleanup. Successful caches (<id>.mp4 +
- * <id>.json) are never touched; only *.ts.part, *.part.mp4 and *.live.spool
- * are removed.
+ * <id>.json) are never touched.
+ *
+ * Resumable-acquisition aware: a `<id>.ts.part` WITH a plausible frontier
+ * manifest (`<id>.ts.frontier.json` parsing + frontier > 0 + file length >
+ * 0) is a crash-interrupted download, NOT garbage — it is KEPT so the next
+ * job resumes from the true frontier (process-restart recovery). The next
+ * job re-validates identity (node/size) before trusting a single byte.
+ * Dangling manifests (no surviving part) and writer tmp residue are removed.
  */
 export async function cleanupOrphanedTempFiles(): Promise<void> {
   const dir = mediaCacheDir();
@@ -1529,17 +2212,86 @@ export async function cleanupOrphanedTempFiles(): Promise<void> {
     return; // no cache dir yet - nothing to sweep
   }
   const tempRe = /\.(ts\.part|part\.mp4|live\.spool)$/;
+  const nameSet = new Set(names);
   let removed = 0;
+  let kept = 0;
+  const resumablePart = async (name: string): Promise<boolean> => {
+    const m = name.match(/^(\d+)\.ts\.part$/);
+    if (!m) return false;
+    try {
+      const manifestRaw = await fs.promises.readFile(
+        path.join(dir, `${m[1]}.ts.frontier.json`),
+        'utf8',
+      );
+      const manifest = JSON.parse(manifestRaw) as {
+        frontier?: unknown;
+        sourceSize?: unknown;
+        videoId?: unknown;
+      };
+      if (
+        typeof manifest.frontier !== 'number' ||
+        !Number.isInteger(manifest.frontier) ||
+        manifest.frontier <= 0 ||
+        typeof manifest.sourceSize !== 'number' ||
+        manifest.frontier > manifest.sourceSize ||
+        manifest.videoId !== Number(m[1])
+      ) {
+        return false;
+      }
+      const stat = await fs.promises.stat(path.join(dir, name));
+      return stat.isFile() && stat.size > 0;
+    } catch {
+      return false;
+    }
+  };
   for (const name of names) {
+    if (/\.ts\.frontier\.json(\.\d+\.tmp)?$/.test(name) || /\.tmp$/.test(name)) {
+      // Frontier manifest handling below (dangling vs resumable); writer tmp
+      // residue (pid tmp from atomic writes) is always safe to remove.
+      if (/\.tmp$/.test(name)) {
+        try {
+          await fs.promises.rm(path.join(dir, name), { force: true });
+          removed++;
+        } catch {
+          // ignore individual failures
+        }
+      }
+      continue;
+    }
     if (!tempRe.test(name)) continue;
     try {
+      if (await resumablePart(name)) {
+        kept++;
+        continue;
+      }
       await fs.promises.rm(path.join(dir, name), { force: true });
       removed++;
     } catch {
       // ignore individual failures
     }
   }
-  if (removed > 0) console.warn(`[media] orphaned temp cleanup: removed ${removed} file(s) from ${dir}`);
+  // Dangling manifests (their .ts.part is gone or was just swept): remove.
+  for (const name of names) {
+    const m = name.match(/^(\d+)\.ts\.frontier\.json$/);
+    if (!m) continue;
+    if (!nameSet.has(`${m[1]}.ts.part`)) {
+      try {
+        const stillThere = await fs.promises
+          .stat(path.join(dir, `${m[1]}.ts.part`))
+          .then((s) => s.isFile())
+          .catch(() => false);
+        if (!stillThere) {
+          await fs.promises.rm(path.join(dir, name), { force: true });
+          removed++;
+        }
+      } catch {
+        // ignore individual failures
+      }
+    }
+  }
+  if (removed > 0 || kept > 0) {
+    console.warn(`[media] orphaned temp cleanup: removed ${removed} file(s), kept ${kept} resumable prefix(es) in ${dir}`);
+  }
 }
 
 /**
