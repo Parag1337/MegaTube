@@ -129,6 +129,15 @@ export async function createSession(userId: string): Promise<string> {
 }
 
 export async function getCurrentUser(): Promise<UserRecord | null> {
+  // Clerk is the website authentication provider. A signed-in Clerk user
+  // resolves (linking by email on first sign-in, so existing MegaTube data
+  // is preserved) to its MegaTube user here.
+  const { getCurrentMegaUser } = await import('./clerkUser');
+  const megaUser = await getCurrentMegaUser();
+  if (megaUser) return megaUser;
+
+  // Legacy fallback: password-login session cookie (/login, /register,
+  // /api/auth/*). Kept so existing sessions and tests keep working.
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE)?.value;
 

@@ -125,7 +125,7 @@ export async function getMegaAccountForUser(
     where: { id, userId },
     select: { ...publicSelect, encryptedSession: true },
   });
-  return row as (PublicMegaAccount & { encryptedSession: string }) | null;
+  return row as unknown as (PublicMegaAccount & { encryptedSession: string }) | null;
 }
 
 export interface LinkMegaAccountInput {
@@ -336,7 +336,7 @@ export async function listSyncableAccountsForUser(
     },
     select: publicSelect,
   });
-  return rows as PublicMegaAccount[];
+  return rows as unknown as PublicMegaAccount[];
 }
 
 /**

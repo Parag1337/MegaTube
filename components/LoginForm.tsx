@@ -86,7 +86,7 @@ export function LoginForm() {
       </Button>
 
       <p className="text-center text-sm text-muted">
-        Don&apos;t have an account? <Link href="/register" className="font-medium text-accent hover:underline">Sign up</Link>
+        Don&apos;t have an account? <Link href="/sign-up" className="font-medium text-accent hover:underline">Sign up</Link>
       </p>
     </form>
   );

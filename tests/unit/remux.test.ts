@@ -716,6 +716,33 @@ test('lifecycle 14: detach after completion is harmless (no timer, no throw)', a
   });
 });
 
+test('lifecycle: new job does NOT arm grace timer at creation (preflight-safe)', { timeout: 30000 }, async () => {
+  // Regression: arming the grace timer at creation self-cancels healthy new
+  // jobs when the route preflight (session + a=g + sniff + ffmpeg init)
+  // exceeds the grace window on slow MEGA. The route then sees a rejected
+  // ready promise and answers 503, causing the player retry spiral.
+  await withShortGrace(async () => {
+    const vid = 99005;
+    const job = getOrCreateLiveRemuxJob(abandonSrc(vid, hangingFetch));
+    assert.equal(hasLiveRemuxJob(vid), true, 'job registered');
+    assert.equal(job.graceTimer, null, 'no grace timer at creation');
+    assert.equal(job.dying, false, 'job is alive');
+    // A preflight longer than the grace window must NOT kill the job.
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal(hasLiveRemuxJob(vid), true, 'job survived past grace window');
+    assert.equal(job.graceTimer, null, 'still no grace timer (no subscriber ever attached)');
+    assert.equal(job.dying, false, 'still alive after waiting');
+    // Cleanup.
+    cancelLiveRemuxJob(job, 'test-cleanup');
+    const t0 = Date.now();
+    while (!job.settled && Date.now() - t0 < 5000) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    assert.equal(job.settled, true, 'teardown ran to completion');
+    assert.equal(hasLiveRemuxJob(vid), false, 'registry clean');
+  });
+});
+
 test('lifecycle: join cancels a running grace timer (interest signal)', { timeout: 30000 }, async () => {
   // joinLiveRemuxJob works off the module registry: a real (hanging) job
   // exercises the true route hook — a join means a request is heading for

@@ -6,6 +6,7 @@ import { tryMegaFileUrlToPreviewUrl } from '@/lib/mega/embed';
 import { acquirePreview, releasePreview } from '@/lib/preview-manager';
 import { previewDelayMs } from '@/lib/config';
 import { formatDuration } from '@/components/format';
+import { FilmIcon } from '@/components/icons';
 import { ThumbImage } from '@/components/ThumbImage';
 import { VideoCardMenu } from '@/components/VideoCardMenu';
 
@@ -169,7 +170,7 @@ export function VideoCard({
       {...(feedSource ? { 'data-feed-source': feedSource } : {})}
     >
       <VideoCardMenu videoId={id} creator={creator} isPrivate={isPrivate} />
-      <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-surface">
+      <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-surface transition-[transform,box-shadow] duration-200 group-hover:-translate-y-0.5 group-hover:shadow-[0_16px_40px_-16px_var(--shadow-color)]">
         {thumbnail ? (
           <ThumbImage
             src={thumbnail}
@@ -180,9 +181,7 @@ export function VideoCard({
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center bg-surface-raised">
-            <svg className="h-10 w-10 text-muted-light" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-              <path d="M8 5v14l11-7z" />
-            </svg>
+            <FilmIcon className="h-10 w-10 text-muted-light" />
           </div>
         )}
 

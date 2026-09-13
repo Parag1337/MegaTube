@@ -26,6 +26,39 @@ interface VideoCardMenuProps {
   isPrivate?: boolean;
 }
 
+/**
+ * Pure, unit-testable route check: true only for the Shuffle page, which
+ * lives at /search with the exact `#random` command as `q`.
+ *
+ * Shuffle order is an ephemeral per-page-load server seed (see
+ * app/search/page.tsx): the address bar carries NO seed, so ANY server
+ * re-execution (including router.refresh()) mints a fresh seed and a fresh
+ * ordering. Card-level mutations (watchlist/save) carry their own UI state
+ * locally in this menu + the API, so revalidating the server grid on
+ * Shuffle can only destroy the order - never update visible state.
+ * Collection pages (Watchlist, Saved) DO need the refresh so removals
+ * disappear from their server-rendered grids.
+ */
+export function isShuffleLocation(pathname: string | null | undefined, search: string | null | undefined): boolean {
+  if (pathname !== '/search') return false;
+  try {
+    const q = new URLSearchParams(search ?? '').get('q');
+    return q !== null && q.trim() === '#random';
+  } catch {
+    return false;
+  }
+}
+
+/** Runtime wrapper: reads the live address bar (client-only, call on user action). */
+function isOnShufflePage(): boolean {
+  try {
+    if (typeof window === 'undefined') return false;
+    return isShuffleLocation(window.location.pathname, window.location.search);
+  } catch {
+    return false;
+  }
+}
+
 export function VideoCardMenu({ videoId, creator, isPrivate = false }: VideoCardMenuProps) {
   const { user, loading } = useSession();
   const router = useRouter();
@@ -104,7 +137,15 @@ export function VideoCardMenu({ videoId, creator, isPrivate = false }: VideoCard
       else setSaved(!active);
       // Collection pages are server-rendered: refresh their data without a
       // full page reload so removals disappear from the grid.
-      router.refresh();
+      // Shuffle is the exception: its order is an ephemeral per-page-load
+      // server seed with no seed in the URL, so a refresh would mint a NEW
+      // seed and reshuffle the whole page. VIDEO ORDER (server grid props)
+      // and VIDEO STATE (this menu's local watchlisted/saved flags, already
+      // updated above) stay separate here - skip the refresh to preserve
+      // the current shuffle order.
+      if (!isOnShufflePage()) {
+        router.refresh();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong.');
     } finally {
@@ -169,7 +210,7 @@ export function VideoCardMenu({ videoId, creator, isPrivate = false }: VideoCard
           ) : !user || !signedIn ? (
             <Link
               role="menuitem"
-              href="/login"
+              href="/sign-in"
               onClick={(e) => {
                 e.stopPropagation();
                 setOpen(false);

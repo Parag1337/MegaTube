@@ -93,7 +93,7 @@ async function Results({
         totalPages={totalPages}
         basePath={basePath}
       />
-      {isRandom && totalPages > 1 && (
+      {isRandom && (
         <form method="GET" action="/search" className="mt-6 text-center">
           <input type="hidden" name="q" value={query} />
           <Button type="submit" variant="secondary">
@@ -111,7 +111,7 @@ async function Results({
 
 export default async function SearchPage({ searchParams }: SearchPageProps) {
   const user = await getCurrentUser();
-  if (!user) redirect('/login');
+  if (!user) redirect('/sign-in');
 
   const params = await searchParams;
   const query = params.q ?? '';

@@ -10,7 +10,7 @@ import { markAccountReauthRequired } from '@/lib/megaAccounts';
 import { withMegaSession, evictMegaSession } from '@/lib/sync/session-cache';
 import { getTemporaryDownloadUrl } from '@/lib/mega/account';
 import type { TemporaryDownloadUrl } from '@/lib/mega/account';
-import { sniffMimeType } from '@/lib/mega/nodes';
+import { probeMediaContainer } from '@/lib/media/container';
 import { getPrivateNodeMediaProperties } from '@/lib/mega/attributes';
 import { keepAliveFetch, withTransientRetry, isTransientNetworkError } from '@/lib/net-resilience';
 import {
@@ -143,21 +143,24 @@ export function persistVideoDuration(videoId: number, seconds: number | null | u
       // Background best-effort: a failed write must never break playback.
     });
 }
-/** Negative result cache for the container sniff (nodeId:size -> expiry);
- * a mislabeled file is persisted to the DB on first detection instead. */
-const containerSniffCache = new Map<string, number>();
-const CONTAINER_SNIFF_TTL_MS = 10 * 60_000;
-
-function sniffCacheKey(nodeId: string, size: number): string {
-  return `${nodeId}:${size}`;
-}
-
 /**
- * Minimal TS-as-MP4 routing probe (P0 C4 slice): fetch + decrypt just the
- * first 188 bytes and sniff the container. Returns 'video/mp2t' when the
- * bytes are actually MPEG-TS despite an MP4 label, else null (real MP4,
- * unknown, or any failure — caller keeps the direct path, never worse).
- * Single attempt, bounded by the request signal; never throws.
+ * Symmetric container-truth probe (single source of truth:
+ * `lib/media/container`). Reuses the existing 188-byte prefix mechanism
+ * (fetch + `decryptPrefixToBuffer` + `observeContainerBytes` sniff) — never
+ * a full download.
+ *
+ * Old behavior verified only one direction (mp4 label + TS bytes -> remux);
+ * mp2t labels were never re-verified, so a true MP4 behind an mp2t label
+ * entered the slow remux path forever. Both directions now self-heal via
+ * the shared `decideContainerRouting` table inside `probeMediaContainer`:
+ *   mp4 label + TS bytes  -> remux path, persist `video/mp2t`;
+ *   mp2t label + MP4 bytes -> direct path, persist `video/mp4`.
+ * Undetectable bytes (or any probe failure) return null and the caller keeps
+ * the stored-label fallback — never worse than today. The probe verdict is
+ * cached per `megaNodeId:size`, so duplicate Video rows for the same MEGA
+ * file converge instead of routing differently.
+ *
+ * Never throws: any probe failure returns null.
  */
 async function sniffRemuxContainer(
   nodeId: string,
@@ -166,20 +169,19 @@ async function sniffRemuxContainer(
   size: number,
   fetchImpl: (url: string, signal?: AbortSignal) => Promise<Response>,
   signal: AbortSignal | undefined,
-): Promise<'video/mp2t' | null> {
+  storedMimeType: string | null | undefined,
+): Promise<{ verdict: 'mp2t' | 'mp4'; correctedMimeType: 'video/mp4' | 'video/mp2t' | null } | null> {
   try {
-    const key = sniffCacheKey(nodeId, size);
-    const hit = containerSniffCache.get(key);
-    if (hit !== undefined && hit > Date.now()) return null;
-    const res = await fetchImpl(`${upstreamUrl}/0-187`, signal);
-    if (!res.ok || !res.body) return null;
-    const cipher = Buffer.from(await res.arrayBuffer());
-    if (cipher.length < 188) return null;
-    const plain = await decryptPrefixToBuffer(fileKey, cipher);
-    const detected = sniffMimeType(plain);
-    if (detected === 'video/mp2t') return 'video/mp2t';
-    containerSniffCache.set(key, Date.now() + CONTAINER_SNIFF_TTL_MS);
-    return null;
+    const probed = await probeMediaContainer(
+      { nodeId, downloadUrl: upstreamUrl, sourceSize: size, fileKey, storedMimeType },
+      {
+        // MediaDeps.fetchCiphertext(url) ignores the request signal, so the
+        // adapter signature carries it without forwarding (same as before).
+        fetchCiphertext: (url) => fetchImpl(url, signal),
+        decryptPrefix: decryptPrefixToBuffer,
+      },
+    );
+    return { verdict: probed.verdict, correctedMimeType: probed.correctedMimeType };
   } catch {
     return null;
   }
@@ -667,19 +669,20 @@ export async function handleMediaRequest(
     const apiStart = resolvedStart - (resolvedStart % 16);
     const skipBytes = resolvedStart - apiStart;
 
-    // Container truth check: an `.mp4`-labeled file may actually be MPEG-TS
-    // (verified live: 627/631 serve 0x47 sync bytes while labeled
-    // video/mp4). Browsers park at 0:00 on such bytes, so sniff the first
-    // 188 B and route TS-as-MP4 into the remux pipeline. Only MP4-labeled
-    // GETs pay this single tiny fetch (already-remux types and warm-cache
-    // hits skip it; a negative result is mem-cached for 10 min); any doubt
-    // or failure keeps the direct path, never worse than today. A positive
-    // is persisted so later plays route without re-sniffing.
+    // Container truth check (single source of truth: lib/media/container):
+    // the stored `mimeType` label is sync-time extension metadata only, so
+    // verify the actual bytes with the cheap shared 188-byte probe before
+    // committing to a playback path. Both directions self-heal:
+    //   mp4 label + TS bytes  -> remux path, persist `video/mp2t`;
+    //   mp2t label + MP4 bytes -> direct path, persist `video/mp4`.
+    // Undetectable bytes (or any probe failure) keep the stored-label
+    // fallback — never worse than today. Warm-cache hits skip probing; the
+    // probe verdict is shared per `megaNodeId:size`, so duplicate Video rows
+    // for the same MEGA file converge instead of routing differently.
     let effectiveMimeType = storedMimeType;
     if (
       method === 'GET' &&
-      !needsRemuxPlayback(effectiveMimeType) &&
-      (!effectiveMimeType || effectiveMimeType === 'video/mp4')
+      (!effectiveMimeType || effectiveMimeType === 'video/mp4' || needsRemuxPlayback(effectiveMimeType))
     ) {
       const probed = await sniffRemuxContainer(
         video.megaNodeId!,
@@ -688,14 +691,22 @@ export async function handleMediaRequest(
         size,
         deps.fetchCiphertext,
         signal,
+        effectiveMimeType,
       );
-      if (probed) {
-        console.warn(`[media] video ${videoId} labeled ${effectiveMimeType} but bytes are ${probed} -> remux pipeline`);
-        effectiveMimeType = probed;
+      if (probed && probed.correctedMimeType) {
+        console.warn(`[media] video ${videoId} labeled ${effectiveMimeType} but bytes prove ${probed.correctedMimeType} -> ${probed.verdict === 'mp2t' ? 'remux' : 'direct'} path`);
+        effectiveMimeType = probed.correctedMimeType;
         await prisma.video
-          .update({ where: { id: video.id }, data: { mimeType: probed } })
+          .update({ where: { id: video.id }, data: { mimeType: probed.correctedMimeType } })
           .catch(() => {});
+      } else if (probed && probed.verdict === 'mp2t' && !needsRemuxPlayback(effectiveMimeType)) {
+        // Bytes prove TS but the label was null/other non-mp4: route to
+        // remux for this request without persisting (only proven mp4<->mp2t
+        // label swaps are persisted).
+        effectiveMimeType = 'video/mp2t';
       }
+      // Otherwise (label already correct, unknown bytes, or probe failure):
+      // keep the stored label — safe existing fallback.
     }
 
     // MPEG-TS sources cannot play in browsers as-is, but ours carry

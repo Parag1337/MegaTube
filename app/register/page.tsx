@@ -1,14 +1,11 @@
-import { Metadata } from 'next';
-import { RegisterForm } from '@/components/RegisterForm';
+import { redirect } from 'next/navigation';
 
-export const metadata: Metadata = { title: 'Sign up' };
-
+/**
+ * Legacy website registration route, retained only for bookmark/back-compat.
+ *
+ * Website authentication is handled by Clerk at /sign-up. This route never
+ * renders the old registration form - it redirects there.
+ */
 export default function RegisterPage() {
-  return (
-    <div className="flex min-h-[calc(100vh-14rem)] items-center justify-center px-4 py-12">
-      <div className="w-full max-w-sm rounded-3xl border border-border bg-surface p-6 sm:p-8">
-        <RegisterForm />
-      </div>
-    </div>
-  );
+  redirect('/sign-up');
 }

@@ -199,7 +199,7 @@ export function decodeAttributes(fileKey: Buffer, atB64: string): Record<string,
     const plain = Buffer.concat([d.update(at), d.final()]);
     // Attributes are a packed stream; File.unpackAttributes (megajs) parses it.
     const attrs = File.unpackAttributes(plain);
-    return (attrs as Record<string, unknown> | undefined) ?? null;
+    return (attrs as unknown as Record<string, unknown> | undefined) ?? null;
   } catch {
     return null;
   }

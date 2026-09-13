@@ -73,6 +73,12 @@ model User {
   id           String        @id @default(cuid())
   email        String        @unique
   passwordHash String
+  /// Clerk user ID (e.g. "user_...") linking this MegaTube user to its
+  /// Clerk identity. Null for legacy password-only accounts until they
+  /// sign in through Clerk, at which point they are linked by email.
+  /// Never replaces the internal id - all user-owned data stays keyed
+  /// by the existing id.
+  clerkUserId  String?       @unique
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
   megaAccounts MegaAccount[]

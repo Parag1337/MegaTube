@@ -1151,14 +1151,18 @@ function shortGrace<T>(fn: () => Promise<T>): Promise<T> {
   });
 }
 
-test('lifecycle 18: viewer lost in preflight gets a fast honest 503 (never hangs, never 502)', { timeout: 30000 }, async () => {
-  const { hasLiveRemuxJob } = await import('@/lib/media/remux');
+test('lifecycle 18: aborted preflight returns 499 and grace cleans up the job', { timeout: 30000 }, async () => {
+  // A viewer that disconnects BEFORE the preflight starts (signal already
+  // aborted) must not leave a phantom subscriber pinning the job. The route
+  // detects the abort immediately, answers a quiet 499, and the finally-block
+  // grace timer cleans up the abandoned job.
+  const { hasLiveRemuxJob, cancelLiveRemuxJob } = await import('@/lib/media/remux');
   const u = await makeUser('abandonpre');
   const acc = await makeAccount(u.id, 'abandonpre@example.com');
   const v = await makeTsShortVideo(acc.id, 'abandonpre-video');
-  // Hanging upstream that honors cancellation (like the real wrapper).
-  const hanging: MediaDeps['fetchCiphertext'] = (_url, signal) =>
-    new Promise<Response>((resolve, reject) => {
+  const hanging: MediaDeps['fetchCiphertext'] = (url, signal) => {
+    if (url.endsWith('/0-187')) return Promise.resolve(ciphertextResponse(url));
+    return new Promise<Response>((resolve, reject) => {
       void resolve;
       if (signal?.aborted) {
         reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
@@ -1168,27 +1172,28 @@ test('lifecycle 18: viewer lost in preflight gets a fast honest 503 (never hangs
         reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
       });
     });
+  };
   await shortGrace(async () => {
+    const controller = new AbortController();
+    controller.abort(); // browser already gone before request starts
     const t0 = Date.now();
-    // Fire without awaiting: the request parks in preflight (no headers ever).
     const pending = handleMediaRequest(
       u.id,
       String(v.id),
       new Headers(),
-      new AbortController().signal,
+      controller.signal,
       fakeDeps({
         getDownloadUrl: async (): Promise<TemporaryDownloadUrl> => ({ url: UPSTREAM, size: 4096 }),
         fetchCiphertext: hanging,
       }),
     );
-    // Job created; the viewer never attaches (stuck preflight) and the
-    // browser is conceptually gone: grace + cancel must settle it.
     await pollFor(async () => hasLiveRemuxJob(v.id), (on) => on === true, 3000);
     const res = await pending;
-    const elapsed = Date.now() - t0;
-    assert.equal(res.status, 503, 'cancelled preflight answers retryable 503, never 502');
-    assert.ok(elapsed < 10_000, `bounded (${elapsed}ms): no 20s-timeout hang, no indefinite stall`);
-    assert.equal(hasLiveRemuxJob(v.id), false, 'abandoned job removed after cancel');
+    assert.equal(res.status, 499, 'aborted preflight: quiet 499, never 503/502');
+    assert.ok(Date.now() - t0 < 5000, 'fast: no preflight/init waits for a gone viewer');
+    // Grace timer arms in the route finally; wait for cleanup.
+    await new Promise((r) => setTimeout(r, 500));
+    assert.equal(hasLiveRemuxJob(v.id), false, 'abandoned job removed after grace');
   });
 });
 
@@ -1258,6 +1263,118 @@ test('lifecycle 16+19: concurrent viewers share one upstream job; a later viewer
   const r3 = await handleMediaRequest(u.id, String(v.id), new Headers(), new AbortController().signal, deps);
   assert.equal(r3.status, 503);
   assert.equal(fullFetches, 2, 'fresh job performs its own upstream attempt');
+});
+
+// ---------------------------------------------------------------------------
+// Symmetric container-truth routing (single source of truth:
+// lib/media/container). These pin the media route's half of the fix:
+//   mp2t label + MP4 bytes -> direct path + persist mp4 (was: stuck in
+//     remux forever); mp4 label + TS bytes still remuxes (existing C4 slice
+//     covers the pipeline entry — here we assert the persisted correction);
+//   unknown bytes / probe failure -> stored-label fallback (never worse).
+// Only these tests touch `clearContainerVerdictCacheForTests` (per-test
+// isolation for the in-memory nodeId:size cache); all other suites run with
+// warm-cache hits that skip probing, exactly as in production.
+// ---------------------------------------------------------------------------
+test('stale mp2t label + MP4 bytes -> direct 200 + mimeType corrected to mp4', async () => {
+  const { clearContainerVerdictCacheForTests } = await import('@/lib/media/container');
+  clearContainerVerdictCacheForTests();
+  const u = await makeUser('stale-mp2t');
+  const acc = await makeAccount(u.id, 'stale-mp2t@example.com');
+  const v = await prisma.video.create({
+    data: {
+      megaAccountId: acc.id,
+      megaNodeId: 'node-stale-mp2t-sym',
+      megaFilename: 'Creator - Title.mp4',
+      title: 'Title',
+      slug: 'stale-mp2t-sym-video',
+      creatorAssignment: 'none',
+      fileSize: BigInt(PLAIN.length),
+      mimeType: 'video/mp2t',
+      fileKeyEncrypted: encryptSecret(FILE_KEY),
+    },
+  });
+  // PLAIN[0] is 0x00 with no ftyp at offset 4 -> 'unknown' would keep the
+  // stored mp2t label; forge a minimal ftyp so bytes PROVE mp4. NOTE:
+  // megajs encrypt() XORs its input in place (CTR), so snapshot the
+  // expected plaintext BEFORE handing mp4 to the encryptor.
+  const mp4 = Buffer.from(EXPECTED);
+  mp4.writeUInt32BE(24, 0);
+  mp4.write('ftyp', 4, 4, 'latin1');
+  const mp4Expected = Buffer.from(mp4);
+  const { encrypt: encryptMp4 } = await import('megajs');
+  const ek = Buffer.concat([Buffer.alloc(16, 0x77), Buffer.alloc(8, 0x88)]);
+  const es = encryptMp4(ek);
+  const chunks: Buffer[] = [];
+  es.on('data', (c: Buffer) => chunks.push(Buffer.from(c)));
+  es.end(mp4);
+  await new Promise<void>((resolve) => es.on('end', () => resolve()));
+  const ct = Buffer.concat(chunks);
+  const fk = Buffer.from(es.key);
+  await prisma.video.update({ where: { id: v.id }, data: { fileKeyEncrypted: encryptSecret(fk), fileSize: BigInt(ct.length) } });
+  const slice = (url: string): Response => {
+    const m = url.match(/\/(\d+)-(\d+)$/);
+    const from = m ? Number(m[1]) : 0;
+    const to = m ? Number(m[2]) : ct.length - 1;
+    return new Response(Buffer.from(ct.subarray(from, to + 1)), { status: 200 });
+  };
+  const res = await handleMediaRequest(u.id, String(v.id), new Headers(), new AbortController().signal, fakeDeps({
+    getDownloadUrl: async (): Promise<TemporaryDownloadUrl> => ({ url: UPSTREAM, size: ct.length }),
+    fetchCiphertext: async (url) => slice(url),
+  }));
+  assert.equal(res.status, 200, 'proven MP4 must take the direct path, not remux');
+  assert.equal(res.headers.get('x-media-path'), 'direct');
+  const body = await readBody(res);
+  assert.ok(body.equals(mp4Expected), 'direct body must be the exact MP4 bytes');
+  const row = await prisma.video.findUniqueOrThrow({ where: { id: v.id } });
+  assert.equal(row.mimeType, 'video/mp4', 'stale mp2t label corrected to mp4');
+  clearContainerVerdictCacheForTests();
+});
+
+test('stale mp4 label + real TS bytes -> remux path + mimeType corrected to mp2t', async () => {
+  const { clearContainerVerdictCacheForTests } = await import('@/lib/media/container');
+  clearContainerVerdictCacheForTests();
+  if (!FF_TS) {
+    clearContainerVerdictCacheForTests();
+    return; // ffmpeg-gated fixture unavailable; decision-table tests still pin the logic
+  }
+  const u = await makeUser('stale-mp4ts');
+  const acc = await makeAccount(u.id, 'stale-mp4ts@example.com');
+  const v = await prisma.video.create({
+    data: {
+      megaAccountId: acc.id,
+      megaNodeId: 'node-stale-mp4ts-sym',
+      megaFilename: 'Creator - Title.mp4',
+      title: 'Title',
+      slug: 'stale-mp4ts-sym-video',
+      creatorAssignment: 'none',
+      fileSize: BigInt(FF_TS.plain.length),
+      mimeType: 'video/mp4',
+      fileKeyEncrypted: encryptSecret(FF_TS.key),
+    },
+  });
+  const res = await handleMediaRequest(u.id, String(v.id), new Headers(), new AbortController().signal, tsDeps());
+  assert.notEqual(res.headers.get('x-media-path'), 'direct', 'TS bytes must never take the direct path');
+  await res.text().catch(() => {});
+  const row = await prisma.video.findUniqueOrThrow({ where: { id: v.id } });
+  assert.equal(row.mimeType, 'video/mp2t', 'stale mp4 label corrected to mp2t');
+  await pollFor(async () => (await import('@/lib/media/remux')).hasLiveRemuxJob(v.id), (on) => on === false, 15000);
+  clearContainerVerdictCacheForTests();
+});
+
+test('unknown container bytes preserve the stored label and direct fallback', async () => {
+  const { clearContainerVerdictCacheForTests } = await import('@/lib/media/container');
+  clearContainerVerdictCacheForTests();
+  const u = await makeUser('unkcontainer');
+  const acc = await makeAccount(u.id, 'unkcontainer@example.com');
+  const v = await makeVideo(acc.id, 'unkcontainer-video'); // PLAIN has no ftyp -> 'unknown'
+  const res = await handleMediaRequest(u.id, String(v.id), new Headers(), new AbortController().signal, fakeDeps());
+  assert.equal(res.status, 200, 'unknown bytes must keep the safe direct fallback');
+  assert.equal(res.headers.get('x-media-path'), 'direct');
+  assert.ok((await readBody(res)).equals(EXPECTED));
+  const row = await prisma.video.findUniqueOrThrow({ where: { id: v.id } });
+  assert.equal(row.mimeType, 'video/mp4', 'unknown bytes must not rewrite the label');
+  clearContainerVerdictCacheForTests();
 });
 
 after(() => {

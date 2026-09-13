@@ -30,6 +30,107 @@
   --ring: #ff0033;
   --skeleton: #1e1e1e;
   --skeleton-shine: #2b2b2b;
+  --shadow-color: rgba(0, 0, 0, 0.55);
+}
+
+/*
+ * Light theme: same structure, paper surfaces, ink text. The red accent is
+ * kept identical so brand moments (logo, active states, primary actions,
+ * player progress) read the same in both themes.
+ */
+html[data-theme='light'] {
+  --background: #fafafa;
+  --foreground: #18181b;
+  --muted: #52525b;
+  --muted-light: #a1a1aa;
+  --card: #ffffff;
+  --card-hover: #f4f4f5;
+  --border: #e4e4e7;
+  --border-light: #d4d4d8;
+  --accent: #e80032;
+  --accent-hover: #c2002a;
+  --accent-soft: rgba(232, 0, 50, 0.08);
+  --destructive: #dc2626;
+  --surface: #ffffff;
+  --surface-hover: #f4f4f5;
+  --surface-raised: #f1f1f3;
+  --surface-overlay: #e4e4e7;
+  --success: #15803d;
+  --warning: #b45309;
+  --ring: #e80032;
+  --skeleton: #ececee;
+  --skeleton-shine: #f7f7f8;
+  --shadow-color: rgba(24, 24, 27, 0.1);
+  color-scheme: light;
+}
+
+/*
+ * Public pages (logged-out landing `/`, `/sign-in`, `/sign-up`): OS-driven
+ * via `prefers-color-scheme`, independent of the stored application theme
+ * (`html[data-theme]`). The `.mt-public` wrapper owns its tokens so public
+ * content follows the OS with no JS and no first-paint flash; a media query
+ * flips the whole token set live when the OS theme changes.
+ *
+ * Dark = screening room ink (same structure as the app dark theme).
+ * Light = intentionally-designed paper daylight room, not an inversion:
+ * warm paper base, white raised surfaces with hairline borders, softer
+ * long shadows, and a diffuse rose projector wash instead of the dark
+ * cone. Player stages stay true black in both (cinematic anchor).
+ */
+.mt-public {
+  --background: #0f0f0f;
+  --foreground: #f1f1f1;
+  --muted: #aaaaaa;
+  --muted-light: #717171;
+  --card: #161616;
+  --card-hover: #1f1f1f;
+  --border: #262626;
+  --border-light: #3a3a3a;
+  --accent: #ff0033;
+  --accent-hover: #d6002b;
+  --accent-soft: rgba(255, 0, 51, 0.12);
+  --destructive: #f87171;
+  --surface: #171717;
+  --surface-hover: #232323;
+  --surface-raised: #1e1e1e;
+  --surface-overlay: #2a2a2a;
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --ring: #ff0033;
+  --skeleton: #1e1e1e;
+  --skeleton-shine: #2b2b2b;
+  --shadow-color: rgba(0, 0, 0, 0.55);
+  color-scheme: dark;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+@media (prefers-color-scheme: light) {
+  .mt-public {
+    --background: #faf9f7;
+    --foreground: #18181b;
+    --muted: #52525b;
+    --muted-light: #a8a29e;
+    --card: #ffffff;
+    --card-hover: #f5f4f2;
+    --border: #e7e2dc;
+    --border-light: #d6d0c8;
+    --accent: #e80032;
+    --accent-hover: #c2002a;
+    --accent-soft: rgba(232, 0, 50, 0.07);
+    --destructive: #dc2626;
+    --surface: #ffffff;
+    --surface-hover: #f5f4f2;
+    --surface-raised: #f3f1ee;
+    --surface-overlay: #e7e2dc;
+    --success: #15803d;
+    --warning: #b45309;
+    --ring: #e80032;
+    --skeleton: #edeae6;
+    --skeleton-shine: #f8f6f4;
+    --shadow-color: rgba(28, 25, 23, 0.12);
+    color-scheme: light;
+  }
 }
 
 @theme inline {
@@ -60,6 +161,10 @@ html {
   color-scheme: dark;
 }
 
+html[data-theme='dark'] {
+  color-scheme: dark;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
@@ -67,6 +172,8 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  /* Theme switches cross-fade instead of flashing. */
+  transition: background-color 200ms ease, color 200ms ease;
 }
 
 /* Thin, quiet scrollbars that match the surfaces. */
@@ -165,10 +272,289 @@ body {
   .mt-skeleton::after {
     animation: none;
   }
+  .mt-menu,
+  .mt-modal,
+  .mt-fade-in {
+    animation: none;
+  }
   *,
   *::before,
   *::after {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
+  }
+}
+
+/*
+ * Microinteractions: one small vocabulary, used sparingly.
+ * - .mt-menu: dropdown/popover entrance (opacity + 4px rise, 160ms)
+ * - .mt-modal: dialog entrance (opacity + 8px rise + slight scale, 200ms)
+ * - .mt-fade-in: page/section entrance (opacity only, 200ms)
+ * - .mt-lift: card hover elevation (translateY(-2px) + theme shadow)
+ */
+@keyframes mt-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.mt-menu {
+  animation: mt-menu-in 160ms ease-out;
+  transform-origin: top right;
+}
+
+@keyframes mt-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.mt-modal {
+  animation: mt-modal-in 200ms ease-out;
+}
+
+@keyframes mt-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.mt-fade-in {
+  animation: mt-fade-in 200ms ease-out;
+}
+
+.mt-lift {
+  transition: transform 180ms ease-out, box-shadow 180ms ease-out, border-color 180ms ease-out, background-color 150ms ease-out;
+}
+.mt-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px -8px var(--shadow-color);
+}
+
+/*
+ * Landing hero depth visual: layered library cards in CSS perspective.
+ * Pure CSS (no JS, no bundle cost), static under reduced-motion.
+ */
+@keyframes mt-float-soft {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+.mt-hero-scene {
+  perspective: 1200px;
+}
+.mt-hero-card {
+  transform-style: preserve-3d;
+  box-shadow: 0 24px 64px -16px var(--shadow-color);
+}
+.mt-hero-float {
+  animation: mt-float-soft 7s ease-in-out infinite;
+}
+.mt-hero-float-delayed {
+  animation: mt-float-soft 8s ease-in-out 1.2s infinite;
+}
+
+/* ================================================================
+ * Screening-room direction: projector glow, media wall, film strip,
+ * marquee type, orchestrated entrances, scroll reveals.
+ *
+ * One bold moment (the hero media wall) + quiet surroundings. Every
+ * animation below is disabled under prefers-reduced-motion.
+ * ================================================================ */
+
+/* Projector glow: a red-tinted cone of light behind the hero wall.
+ * Single radial wash, hero/auth only - never a page-wide gradient. */
+.mt-projector-glow {
+  background: radial-gradient(
+    ellipse 62% 48% at 68% 30%,
+    rgba(255, 0, 51, 0.14),
+    rgba(255, 0, 51, 0.04) 55%,
+    transparent 75%
+  );
+}
+html[data-theme='light'] .mt-projector-glow {
+  background: radial-gradient(
+    ellipse 62% 48% at 68% 30%,
+    rgba(232, 0, 50, 0.1),
+    rgba(232, 0, 50, 0.03) 55%,
+    transparent 75%
+  );
+}
+
+/* Media wall stage: JS sets --mpx/--mpy (-1..1) from pointer position.
+ * Each .mt-depth layer translates proportionally to its --depth. */
+.mt-stage {
+  perspective: 1400px;
+}
+.mt-tilt {
+  transform-style: preserve-3d;
+  transform:
+    rotateX(calc(var(--mry, 0) * -5deg))
+    rotateY(calc(var(--mpx, 0) * 7deg));
+  transition: transform 180ms ease-out;
+}
+.mt-depth {
+  transform: translate3d(
+    calc(var(--mpx, 0) * var(--depth, 0) * 1px),
+    calc(var(--mpy, 0) * var(--depth, 0) * 1px),
+    0
+  );
+  transition: transform 180ms ease-out;
+}
+.mt-wall-shadow {
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 12px 32px -8px var(--shadow-color),
+    0 32px 80px -24px var(--shadow-color);
+}
+html[data-theme='light'] .mt-wall-shadow {
+  box-shadow:
+    0 1px 2px rgba(24, 24, 27, 0.08),
+    0 12px 32px -12px rgba(24, 24, 27, 0.22),
+    0 32px 72px -28px rgba(24, 24, 27, 0.22);
+}
+
+/* Orchestrated hero entrance: layers rise + settle with stagger via
+ * inline --enter-delay. Runs once on mount. */
+@keyframes mt-wall-in {
+  from {
+    opacity: 0;
+    transform: translateY(28px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.mt-enter {
+  animation: mt-wall-in 700ms cubic-bezier(0.22, 0.9, 0.28, 1) both;
+  animation-delay: var(--enter-delay, 0ms);
+}
+
+/* Gentle independent drift for floating wall panels (depth cue). */
+@keyframes mt-drift-a {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 0 -7px; }
+}
+@keyframes mt-drift-b {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 0 6px; }
+}
+.mt-drift-a { animation: mt-drift-a 7s ease-in-out infinite; }
+.mt-drift-b { animation: mt-drift-b 8.5s ease-in-out 1.4s infinite; }
+
+/* Recording dot: slow pulse for the "now showing" cue. */
+@keyframes mt-rec-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.mt-rec {
+  animation: mt-rec-pulse 2.2s ease-in-out infinite;
+}
+
+/* Progress rail shimmer: a travelling highlight on the hero player. */
+@keyframes mt-rail-sheen {
+  from { transform: translateX(-120%); }
+  to { transform: translateX(320%); }
+}
+.mt-rail-sheen {
+  animation: mt-rail-sheen 3.6s ease-in-out infinite;
+}
+
+/* Scroll reveal: sections fade + rise once when entering view.
+ * The Reveal component adds .armed on mount (JS only) before observing,
+ * so server-rendered / no-JS / no-IO output is always fully visible. */
+.mt-reveal {
+  transition: opacity 600ms ease-out, transform 600ms cubic-bezier(0.22, 0.9, 0.28, 1);
+  transition-delay: var(--reveal-delay, 0ms);
+}
+.mt-reveal.armed {
+  opacity: 0;
+  transform: translateY(22px);
+}
+.mt-reveal.armed.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+/* Marquee band: slow cinema-marquee crawl, one divider only. */
+@keyframes mt-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.mt-marquee-track {
+  animation: mt-marquee 36s linear infinite;
+}
+
+/* Outlined display type for the marquee + section dividers. */
+.mt-outline-text {
+  color: transparent;
+  -webkit-text-stroke: 1px var(--border-light);
+}
+
+/* Film strip: sprocket holes top + bottom (pattern, not decoration). */
+.mt-film-edge {
+  background-image: radial-gradient(circle, var(--muted-light) 2.2px, transparent 2.8px);
+  background-size: 16px 12px;
+  background-position: center;
+  background-repeat: repeat-x;
+}
+
+/* Card hover depth for library surfaces (subtle, opt-in). */
+.mt-card-hover {
+  transition: transform 180ms ease-out, box-shadow 180ms ease-out, border-color 180ms ease-out;
+}
+.mt-card-hover:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 16px 40px -16px var(--shadow-color);
+  border-color: var(--border-light);
+}
+
+/* Sidebar selection: indicator bar grows in, label slides a touch. */
+.mt-nav-active-indicator {
+  transform: scaleY(0);
+  transition: transform 180ms ease-out;
+}
+a[aria-current='page'] .mt-nav-active-indicator {
+  transform: scaleY(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mt-drift-a,
+  .mt-drift-b,
+  .mt-rec,
+  .mt-rail-sheen,
+  .mt-marquee-track,
+  .mt-enter {
+    animation: none;
+  }
+  .mt-enter {
+    opacity: 1;
+  }
+  .mt-reveal {
+    transition: none;
+  }
+  .mt-reveal.armed {
+    opacity: 1;
+    transform: none;
+  }
+  .mt-tilt,
+  .mt-depth {
+    transform: none;
+    transition: none;
   }
 }
