@@ -87,10 +87,19 @@ export type Session = Prisma.SessionModel
 export type WatchlistItem = Prisma.WatchlistItemModel
 /**
  * Model SavedVideo
- * P2.0 product foundation: a user's saved/bookmark videos. Flat bookmarks -
- * NOT collections/folders. One row per (user, video).
+ * P2.0 product foundation: a user's saved/bookmark videos. One row per
+ * (user, video). Optional organization into one user-created folder per
+ * saved video (folderId null = uncategorized, shown under "All Saved").
+ * These are application-level folders only - never MEGA folders.
  */
 export type SavedVideo = Prisma.SavedVideoModel
+/**
+ * Model SavedFolder
+ * P2.1: simple user-created folders organizing Saved Videos. Deleting a
+ * folder never deletes videos - its videos return to uncategorized
+ * (folderId SetNull). Names are unique per user.
+ */
+export type SavedFolder = Prisma.SavedFolderModel
 /**
  * Model WatchHistory
  * P2.0 product foundation: "videos I watched" history. One logical row per

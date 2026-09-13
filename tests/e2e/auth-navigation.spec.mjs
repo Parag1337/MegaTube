@@ -34,20 +34,22 @@ test.describe('auth navigation links', () => {
 
     await signup.click();
     await page.waitForURL('**/register');
-    await expect(page.getByRole('heading', { name: 'Create an account' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Create your account' })).toBeVisible();
   });
 
   test('/register has a working "Log in" link to /login', async ({ page }) => {
     await page.goto(`${BASE}/register`);
     await page.waitForLoadState('networkidle');
 
-    const login = page.locator('a[href="/login"]').last();
+    // Scoped to <main>: the mobile bottom nav also links to /login but is
+    // hidden on desktop viewports.
+    const login = page.locator('main a[href="/login"]').last();
     await expect(login).toBeVisible();
     await expect(login).toHaveAttribute('href', '/login');
 
     await login.click();
     await page.waitForURL('**/login');
-    await expect(page.getByRole('heading', { name: 'Login', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
   });
 
   // The original bug report came from Android Chrome over the LAN/Tailscale
@@ -69,7 +71,7 @@ test.describe('auth navigation links', () => {
 
       await page.locator('a[href="/register"]').last().tap();
       await page.waitForURL('**/register');
-      await expect(page.getByRole('heading', { name: 'Create an account' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Create your account' })).toBeVisible();
     } finally {
       await context.close();
     }
@@ -88,7 +90,7 @@ test.describe('login error handling', () => {
     await page.waitForURL('**/account');
 
     // Log out, then try a wrong password.
-    await page.click('button:has-text("Logout")');
+    await page.getByRole('button', { name: 'Sign out' }).click();
     await page.goto(`${BASE}/login`);
     await page.fill('input#email', email);
     await page.fill('input#password', 'definitely-wrong-password');
@@ -113,7 +115,7 @@ test.describe('login error handling', () => {
 });
 
 test.describe('logout as HTML form action', () => {
-  test('header logout redirects home and clears the session', async ({ page }) => {
+  test('account-menu sign out redirects home and clears the session', async ({ page }) => {
     const email = randomEmail();
     await page.goto(`${BASE}/register`);
     await page.fill('input#email', email);
@@ -122,10 +124,12 @@ test.describe('logout as HTML form action', () => {
     await page.click('button[type="submit"]');
     await page.waitForURL('**/account');
 
-    // The header Logout is a native form POST to /api/auth/logout. It must
-    // land the user on a real page (not a JSON document at the API path).
-    // /login is the correct landing: the home page requires authentication.
-    await page.click('header form[action="/api/auth/logout"] button[type="submit"]');
+    // The account-menu Sign out is a native form POST to /api/auth/logout.
+    // It must land the user on a real page (not a JSON document at the API
+    // path). /login is the correct landing: the home page requires
+    // authentication.
+    await page.getByRole('button', { name: 'Account menu' }).click();
+    await page.getByRole('menuitem', { name: 'Sign out' }).click();
     await page.waitForURL('**/login');
     await expect(page).toHaveURL(/\/login$/);
 

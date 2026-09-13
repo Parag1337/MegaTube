@@ -578,6 +578,96 @@ test('no password login and no destructive MEGA operations during sync', async (
   }
 });
 
+// ---------------------------------------------------------------------------
+// P1.4 sync performance: correctness of the batched paths
+// ---------------------------------------------------------------------------
+
+test('P1.4: bulk same-creator import creates one creator and assigns every video', async () => {
+  const u = await makeUser('p14creator');
+  const acc = await link(u.id, 'p14creator@example.com');
+  // 10 videos from one creator + 2 from another: the per-job creator cache
+  // must resolve 2 creators total, not 12 lookups-gone-writes.
+  scene.nodes = [
+    ...Array.from({ length: 10 }, (_, i) => videoNode(`p14a${i}`, { name: `P14 Star - Clip ${i}.mp4` })),
+    ...Array.from({ length: 2 }, (_, i) => videoNode(`p14b${i}`, { name: `P14 Guest - Cameo ${i}.mp4` })),
+  ];
+  const result = await syncMegaAccount(acc.id, makeFakeMega().deps);
+  assert.ok(result);
+  assert.equal(result.added, 12);
+
+  const creators = await prisma.creator.findMany({ where: { userId: u.id }, orderBy: { name: 'asc' } });
+  assert.equal(creators.length, 2, 'exactly two creators resolved');
+  const rows = await rowsOf(acc.id);
+  assert.equal(rows.length, 12);
+  assert.ok(rows.every((r) => r.creatorAssignment === 'auto'), 'all filename-derived');
+  assert.ok(rows.every((r) => r.creatorId !== null));
+  const starId = creators.find((c) => c.name === 'P14 Star')!.id;
+  const guestId = creators.find((c) => c.name === 'P14 Guest')!.id;
+  assert.equal(rows.filter((r) => r.creatorId === starId).length, 10);
+  assert.equal(rows.filter((r) => r.creatorId === guestId).length, 2);
+});
+
+test('P1.4: duplicate titles across nodes get unique slugs, all rows created', async () => {
+  const u = await makeUser('p14slug');
+  const acc = await link(u.id, 'p14slug@example.com');
+  scene.nodes = [videoNode('d1', { name: 'Same Title.mp4' }), videoNode('d2', { name: 'Same Title.mp4' }), videoNode('d3', { name: 'Same Title.mp4' })];
+  const result = await syncMegaAccount(acc.id, makeFakeMega().deps);
+  assert.ok(result);
+  assert.equal(result.added, 3);
+  const rows = await rowsOf(acc.id);
+  const slugs = rows.map((r) => r.slug);
+  assert.equal(new Set(slugs).size, 3, 'slugs unique across same-title nodes');
+});
+
+test('P1.4: attribute-bearing sync completes and resync is fully unchanged', async () => {
+  const u = await makeUser('p14attr');
+  const acc = await link(u.id, 'p14attr@example.com');
+  // Default videoNode carries fa (thumb + media entries) + fileKey, so the
+  // bounded-concurrency attribute phase actually runs (against the fake
+  // boundary, which answers ufa with null -> best-effort skip).
+  scene.nodes = Array.from({ length: 8 }, (_, i) => videoNode(`p14n${i}`));
+  const first = await syncMegaAccount(acc.id, makeFakeMega().deps);
+  assert.ok(first);
+  assert.equal(first.added, 8);
+  assert.equal(await videoCount(acc.id), 8);
+
+  const second = await syncMegaAccount(acc.id, makeFakeMega().deps);
+  assert.ok(second);
+  assert.equal(second.added, 0);
+  assert.equal(second.updated, 0, 'phase-2 follow-up writes must not dirty reconciliation state');
+  assert.equal(second.removed, 0);
+  assert.equal(second.unchanged, 8);
+});
+
+// BUG-003 regression: slug allocation must remain globally safe even though
+// the snapshot is scoped to the current user's videos. A cross-user title
+// collision must still produce a unique slug.
+test('BUG-003: scoped slug snapshot still produces globally unique slugs', async () => {
+  const uA = await makeUser('bug003-a');
+  const uB = await makeUser('bug003-b');
+  const accA = await link(uA.id, 'a@example.com');
+  const accB = await link(uB.id, 'b@example.com');
+
+  // Pre-seed user A's library with a video titled "Shared Title".
+  scene.nodes = [videoNode('preexisting', { name: 'Shared Title.mp4' })];
+  await syncMegaAccount(accA.id, makeFakeMega().deps);
+
+  // Now sync user B with the same title. The snapshot scoped to B's videos
+  // does not include A's "Shared Title" slug, but the global UNIQUE
+  // constraint still forces B's row to a distinct slug.
+  scene.nodes = [videoNode('bnode1', { name: 'Shared Title.mp4' })];
+  const resultB = await syncMegaAccount(accB.id, makeFakeMega().deps);
+  assert.ok(resultB);
+  assert.equal(resultB.added, 1);
+
+  const bRows = await rowsOf(accB.id);
+  assert.equal(bRows.length, 1);
+  assert.notEqual(bRows[0].slug, 'shared-title', 'cross-user collision must not reuse the same slug');
+
+  const aRows = await rowsOf(accA.id);
+  assert.equal(aRows[0].slug, 'shared-title', 'first user keeps the base slug');
+});
+
 // Thumbnails must never fail a sync: when the MEGA thumbnail/media attribute
 // fetch throws, the video row is still created (playable, key stored) with a
 // null thumbnail, and the sync reports success.

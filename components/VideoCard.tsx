@@ -20,6 +20,11 @@ interface VideoCardProps {
   creator: { slug: string; name: string } | null;
   /** Owned private video - enables the Change Creator menu option. */
   isPrivate?: boolean;
+  /**
+   * Home-feed source tag (recent/history/related/random/variety). Rendered
+   * as a data attribute for tests/diagnostics only - never displayed.
+   */
+  feedSource?: string;
   priority?: boolean;
 }
 
@@ -35,6 +40,7 @@ export function VideoCard({
   duration,
   creator,
   isPrivate = false,
+  feedSource,
   priority = false,
 }: VideoCardProps) {
   const [preview, setPreview] = useState<PreviewState>('idle');
@@ -160,6 +166,7 @@ export function VideoCard({
       }}
       aria-label={displayTitle}
       data-previewable={previewSrc ? undefined : 'false'}
+      {...(feedSource ? { 'data-feed-source': feedSource } : {})}
     >
       <VideoCardMenu videoId={id} creator={creator} isPrivate={isPrivate} />
       <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-surface">

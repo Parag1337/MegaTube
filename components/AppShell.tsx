@@ -17,7 +17,6 @@ import {
   AccountIcon,
   BookmarkIcon,
   CloseIcon,
-  CreatorsIcon,
   ExploreIcon,
   HistoryIcon,
   HomeIcon,
@@ -27,7 +26,6 @@ import {
   SearchIcon,
   SettingsIcon,
   ShuffleIcon,
-  SparklesIcon,
 } from '@/components/icons';
 
 const COLLAPSE_KEY = 'megatube.sidebarCollapsed';
@@ -112,14 +110,7 @@ const NAV_ITEMS: NavItem[] = [
     href: '/library',
     label: 'Library',
     icon: LibraryIcon,
-    active: (p, search) => (!!p?.startsWith('/library') || !!p?.startsWith('/video/')) && !search.includes('view=new'),
-    authed: true,
-  },
-  {
-    href: '/library?view=new',
-    label: 'New Videos',
-    icon: SparklesIcon,
-    active: (p, search) => !!p?.startsWith('/library') && search.includes('view=new'),
+    active: (p) => !!p?.startsWith('/library') || !!p?.startsWith('/video/'),
     authed: true,
   },
   {
@@ -130,24 +121,11 @@ const NAV_ITEMS: NavItem[] = [
     authed: true,
   },
   {
-    href: '/account/saved',
-    label: 'Saved Videos',
-    icon: BookmarkIcon,
-    active: (p) => !!p?.startsWith('/account/saved'),
-    authed: true,
-  },
-  {
     href: '/account/history',
     label: 'History',
     icon: HistoryIcon,
     active: (p) => !!p?.startsWith('/account/history'),
     authed: true,
-  },
-  {
-    href: '/creators',
-    label: 'Creators',
-    icon: CreatorsIcon,
-    active: (p) => !!p?.startsWith('/creators') || !!p?.startsWith('/creator/'),
   },
 ];
 
@@ -342,10 +320,15 @@ function ShellInner({ children }: { children: React.ReactNode }) {
                     href: '/account',
                     label: 'Account',
                     icon: AccountIcon,
-                    active: (p) => !!p?.startsWith('/account'),
+                    // History has its own main-nav entry - don't double-highlight.
+                    active: (p) => p === '/account' || !!p?.startsWith('/account/settings') || !!p?.startsWith('/account/saved'),
                   }}
                   collapsed={false}
-                  active={!!pathname?.startsWith('/account')}
+                  active={
+                    pathname === '/account' ||
+                    !!pathname?.startsWith('/account/settings') ||
+                    !!pathname?.startsWith('/account/saved')
+                  }
                 />
               </div>
             </div>
@@ -357,10 +340,14 @@ function ShellInner({ children }: { children: React.ReactNode }) {
                   href: '/account',
                   label: 'Account',
                   icon: AccountIcon,
-                  active: (p) => !!p?.startsWith('/account'),
+                  active: (p) => p === '/account' || !!p?.startsWith('/account/settings') || !!p?.startsWith('/account/saved'),
                 }}
                 collapsed
-                active={!!pathname?.startsWith('/account')}
+                active={
+                  pathname === '/account' ||
+                  !!pathname?.startsWith('/account/settings') ||
+                  !!pathname?.startsWith('/account/saved')
+                }
               />
             </nav>
           )}
@@ -384,7 +371,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
         aria-label="Primary"
         className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur md:hidden"
       >
-        <div className="grid grid-cols-5">
+        <div className="grid grid-cols-6">
           <MobileTab
             href="/"
             label="Home"
@@ -398,27 +385,29 @@ function ShellInner({ children }: { children: React.ReactNode }) {
             active={search.includes('q=%23random') || search.includes('q=%2523random')}
           />
           <MobileTab
-            href="/search"
-            label="Search"
-            icon={SearchIcon}
-            active={
-              !!pathname?.startsWith('/search') &&
-              !search.includes('q=%23random') &&
-              !search.includes('q=%2523random')
-            }
+            href="/library"
+            label="Library"
+            icon={LibraryIcon}
+            active={!!pathname?.startsWith('/library') || !!pathname?.startsWith('/video/')}
           />
           <MobileTab
-            href="/creators"
-            label="Creators"
-            icon={CreatorsIcon}
-            active={!!pathname?.startsWith('/creators') || !!pathname?.startsWith('/creator/')}
+            href="/watchlist"
+            label="Watchlist"
+            icon={BookmarkIcon}
+            active={!!pathname?.startsWith('/watchlist')}
+          />
+          <MobileTab
+            href="/account/history"
+            label="History"
+            icon={HistoryIcon}
+            active={!!pathname?.startsWith('/account/history')}
           />
           {user || loading ? (
             <MobileTab
               href="/account"
               label="Account"
               icon={AccountIcon}
-              active={!!pathname?.startsWith('/account')}
+              active={pathname === '/account' || !!pathname?.startsWith('/account/settings')}
             />
           ) : (
             <MobileTab href="/login" label="Sign in" icon={ExploreIcon} active={false} />
@@ -448,8 +437,8 @@ function MobileSearchToggle() {
         )}
       </button>
       {open && (
-        <div className="absolute inset-x-0 top-14 border-b border-border bg-background px-3 py-2 md:hidden">
-          <SearchBar autoFocus onSubmitted={() => setOpen(false)} />
+        <div className="fixed inset-x-0 top-14 border-b border-border bg-background px-3 py-2 md:hidden">
+          <SearchBar id="mobile-search" autoFocus onSubmitted={() => setOpen(false)} />
         </div>
       )}
     </>

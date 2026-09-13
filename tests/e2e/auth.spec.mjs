@@ -93,15 +93,16 @@ test.describe('login and session', () => {
     await expect(page.locator(`text=${testEmail}`)).toBeVisible();
   });
 
-  test('header shows Account link and Logout button', async ({ page }) => {
+  test('sidebar shows Account link and account menu offers Sign out', async ({ page }) => {
     await page.goto(BASE);
     await page.waitForLoadState('networkidle');
-    await expect(page.getByRole('link', { name: 'Account', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Logout' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Account', exact: true }).first()).toBeVisible();
+    await page.getByRole('button', { name: 'Account menu' }).click();
+    await expect(page.getByRole('menuitem', { name: 'Sign out' })).toBeVisible();
   });
 
   test('logout clears session and redirects to home', async ({ page }) => {
-    await page.click('button:has-text("Logout")');
+    await page.getByRole('button', { name: 'Sign out' }).click();
     // The server-side logout redirects to /login, the public landing page
     // (the home page itself requires authentication and would bounce there).
     await page.waitForURL('**/login');
@@ -109,14 +110,14 @@ test.describe('login and session', () => {
   });
 
   test('protected route redirects to login when logged out', async ({ page }) => {
-    await page.click('button:has-text("Logout")');
+    await page.getByRole('button', { name: 'Sign out' }).click();
     await page.goto(`${BASE}/account`);
     await page.waitForURL(`${BASE}/login`);
     expect(page.url()).toContain('/login');
   });
 
   test('login restores session', async ({ page }) => {
-    await page.click('button:has-text("Logout")');
+    await page.getByRole('button', { name: 'Sign out' }).click();
     await login(page, testEmail, testPassword);
     await page.waitForURL(`${BASE}/account`);
     expect(page.url()).toContain('/account');
@@ -127,6 +128,6 @@ test.describe('login and session', () => {
     await page.goto(`${BASE}/account/settings`);
     await page.waitForURL(`${BASE}/account/settings`);
     expect(page.url()).toContain('/account/settings');
-    await expect(page.getByRole('heading', { name: 'Account Settings', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
   });
 });

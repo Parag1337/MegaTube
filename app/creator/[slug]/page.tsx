@@ -3,6 +3,8 @@ import { getCurrentUser } from '@/lib/auth';
 import { listVideosByCreator } from '@/lib/videos';
 import { VideoGrid } from '@/components/VideoGrid';
 import { Pagination } from '@/components/Pagination';
+import { Avatar, Button, EmptyState } from '@/components/ui';
+import { AccountIcon, FilmIcon } from '@/components/icons';
 import CreatorActions from './CreatorActions';
 
 export const metadata = { title: 'Creator' };
@@ -18,9 +20,18 @@ export default async function CreatorPage({ params, searchParams }: CreatorPageP
   const user = await getCurrentUser();
   if (!user) {
     return (
-      <div className="px-4 py-6 sm:px-6">
-        <div className="mx-auto max-w-[1800px]">
-          <p className="text-muted">Please log in to view this creator.</p>
+      <div className="px-4 py-6 md:px-6">
+        <div className="mx-auto max-w-[2000px]">
+          <EmptyState
+            icon={<AccountIcon className="h-7 w-7" />}
+            title="Sign in to view this creator"
+            body="Creator pages are part of your private library."
+            action={
+              <Button href="/login" variant="primary">
+                Sign in
+              </Button>
+            }
+          />
         </div>
       </div>
     );
@@ -33,41 +44,41 @@ export default async function CreatorPage({ params, searchParams }: CreatorPageP
   if (!creator) notFound();
 
   return (
-    <div className="px-4 py-6 sm:px-6">
-      <div className="mx-auto max-w-[1800px]">
+    <div className="px-4 py-6 md:px-6">
+      <div className="mx-auto max-w-[2000px]">
         <div className="mb-6 flex items-start justify-between gap-4">
-          <div className="flex items-center gap-4">
-            {creator.avatar ? (
-              <img
-                src={`/api/creators/${creator.id}/photo`}
-                alt=""
-                className="h-16 w-16 rounded-full object-cover"
-              />
-            ) : (
-              <span className="flex h-16 w-16 items-center justify-center rounded-full bg-accent/20 text-2xl font-bold text-accent">
-                {creator.name.charAt(0).toUpperCase()}
-              </span>
-            )}
-            <div>
-              <h1 className="text-xl font-semibold sm:text-2xl">{creator.name}</h1>
-              <p className="text-sm text-muted">
+          <div className="flex min-w-0 items-center gap-4">
+            <Avatar
+              name={creator.name}
+              photoUrl={creator.avatar ? `/api/creators/${creator.id}/photo` : null}
+              size="xl"
+            />
+            <div className="min-w-0">
+              <h1 className="truncate text-xl font-bold tracking-tight sm:text-2xl">{creator.name}</h1>
+              <p className="mt-0.5 text-[13px] text-muted">
                 {result.total} video{result.total === 1 ? '' : 's'}
               </p>
               {creator.description && (
-                <p className="mt-2 text-sm text-muted-light">{creator.description}</p>
+                <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted">{creator.description}</p>
               )}
             </div>
           </div>
-          <CreatorActions creatorId={creator.id} creatorName={creator.name} />
+          <div className="shrink-0">
+            <CreatorActions creatorId={creator.id} creatorName={creator.name} />
+          </div>
         </div>
 
         {result.items.length > 0 ? (
           <>
-            <VideoGrid videos={result.items} />
+            <VideoGrid videos={result.items} priorityStart={4} />
             <Pagination page={result.page} totalPages={result.totalPages} basePath={`/creator/${creator.slug}`} />
           </>
         ) : (
-          <p className="py-16 text-center text-muted">No videos by this creator yet.</p>
+          <EmptyState
+            icon={<FilmIcon className="h-7 w-7" />}
+            title={`No videos by ${creator.name} yet`}
+            body="Videos assigned to this creator — by filename or by hand — will appear here."
+          />
         )}
       </div>
     </div>

@@ -10,6 +10,8 @@ export interface GridVideo {
   duration?: number | null;
   creator: { slug: string; name: string } | null;
   isPrivate?: boolean;
+  /** Home-feed source tag; passed through to the card, never displayed. */
+  feedSource?: string;
 }
 
 /**

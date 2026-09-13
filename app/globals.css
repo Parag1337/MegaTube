@@ -1,19 +1,35 @@
 @import "tailwindcss";
 
+/*
+ * MegaTube design tokens (Tailwind v4 CSS-first theme).
+ *
+ * A layered near-black "screening room": one true black-ink base, two
+ * raised surfaces, hairline borders, quiet zinc text, and a single red
+ * brand accent used sparingly (logo mark, active states, primary actions,
+ * player progress). Nothing else competes for attention.
+ */
 :root {
   --background: #0f0f0f;
   --foreground: #f1f1f1;
   --muted: #aaaaaa;
-  --muted-light: #606060;
-  --card: #1e1e1e;
-  --card-hover: #2a2a2a;
-  --border: #303030;
-  --border-light: #404040;
-  --accent: #ff0000;
-  --accent-hover: #cc0000;
-  --destructive: #ef4444;
-  --surface: #272727;
-  --surface-hover: #3d3d3d;
+  --muted-light: #717171;
+  --card: #161616;
+  --card-hover: #1f1f1f;
+  --border: #262626;
+  --border-light: #3a3a3a;
+  --accent: #ff0033;
+  --accent-hover: #d6002b;
+  --accent-soft: rgba(255, 0, 51, 0.12);
+  --destructive: #f87171;
+  --surface: #171717;
+  --surface-hover: #232323;
+  --surface-raised: #1e1e1e;
+  --surface-overlay: #2a2a2a;
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --ring: #ff0033;
+  --skeleton: #1e1e1e;
+  --skeleton-shine: #2b2b2b;
 }
 
 @theme inline {
@@ -27,11 +43,21 @@
   --color-border-light: var(--border-light);
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
   --color-destructive: var(--destructive);
   --color-surface: var(--surface);
   --color-surface-hover: var(--surface-hover);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-overlay: var(--surface-overlay);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-ring: var(--ring);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+}
+
+html {
+  color-scheme: dark;
 }
 
 body {
@@ -40,50 +66,109 @@ body {
   font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
-/* Custom scrollbar */
+/* Thin, quiet scrollbars that match the surfaces. */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
-
 ::-webkit-scrollbar-track {
-  background: var(--background);
+  background: transparent;
 }
-
 ::-webkit-scrollbar-thumb {
   background: var(--border-light);
+  border-radius: 8px;
+  border: 2px solid var(--background);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-light);
+}
+
+/* Visible keyboard focus everywhere (never removed, only designed). */
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
   border-radius: 4px;
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: var(--muted);
+/* Skeleton shimmer for layout-approximating loading states. */
+@keyframes mt-skeleton-shine {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+.mt-skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--skeleton);
+}
+.mt-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, var(--skeleton-shine), transparent);
+  animation: mt-skeleton-shine 1.4s ease-in-out infinite;
 }
 
-/* Keep 16:9 framing for thumbnails and players. */
-.aspect-video {
-  aspect-ratio: 16 / 9;
+/* One-line and two-line clamps for card titles. */
+.mt-clamp-1,
+.mt-clamp-2 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.mt-clamp-1 {
+  -webkit-line-clamp: 1;
+}
+.mt-clamp-2 {
+  -webkit-line-clamp: 2;
 }
 
-/* MEGA embed iframe should fill its container without borders. */
-.mega-player iframe {
-  display: block;
-  width: 100%;
-  height: 100%;
-  border: 0;
+/*
+ * Vidstack player theming (presentation only - the playback pipeline and
+ * component wiring are untouched). Brand-red progress + buffer, Geist type,
+ * compact touch-friendly control sizing, and a true-black fullscreen stage
+ * so letterboxed video never shows a grey frame.
+ */
+.mt-player {
+  --media-brand: var(--accent);
+  --media-font-family: var(--font-geist-sans), system-ui, sans-serif;
+  --media-controls-color: #f5f5f5;
+  --media-button-size: 40px;
+  --media-button-icon-size: 22px;
+  --media-slider-track-height: 4px;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+.mt-player:fullscreen {
   background: #000;
 }
-
-/* Focus states for accessibility */
-*:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.mt-player media-provider,
+.mt-player video {
+  background: #000;
+}
+@media (pointer: coarse) {
+  .mt-player {
+    --media-button-size: 48px;
+    --media-button-icon-size: 26px;
+    --media-slider-track-height: 6px;
+  }
 }
 
-/* Smooth transitions */
-* {
-  transition-property: color, background-color, border-color;
-  transition-duration: 150ms;
-  transition-timing-function: ease-in-out;
+/* Respect users who asked for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  .mt-skeleton::after {
+    animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }

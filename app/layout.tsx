@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
-import { Header } from '@/components/Header';
+import { AppShell } from '@/components/AppShell';
 import { SITE_NAME } from '@/lib/config';
 import './globals.css';
 
@@ -9,10 +9,10 @@ const geistMono = Geist_Mono({ variable: '--font-geist-mono', subsets: ['latin']
 
 export const metadata: Metadata = {
   title: {
-    default: `${SITE_NAME} - Video Discovery`,
+    default: `${SITE_NAME} - Your private video library`,
     template: `%s | ${SITE_NAME}`,
   },
-  description: 'Discover videos from MEGA public links.',
+  description: 'Browse, search, and watch your private MEGA video library.',
 };
 
 export default function RootLayout({ children }: LayoutProps<'/'>) {
@@ -21,14 +21,8 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-background">
-        <Header />
-        <main className="flex-1">
-          {children}
-        </main>
-        <footer className="border-t border-border bg-surface px-4 py-6 text-center text-sm text-muted">
-          {SITE_NAME} — a video discovery catalog powered by MEGA public links.
-        </footer>
+      <body className="min-h-full bg-background text-foreground">
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );
