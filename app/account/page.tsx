@@ -6,7 +6,7 @@ import { LogoutButton } from './logout-button';
 import { RepairThumbsButton } from './RepairThumbsButton';
 import { MegaAccountsPanel } from '@/components/MegaAccountsPanel';
 import { Avatar } from '@/components/ui';
-import { BookmarkIcon, ChevronRightIcon, HistoryIcon } from '@/components/icons';
+import { BookmarkIcon, ChevronRightIcon } from '@/components/icons';
 
 export const metadata: Metadata = { title: 'Account' };
 
@@ -48,22 +48,10 @@ export default async function AccountPage() {
           </h2>
           <nav aria-label="Personal library">
             <LibraryRow
-              href="/watchlist"
-              icon={<BookmarkIcon className="h-[20px] w-[20px]" />}
-              title="Watchlist"
-              body="Videos parked to watch later"
-            />
-            <LibraryRow
               href="/account/saved"
               icon={<BookmarkIcon className="h-[20px] w-[20px]" />}
               title="Saved Videos"
-              body="Your bookmarks"
-            />
-            <LibraryRow
-              href="/account/history"
-              icon={<HistoryIcon className="h-[20px] w-[20px]" />}
-              title="History"
-              body="Videos you watched, newest first"
+              body="Your bookmarks, organized in folders"
             />
           </nav>
         </section>

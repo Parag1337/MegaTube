@@ -12,6 +12,7 @@
 import { prisma } from './db';
 import { videosPerPage } from './config';
 import { MEGA_ACCOUNT_STATUSES } from './megaAccounts';
+import { Prisma } from '../generated/client';
 
 export type VideoWithCreator = {
   id: number;
@@ -48,6 +49,160 @@ const videoSelect = {
 
 /** Public-scope predicate: only the shared catalog, never private videos. */
 const PUBLIC_SCOPE = { megaAccountId: null } as const;
+
+/**
+ * Visibility scope shared by search and the #random command: every video
+ * linked through the given user's own MEGA accounts (not disconnected
+ * ones) plus the public catalog. Never another user's videos.
+ */
+function libraryScope(userId?: string) {
+  return userId
+    ? {
+        OR: [
+          { megaAccount: { userId, status: { not: MEGA_ACCOUNT_STATUSES.DISCONNECTED } } },
+          PUBLIC_SCOPE,
+        ],
+      }
+    : PUBLIC_SCOPE;
+}
+
+/** Exact secret command that switches the search page into random mode. */
+export const RANDOM_SEARCH_COMMAND = '#random';
+
+/** True only for the exact command (after trimming) - never substrings. */
+export function isRandomSearchCommand(query: string): boolean {
+  return query.trim() === RANDOM_SEARCH_COMMAND;
+}
+
+/** FNV-1a 32-bit hash for seeding the shuffle. */
+function hashSeed(seed: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/** Deterministic PRNG (mulberry32) so one seed always yields one ordering. */
+function seededRandom(seed: string): () => number {
+  let a = hashSeed(seed);
+  return () => {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Deterministic Fisher-Yates shuffle: the same seed always produces the
+ * same permutation (stable pagination), a new seed a fresh ordering. The
+ * database ordering is never touched.
+ */
+export function shuffleWithSeed<T>(items: readonly T[], seed: string): T[] {
+  const arr = [...items];
+  const rand = seededRandom(seed);
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+/**
+ * The #random command: all videos visible to the user, shuffled by `seed`.
+ *
+ * Pagination is applied AFTER shuffling, so page 1..N partition one stable
+ * random ordering (no duplicates, no gaps) for a given seed.
+ *
+ * Scalability (P1.2): only the eligible video IDs (integers) are read and
+ * shuffled - never the full rows. The page's rows are then fetched by
+ * primary key and restored to shuffled order. Shuffling the complete ID set
+ * with Fisher-Yates keeps the ordering uniform (unbiased) and stable per
+ * seed, which a per-page `ORDER BY RANDOM()` could not provide (it would
+ * reshuffle every page and return duplicates/gaps).
+ */
+export async function listRandomVideos(
+  userId?: string,
+  page = 1,
+  seed = '',
+): Promise<PageResult<ReturnType<typeof serializeVideo>>> {
+  const perPage = videosPerPage();
+  const safePage = Math.max(1, page);
+
+  const idRows = await prisma.video.findMany({
+    where: libraryScope(userId),
+    select: { id: true },
+    orderBy: { id: 'asc' },
+  });
+
+  const shuffledIds = shuffleWithSeed(
+    idRows.map((r) => r.id),
+    seed,
+  );
+  const total = shuffledIds.length;
+  const pageIds = shuffledIds.slice((safePage - 1) * perPage, safePage * perPage);
+
+  if (pageIds.length === 0) {
+    return {
+      items: [],
+      total,
+      page: safePage,
+      perPage,
+      totalPages: Math.max(1, Math.ceil(total / perPage)),
+    };
+  }
+
+  const rows = await prisma.video.findMany({
+    where: { id: { in: pageIds } },
+    select: videoSelect,
+  });
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const items: NonNullable<ReturnType<typeof serializeVideo>>[] = [];
+  const missingIds: number[] = [];
+
+  for (const id of pageIds) {
+    const row = byId.get(id);
+    if (row) {
+      items.push(serializeVideo(row));
+    } else {
+      missingIds.push(id);
+    }
+  }
+
+  if (missingIds.length > 0) {
+    const used = new Set(pageIds);
+    const refillIds: number[] = [];
+    for (const id of shuffledIds) {
+      if (refillIds.length >= missingIds.length) break;
+      if (!used.has(id)) {
+        used.add(id);
+        refillIds.push(id);
+      }
+    }
+    if (refillIds.length > 0) {
+      const refillRows = await prisma.video.findMany({
+        where: { id: { in: refillIds } },
+        select: videoSelect,
+      });
+      const refillById = new Map(refillRows.map((r) => [r.id, r]));
+      for (const id of refillIds) {
+        const row = refillById.get(id);
+        if (row) items.push(serializeVideo(row));
+      }
+    }
+  }
+
+  return {
+    items,
+    total,
+    page: safePage,
+    perPage,
+    totalPages: Math.max(1, Math.ceil(total / perPage)),
+  };
+}
 
 export interface PageResult<T> {
   items: T[];
@@ -133,6 +288,97 @@ export async function getVideoBySlug(slug: string) {
 }
 
 /**
+ * Build an FTS5 MATCH expression for a user query, or null when the query
+ * cannot use the trigram index and must take the LIKE path.
+ *
+ * The expression is ONE double-quoted phrase of the raw whitespace-separated
+ * tokens (embedded quotes escaped by doubling). A phrase preserves the
+ * current contiguous-substring semantics ("my video" matches titles
+ * containing exactly that run, like LIKE '%my video%'), while the trigram
+ * index makes it a Seek instead of a full-table SCAN. Matching stays
+ * case-insensitive (ASCII, like LIKE) with diacritic folding as a bonus.
+ *
+ * FTS5 trigrams cannot index tokens shorter than 3 characters, so any query
+ * containing one falls back to LIKE - semantics are then exactly today's.
+ */
+export function buildSearchMatchExpression(query: string): string | null {
+  const tokens = query.trim().split(/\s+/).filter((t) => t.length > 0);
+  if (tokens.length === 0) return null;
+  if (tokens.some((t) => t.length < 3)) return null;
+  const phrase = tokens.map((t) => t.replace(/"/g, '""')).join(' ');
+  return `"${phrase}"`;
+}
+
+/**
+ * FTS5-backed search over the VideoSearch trigram index.
+ *
+ * Ownership uses the exact same rule as the LIKE path (own non-disconnected
+ * accounts plus the public catalog); the user id never enters the MATCH
+ * expression itself. Returns null when the query is ineligible for FTS or
+ * the index is unavailable, so the caller can use the LIKE fallback.
+ */
+async function searchVideosFts(
+  query: string,
+  page: number,
+  userId?: string,
+): Promise<PageResult<ReturnType<typeof serializeVideo>> | null> {
+  const match = buildSearchMatchExpression(query);
+  if (!match) return null;
+
+  const perPage = videosPerPage();
+  const safePage = Math.max(1, page);
+  const take = perPage;
+  const skip = (safePage - 1) * perPage;
+
+  const scope =
+    userId === undefined
+      ? Prisma.sql`v."megaAccountId" IS NULL`
+      : Prisma.sql`(v."megaAccountId" IS NULL OR v."megaAccountId" IN (SELECT "id" FROM "MegaAccount" WHERE "userId" = ${userId} AND "status" <> ${MEGA_ACCOUNT_STATUSES.DISCONNECTED}))`;
+
+  try {
+    const [idRows, countRows] = await Promise.all([
+      prisma.$queryRaw<Array<{ id: number }>>`
+        SELECT v."id" AS id FROM "VideoSearch" AS s
+        JOIN "Video" AS v ON v."id" = s."rowid"
+        WHERE s."VideoSearch" MATCH ${match} AND ${scope}
+        ORDER BY v."createdAt" DESC, v."id" DESC
+        LIMIT ${take} OFFSET ${skip}`,
+      prisma.$queryRaw<Array<{ total: bigint }>>`
+        SELECT COUNT(*) AS total FROM "VideoSearch" AS s
+        JOIN "Video" AS v ON v."id" = s."rowid"
+        WHERE s."VideoSearch" MATCH ${match} AND ${scope}`,
+    ]);
+
+    const total = Number(countRows[0]?.total ?? 0);
+    if (idRows.length === 0) {
+      return { items: [], total, page: safePage, perPage, totalPages: Math.max(1, Math.ceil(total / perPage)) };
+    }
+
+    const rows = await prisma.video.findMany({
+      where: { id: { in: idRows.map((r) => r.id) } },
+      select: videoSelect,
+    });
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const items = idRows
+      .map((r) => byId.get(r.id))
+      .filter((r): r is NonNullable<typeof r> => r !== undefined)
+      .map(serializeVideo);
+
+    return {
+      items,
+      total,
+      page: safePage,
+      perPage,
+      totalPages: Math.max(1, Math.ceil(total / perPage)),
+    };
+  } catch {
+    // FTS table missing (pre-migration database) or malformed MATCH:
+    // caller falls back to LIKE rather than failing the search.
+    return null;
+  }
+}
+
+/**
  * Search the catalog visible to ONE website user.
  *
  * Scope: every video linked through the user's own MEGA accounts (all linked
@@ -143,8 +389,9 @@ export async function getVideoBySlug(slug: string) {
  * Matches against: video title, creator name, and the real MEGA filename
  * (which is the "Creator - Title" source of truth from Phase 4).
  *
- * Case-insensitivity: SQLite's LIKE-based `contains` is case-insensitive
- * for ASCII, which covers the catalog.
+ * Fast path: native SQLite FTS5 trigram index (substring + case-insensitive,
+ * contiguous-phrase semantics). Short-token queries use the LIKE fallback
+ * with identical behavior to before.
  */
 export async function searchVideos(
   query: string,
@@ -159,14 +406,11 @@ export async function searchVideos(
     return { items: [], total: 0, page: 1, perPage, totalPages: 1 };
   }
 
-  const scope = userId
-    ? {
-        OR: [
-          { megaAccount: { userId, status: { not: MEGA_ACCOUNT_STATUSES.DISCONNECTED } } },
-          PUBLIC_SCOPE,
-        ],
-      }
-    : PUBLIC_SCOPE;
+  // Native-index fast path; LIKE fallback when ineligible/unavailable.
+  const fast = await searchVideosFts(q, safePage, userId);
+  if (fast) return fast;
+
+  const scope = libraryScope(userId);
 
   // AND of [visibility scope, text match]. Deliberately composed via AND so
   // the scope's own OR cannot be clobbered by the match OR (a flat spread
@@ -213,12 +457,16 @@ export async function listVideosByCreator(
   const perPage = videosPerPage();
   const safePage = Math.max(1, page);
 
-  const creator = await prisma.creator.findFirst({
-    where: { slug: creatorSlug },
-    select: { id: true, slug: true, name: true, avatar: true, description: true, userId: true },
+  // P1.6: seek the (userId, slug) composite unique index directly instead
+  // of scanning by slug alone and checking ownership in application code.
+  // Ownership is now enforced inside the query; the not-found shape is
+  // unchanged (creator:null + empty page, never another user's creator).
+  const creator = await prisma.creator.findUnique({
+    where: { userId_slug: { userId, slug: creatorSlug } },
+    select: { id: true, slug: true, name: true, avatar: true, description: true },
   });
 
-  if (!creator || creator.userId !== userId) {
+  if (!creator) {
     return {
       creator: null,
       result: { items: [], total: 0, page: 1, perPage, totalPages: 1 },

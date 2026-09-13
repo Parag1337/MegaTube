@@ -20,19 +20,34 @@ import { encrypt } from 'megajs';
 import {
   PCR_ALIGN,
   REMUXED_MIME_TYPE,
+  SPOOL_WAIT_TIMEOUT_MS,
   canServeSeekFromSpool,
+  cancelLiveRemuxJob,
+  checkMediaTempBudget,
   cleanupOrphanedTempFiles,
   createCachedFileResponse,
   createLiveResponse,
   decryptPrefixToBuffer,
   findFragmentedMp4InitEnd,
+  getOrCreateLiveRemuxJob,
+  getRemuxSlotStats,
+  hasLiveRemuxJob,
+  joinLiveRemuxJob,
   mediaCacheDir,
+  MediaTempBudgetError,
+  mediaTempUsage,
   needsRemuxPlayback,
+  noteSubscriberAttached,
+  noteSubscriberDetached,
   patchFragmentedMp4Duration,
   pcrTailStart,
   readRemuxCache,
+  remuxCachePaths,
+  retainLiveRemuxJob,
   scanTsPcrDuration,
   waitForSpoolOffset,
+  wakeSpoolWaiters,
+  writeSidecarAtomic,
 } from '@/lib/media/remux';
 import type { LiveRemuxJob } from '@/lib/media/remux';
 
@@ -177,6 +192,13 @@ function fakeLiveJob(init: Buffer): LiveRemuxJob {
     initSegment: init,
     subscribers: new Set(),
     waiters: [],
+    spoolWaiters: [],
+    dying: false,
+    cancelling: false,
+    settled: false,
+    graceTimer: null,
+    abortController: new AbortController(),
+    xReadyReject: null,
     xJoinedCount: 0,
   };
 }
@@ -337,13 +359,16 @@ test('pcrTailStart: 752-aligned for every size (Bug 1 regression)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Bug 2 helpers: spool-offset waiting + cold-seek serving decision
+// P0-C: seek decisions use fMP4 (spool) coordinates, never source-TS size.
+// The spool holds the init segment at [0..initSpoolOffset), so init-region
+// offsets are serveable bytes like any other buffered prefix.
 // ---------------------------------------------------------------------------
-test('canServeSeekFromSpool: start 0 false, inside window true, beyond ended job false', () => {
+test('canServeSeekFromSpool: spool-space decisions (source size is irrelevant)', () => {
   const job = fakeLiveJob(Buffer.alloc(1200));
   job.initSpoolOffset = 1200;
   job.spoolBytes = 5_000_000;
   assert.equal(canServeSeekFromSpool(job, 0), false, 'start 0 is the normal live path');
+  assert.equal(canServeSeekFromSpool(job, 600), true, 'init-region bytes are in the spool and serveable');
   assert.equal(canServeSeekFromSpool(job, 1200), true, 'at init end, buffered');
   assert.equal(canServeSeekFromSpool(job, 4_999_999), true, 'inside buffered window');
   job.liveEnded = true;
@@ -351,7 +376,18 @@ test('canServeSeekFromSpool: start 0 false, inside window true, beyond ended job
   assert.equal(canServeSeekFromSpool(job, 4_000_000_000), false, 'way beyond, live ended');
   job.liveEnded = false;
   assert.equal(canServeSeekFromSpool(job, 9_000_000), true, 'beyond buffered but live running: bytes will arrive');
-  assert.equal(canServeSeekFromSpool(job, 600), false, 'inside the init segment: not a valid seek target');
+});
+
+test('P0-C: a source-valid offset beyond an ENDED spool is not serveable (no fake ranges)', async () => {
+  // Source TS size 8 000 000, but the finished fMP4 spool holds only 5 000
+  // bytes and the live has ended: offset 6 000 000 is "valid" against the
+  // source size yet names no fMP4 byte. It must not produce a live-spool
+  // 206 (the route falls through to the finished cache / honest 503).
+  const job = fakeLiveJob(Buffer.alloc(8));
+  job.spoolBytes = 5_000;
+  job.liveEnded = true;
+  assert.equal(canServeSeekFromSpool(job, 6_000_000), false);
+  assert.equal(await waitForSpoolOffset(job, 6_000_000), 5_000, 'settles with the real frontier');
 });
 
 test('waitForSpoolOffset: resolves immediately when buffered, on end, and on abort', async () => {
@@ -367,28 +403,57 @@ test('waitForSpoolOffset: resolves immediately when buffered, on end, and on abo
   const p = waitForSpoolOffset(job2, 5_000, ac.signal);
   setTimeout(() => ac.abort(), 20);
   assert.equal(await p, 100, 'abort resolves with the current frontier');
+  assert.equal(job2.spoolWaiters.length, 0, 'aborted waiter unregistered (no leak)');
   // Growth while waiting (frontier must be re-checked on notify).
   const job3 = fakeLiveJob(Buffer.alloc(8));
   job3.spoolBytes = 100;
   const p3 = waitForSpoolOffset(job3, 5_000);
   setTimeout(() => {
     job3.spoolBytes = 6_000;
-    for (const w of job3.waiters.splice(0)) w();
+    wakeSpoolWaiters(job3);
   }, 20);
-  assert.equal(await p3, 6_000, 'notify re-checks the frontier (no stale waiter)');
+  assert.equal(await p3, 6_000, 'growth wake re-checks the frontier (no stale waiter)');
 });
 
-test('waitForSpoolOffset: removed from job.waiters after settle (no leak)', async () => {
+test('P0-B: growth wakes a waiter promptly while the live is still running', async () => {
+  const job = fakeLiveJob(Buffer.alloc(8));
+  job.spoolBytes = 100;
+  job.liveEnded = false;
+  const t0 = Date.now();
+  const p = waitForSpoolOffset(job, 5_000, undefined, 10_000);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(job.spoolWaiters.length, 1, 'registered while pending');
+  // Spool grows (broadcast path) while the live keeps running.
+  job.spoolBytes = 6_000;
+  wakeSpoolWaiters(job);
+  assert.equal(await p, 6_000, 'resolves with the grown frontier');
+  assert.ok(Date.now() - t0 < 5_000, 'wakes promptly, long before any end/timeout');
+  assert.equal(job.liveEnded, false, 'live still running: resolution came from growth, not end');
+  assert.equal(job.spoolWaiters.length, 0, 'settled waiter unregistered');
+});
+
+test('P0-B: a stalled frontier settles via timeout instead of hanging forever', async () => {
+  assert.ok(SPOOL_WAIT_TIMEOUT_MS >= 1_000, 'production bound is sane');
+  const job = fakeLiveJob(Buffer.alloc(8));
+  job.spoolBytes = 100;
+  const t0 = Date.now();
+  // Broken frontier: nothing grows, live never ends, no abort.
+  assert.equal(await waitForSpoolOffset(job, 5_000, undefined, 40), 100, 'timeout settles with the current frontier');
+  assert.ok(Date.now() - t0 < 5_000, 'bounded, never hangs');
+  assert.equal(job.spoolWaiters.length, 0, 'timed-out waiter unregistered (no leak)');
+});
+
+test('waitForSpoolOffset: removed from job.spoolWaiters after settle (no leak)', async () => {
   const job = fakeLiveJob(Buffer.alloc(8));
   job.spoolBytes = 100;
   const ac = new AbortController();
   const p = waitForSpoolOffset(job, 5_000, ac.signal);
   await new Promise((r) => setTimeout(r, 10));
-  assert.equal(job.waiters.length, 1, 'registered while pending');
+  assert.equal(job.spoolWaiters.length, 1, 'registered while pending');
   ac.abort();
   await p;
   await new Promise((r) => setTimeout(r, 10));
-  assert.equal(job.waiters.length, 0, 'unregistered after settle');
+  assert.equal(job.spoolWaiters.length, 0, 'unregistered after settle');
 });
 
 test('createLiveResponse: start-offset viewer receives the exact spool slice (cold seek)', async () => {
@@ -420,6 +485,106 @@ test('createLiveResponse: resolved Content-Range uses the real total once the li
   assert.equal(res.headers.get('content-range'), 'bytes 1000-4999/5000', 'total clamped to the actual spool length');
   const body = Buffer.from(await res.arrayBuffer());
   assert.equal(body.length, 4000);
+});
+
+// ---------------------------------------------------------------------------
+// P0-A/C: live HTTP contract matrix — every status/header/body triple must
+// describe the fMP4 representation actually served, never the source.
+// ---------------------------------------------------------------------------
+test('live contract: 200 open live is non-seekable; 206 spool slices echo fMP4 offsets', async () => {
+  const spoolPath = path.join(tmpRoot, 'contract-spool.bin');
+  const payload = Buffer.concat([Buffer.from('INIT'), Buffer.alloc(9996, 0x61)]);
+  await fs.promises.writeFile(spoolPath, payload);
+  // Open-ended live stream: 200, explicitly non-seekable.
+  {
+    const job = fakeLiveJob(payload.subarray(0, 4));
+    job.spoolPath = spoolPath;
+    job.spoolBytes = payload.length;
+    const res = createLiveResponse(job, null, new AbortController().signal);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('accept-ranges'), 'none', 'open live must not invite Range seeks');
+    assert.equal(res.headers.get('content-range'), null, 'no range on a 200');
+    job.liveEnded = true;
+    for (const sub of job.subscribers) sub.notify();
+    await res.body!.cancel().catch(() => {});
+  }
+  // Bounded start-0 (probe): 206 with unknown total.
+  {
+    const job = fakeLiveJob(payload.subarray(0, 4));
+    job.spoolPath = spoolPath;
+    job.spoolBytes = payload.length;
+    const res = createLiveResponse(job, 1, new AbortController().signal);
+    assert.equal(res.status, 206);
+    assert.equal(res.headers.get('content-range'), 'bytes 0-1/*', 'unknown total while warming');
+    assert.equal(res.headers.get('accept-ranges'), 'bytes', 'spool slices are satisfiable ranges');
+    job.liveEnded = true;
+    for (const sub of job.subscribers) sub.notify();
+    const body = Buffer.from(await res.arrayBuffer());
+    assert.ok(body.equals(payload.subarray(0, 2)), 'exact first bytes (init first)');
+  }
+  // Seek slice while running: same-offset fMP4 window, unknown total.
+  {
+    const job = fakeLiveJob(payload.subarray(0, 4));
+    job.spoolPath = spoolPath;
+    job.spoolBytes = payload.length;
+    const res = createLiveResponse(job, 1099, new AbortController().signal, 1000);
+    assert.equal(res.status, 206);
+    assert.equal(res.headers.get('content-range'), 'bytes 1000-1099/*');
+    assert.equal(res.headers.get('accept-ranges'), 'bytes');
+    job.liveEnded = true;
+    for (const sub of job.subscribers) sub.notify();
+    const body = Buffer.from(await res.arrayBuffer());
+    assert.ok(body.equals(payload.subarray(1000, 1100)), 'same-offset slice, no init prepended (client holds it)');
+  }
+});
+
+test('P0-A/C1: cold-live start-0 body begins with the fMP4 init segment', async () => {
+  // A viewer that never received init cannot decode fragments: the first
+  // bytes of any start-0 live response must be ftyp+moov, never a mid-
+  // stream moof. (Regression: the spool misordering served init + raw mdat
+  // payload with moof #1 displaced to EOF.)
+  const ftyp = Buffer.alloc(28);
+  ftyp.writeUInt32BE(28, 0);
+  ftyp.write('ftyp', 4, 4, 'latin1');
+  const moov = Buffer.alloc(1208);
+  moov.writeUInt32BE(1208, 0);
+  moov.write('moov', 4, 4, 'latin1');
+  const init = Buffer.concat([ftyp, moov]);
+  const moof = Buffer.alloc(7196);
+  moof.writeUInt32BE(7196, 0);
+  moof.write('moof', 4, 4, 'latin1');
+  const spoolPath = path.join(tmpRoot, 'init-first-spool.bin');
+  await fs.promises.writeFile(spoolPath, Buffer.concat([init, moof]));
+  const job = fakeLiveJob(init);
+  job.spoolPath = spoolPath;
+  job.spoolBytes = init.length + moof.length;
+  const res = createLiveResponse(job, null, new AbortController().signal);
+  const reader = res.body!.getReader();
+  const head = await reader.read();
+  await reader.cancel().catch(() => {});
+  job.liveEnded = true;
+  for (const sub of job.subscribers) sub.notify();
+  assert.ok(head.value && head.value.length > 0, 'first bytes flow');
+  const headBuf = Buffer.from(head.value);
+  assert.equal(headBuf.subarray(4, 8).toString('latin1'), 'ftyp', 'stream opens with the init segment');
+  assert.ok(headBuf.length >= 8, 'box header complete');
+});
+
+test('lifecycle: pre-aborted viewer registers no phantom subscriber', async () => {
+  // A request that died in preflight must never pin the viewer count: the
+  // abort listener below would never fire for an already-aborted signal,
+  // leaving a subscriber that could never detach (grace shutdown would
+  // never arm). Serve nothing instead — nobody is listening.
+  const spoolPath = path.join(tmpRoot, 'phantom-spool.bin');
+  const payload = Buffer.concat([Buffer.from('INIT'), Buffer.alloc(100, 0x61)]);
+  await fs.promises.writeFile(spoolPath, payload);
+  const job = fakeLiveJob(payload.subarray(0, 4));
+  job.spoolPath = spoolPath;
+  job.spoolBytes = payload.length;
+  const res = createLiveResponse(job, null, AbortSignal.abort());
+  assert.equal(res.status, 204, 'dead viewer gets an empty response, not a stream');
+  assert.equal(job.subscribers.size, 0, 'no phantom subscriber registered');
+  assert.equal(Buffer.from(await res.arrayBuffer()).length, 0);
 });
 
 test('Bug 4 regression: aborted live viewer never rejects unhandled (clean detach)', async () => {
@@ -457,6 +622,241 @@ test('Bug 4 regression: cancel AFTER stream end does not reject or crash', async
 });
 
 // ---------------------------------------------------------------------------
+// Subscriber-aware lifecycle: counting, grace, cancellation (fake jobs).
+// Grace uses a short env override + real timers (deterministic margins).
+// ---------------------------------------------------------------------------
+function withShortGrace<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = process.env.MEDIA_ZERO_SUBSCRIBER_GRACE_MS;
+  process.env.MEDIA_ZERO_SUBSCRIBER_GRACE_MS = '80';
+  return fn().finally(() => {
+    if (prev === undefined) delete process.env.MEDIA_ZERO_SUBSCRIBER_GRACE_MS;
+    else process.env.MEDIA_ZERO_SUBSCRIBER_GRACE_MS = prev;
+  });
+}
+
+test('lifecycle 1-4: retain/release counts viewers; detach-to-zero arms grace', async () => {
+  await withShortGrace(async () => {
+    const job = fakeLiveJob(Buffer.alloc(8));
+    assert.equal(job.subscribers.size, 0);
+    const r1 = retainLiveRemuxJob(job);
+    assert.equal(job.subscribers.size, 1, 'first subscriber attaches');
+    const r2 = retainLiveRemuxJob(job);
+    assert.equal(job.subscribers.size, 2, 'second subscriber attaches');
+    r1();
+    assert.equal(job.subscribers.size, 1, 'first detach leaves the other');
+    assert.equal(job.graceTimer, null, 'no timer while watched');
+    r2();
+    assert.equal(job.subscribers.size, 0, 'second detach empties');
+    assert.notEqual(job.graceTimer, null, 'zero-subscriber grace timer starts');
+  });
+});
+
+test('lifecycle: duplicate release is harmless (idempotent detach)', async () => {
+  await withShortGrace(async () => {
+    const job = fakeLiveJob(Buffer.alloc(8));
+    const release = retainLiveRemuxJob(job);
+    release();
+    assert.equal(job.subscribers.size, 0);
+    release();
+    release();
+    assert.equal(job.subscribers.size, 0, 'no negative count, no throw');
+  });
+});
+
+test('lifecycle 6-7: attach during grace cancels shutdown; watched job never aborts', async () => {
+  await withShortGrace(async () => {
+    const job = fakeLiveJob(Buffer.alloc(8));
+    const r1 = retainLiveRemuxJob(job);
+    r1(); // -> zero, timer armed
+    assert.notEqual(job.graceTimer, null);
+    const r2 = retainLiveRemuxJob(job); // new interest during grace
+    assert.equal(job.graceTimer, null, 'attach cancels the pending shutdown');
+    assert.equal(job.dying, false);
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(job.dying, false, 'watched job survives past the grace window');
+    assert.equal(job.liveEnded, false);
+    r2();
+  });
+});
+
+test('lifecycle 8: grace expiry aborts an unwatched job (dying, ended, quiet)', async () => {
+  await withShortGrace(async () => {
+    const job = fakeLiveJob(Buffer.alloc(8));
+    const release = retainLiveRemuxJob(job);
+    release(); // -> zero, timer armed
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(job.dying, true, 'shutdown decided');
+    assert.equal(job.cancelling, true);
+    assert.equal(job.liveEnded, true, 'broadcast ended so waiters settle');
+    assert.ok(job.liveError instanceof Error, 'waiters observe a terminal error');
+    assert.equal((job.liveError as Error).name, 'LiveJobCancelledError');
+  });
+});
+
+test('lifecycle 10 (part): cancellation itself never touches the slot counter', async () => {
+  await withShortGrace(async () => {
+    const before = getRemuxSlotStats().active;
+    const job = fakeLiveJob(Buffer.alloc(8));
+    cancelLiveRemuxJob(job, 'test');
+    cancelLiveRemuxJob(job, 'test'); // idempotent: second call is a no-op
+    assert.equal(job.dying, true);
+    assert.equal(getRemuxSlotStats().active, before, 'no direct release; the job finally owns it');
+  });
+});
+
+test('lifecycle 14: detach after completion is harmless (no timer, no throw)', async () => {
+  await withShortGrace(async () => {
+    const job = fakeLiveJob(Buffer.alloc(8));
+    job.liveEnded = true;
+    const release = retainLiveRemuxJob(job);
+    release();
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal(job.graceTimer, null, 'finished jobs never arm');
+    assert.equal(job.dying, false);
+  });
+});
+
+test('lifecycle: join cancels a running grace timer (interest signal)', { timeout: 30000 }, async () => {
+  // joinLiveRemuxJob works off the module registry: a real (hanging) job
+  // exercises the true route hook — a join means a request is heading for
+  // preflight, so a running countdown must stand down.
+  await withShortGrace(async () => {
+    const vid = 99004;
+    const job = getOrCreateLiveRemuxJob(abandonSrc(vid, hangingFetch));
+    const viewer = { notify: () => {}, detached: false };
+    job.subscribers.add(viewer);
+    noteSubscriberAttached(job);
+    viewer.detached = true;
+    job.subscribers.delete(viewer);
+    noteSubscriberDetached(job);
+    assert.notEqual(job.graceTimer, null, 'armed on last leave');
+    joinLiveRemuxJob(vid);
+    assert.equal(job.graceTimer, null, 'join disarms (interest arrived)');
+    assert.equal(job.dying, false);
+    // Cleanup: cancel explicitly and let the abort settle the teardown.
+    // NOTE: registry removal is synchronous in cancel(); slot release and
+    // temp cleanup happen in the job finally, so wait for `settled`.
+    const slotBaseline = getRemuxSlotStats().active;
+    cancelLiveRemuxJob(job, 'test-cleanup');
+    const t0 = Date.now();
+    while (!job.settled && Date.now() - t0 < 5000) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    assert.equal(job.settled, true, 'teardown ran to completion');
+    assert.equal(hasLiveRemuxJob(vid), false, 'registry clean');
+    assert.equal(getRemuxSlotStats().active, slotBaseline - 1, 'cancelled job released its slot once');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Subscriber-aware lifecycle against REAL jobs (fast-failing fetch: no
+// ffmpeg, no network). Video ids are unique per test (module registry).
+// ---------------------------------------------------------------------------
+function hangingFetch(_url: string, signal?: AbortSignal): Promise<Response> {
+  return new Promise<Response>((resolve, reject) => {
+    void resolve; // hangs by design: settles only via abort below
+    if (signal?.aborted) {
+      reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+      return;
+    }
+    signal?.addEventListener('abort', () => {
+      reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+    });
+  });
+}
+
+function failingFetch(): Promise<Response> {
+  return Promise.resolve(new Response(null, { status: 500 }));
+}
+
+function abandonSrc(videoId: number, fetchImpl: (url: string, signal?: AbortSignal) => Promise<Response>) {
+  return {
+    videoId,
+    megaNodeId: `node-${videoId}`,
+    size: 1000,
+    fileKey: Buffer.alloc(32, 7),
+    upstreamUrl: 'https://gfs.test/fake',
+    fetchCiphertext: fetchImpl,
+  };
+}
+
+test('lifecycle 8-11: abandoned job cancelled after grace; slot + registry + temps cleaned once', { timeout: 30000 }, async () => {
+  await withShortGrace(async () => {
+    const vid = 99001;
+    const baseline = getRemuxSlotStats().active;
+    const job = getOrCreateLiveRemuxJob(abandonSrc(vid, hangingFetch));
+    assert.equal(hasLiveRemuxJob(vid), true, 'job registered');
+    assert.equal(getRemuxSlotStats().active, baseline + 1, 'slot held');
+    // A viewer attaches (response created) and leaves: the only transition.
+    const viewer = { notify: () => {}, detached: false };
+    job.subscribers.add(viewer);
+    noteSubscriberAttached(job);
+    viewer.detached = true;
+    job.subscribers.delete(viewer);
+    noteSubscriberDetached(job);
+    assert.notEqual(job.graceTimer, null, 'grace armed on last leave');
+    await new Promise((r) => setTimeout(r, 600));
+    assert.equal(job.dying, true, 'cancelled after grace');
+    // Settle: the abort rejects the hanging fetch -> fail -> finally. The
+    // registry is removed synchronously by cancel(), so wait for `settled`
+    // (slot release + temp cleanup happen in the finally).
+    const t0 = Date.now();
+    while (!job.settled && Date.now() - t0 < 5000) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    assert.equal(job.settled, true, 'teardown ran to completion');
+    assert.equal(hasLiveRemuxJob(vid), false, 'registry cleaned');
+    assert.equal(getRemuxSlotStats().active, baseline, 'slot released exactly once');
+    const dir = mediaCacheDir();
+    for (const suffix of ['ts.part', 'live.spool', 'part.mp4']) {
+      assert.equal(fs.existsSync(path.join(dir, `${vid}.${suffix}`)), false, `no ${suffix} residue`);
+    }
+  });
+});
+
+test('lifecycle 16-17: concurrent creators share one job; dying jobs are never handed out', { timeout: 30000 }, async () => {
+  const vid = 99002;
+  let fetchCalls = 0;
+  const countingFail: (url: string, _signal?: AbortSignal) => Promise<Response> = () => {
+    fetchCalls++;
+    return failingFetch();
+  };
+  const a = getOrCreateLiveRemuxJob(abandonSrc(vid, countingFail));
+  const b = getOrCreateLiveRemuxJob(abandonSrc(vid, countingFail));
+  assert.equal(a, b, 'second creator joins the same job (no duplicate upstream work)');
+  // Let it fail fast on the 500 (no viewers ever attach).
+  const t0 = Date.now();
+  while (hasLiveRemuxJob(vid) && Date.now() - t0 < 5000) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  assert.equal(fetchCalls, 1, 'exactly one upstream fetch for two creators');
+  // Dying-job race: cancel, then create during teardown -> fresh object.
+  const c = getOrCreateLiveRemuxJob(abandonSrc(vid, countingFail));
+  cancelLiveRemuxJob(c, 'test-race');
+  assert.equal(c.dying, true);
+  const d = getOrCreateLiveRemuxJob(abandonSrc(vid, countingFail));
+  assert.notEqual(d, c, 'a dying job is never handed out; a fresh job is created');
+  assert.equal(d.dying, false);
+  const t1 = Date.now();
+  while (hasLiveRemuxJob(vid) && Date.now() - t1 < 5000) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  assert.equal(hasLiveRemuxJob(vid), false, 'teardown complete, registry clean');
+  assert.ok(getRemuxSlotStats().active >= 0, 'slot counter never negative');
+});
+
+test('lifecycle 12-13: error path releases the slot exactly once (pool stays healthy)', { timeout: 30000 }, async () => {
+  const vid = 99003;
+  const baseline = getRemuxSlotStats().active;
+  getOrCreateLiveRemuxJob(abandonSrc(vid, failingFetch));
+  const t0 = Date.now();
+  while (hasLiveRemuxJob(vid) && Date.now() - t0 < 5000) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  assert.equal(getRemuxSlotStats().active, baseline, 'failed job released its slot exactly once');
+});
+
+// ---------------------------------------------------------------------------
 // Bug 6: orphaned temp cleanup
 // ---------------------------------------------------------------------------
 test('cleanupOrphanedTempFiles: removes only temp files, keeps caches', async () => {
@@ -473,4 +873,150 @@ test('cleanupOrphanedTempFiles: removes only temp files, keeps caches', async ()
   assert.equal(fs.existsSync(path.join(dir, '4244.live.spool')), false, '.live.spool removed');
   assert.equal(fs.existsSync(path.join(dir, '4242.mp4')), true, 'cache untouched');
   assert.equal(fs.existsSync(path.join(dir, '4242.json')), true, 'sidecar untouched');
+});
+
+// ---------------------------------------------------------------------------
+// P1-A: spool reader model — one read stream per frontier advance, shared
+// nothing between viewers, every viewer sees identical bytes, streams close.
+// (Measured: 15 MB live output serves 2 viewers with ~16 streams total —
+// one per fragment advance each. No reader rewrite justified.)
+// ---------------------------------------------------------------------------
+test('P1-A: concurrent viewers receive byte-identical spool content', async () => {
+  const spoolPath = path.join(tmpRoot, 'p1a-spool.bin');
+  const payload = Buffer.concat([Buffer.from('INIT'), Buffer.alloc(9996, 0x61)]);
+  await fs.promises.writeFile(spoolPath, payload);
+  const drain = async () => {
+    const job = fakeLiveJob(payload.subarray(0, 4));
+    job.spoolPath = spoolPath;
+    job.spoolBytes = payload.length;
+    job.liveEnded = true;
+    const res = createLiveResponse(job, null, new AbortController().signal);
+    return Buffer.from(await res.arrayBuffer());
+  };
+  const [a, b] = await Promise.all([drain(), drain()]);
+  assert.ok(a.equals(payload), 'viewer 1 exact');
+  assert.ok(b.equals(payload), 'viewer 2 exact, independent reader');
+});
+
+test('P1-A: one read stream per frontier advance (bounded, no duplicates)', async () => {
+  const spoolPath = path.join(tmpRoot, 'p1a-growth-spool.bin');
+  const init = Buffer.from('INIT');
+  await fs.promises.writeFile(spoolPath, init);
+  const job = fakeLiveJob(init);
+  job.spoolPath = spoolPath;
+  job.spoolBytes = init.length;
+
+  // Count spool read streams; restore afterwards (file runs sequentially).
+  const fsMod = fs as unknown as { createReadStream: typeof fs.createReadStream };
+  const orig = fsMod.createReadStream;
+  let streams = 0;
+  fsMod.createReadStream = ((p: unknown, o: unknown) => {
+    if (String(p) === spoolPath) streams++;
+    return (orig as (...a: never[]) => fs.ReadStream)(p as never, o as never);
+  }) as typeof fs.createReadStream;
+  try {
+    const received: Buffer[] = [];
+    const res = createLiveResponse(job, null, new AbortController().signal);
+    const reader = res.body!.getReader();
+    const pump = (async () => {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        received.push(Buffer.from(value));
+      }
+    })();
+    const receivedBytes = () => received.reduce((n, c) => n + c.length, 0);
+    // Three sequential growth spurts; each is consumed before the next, so
+    // the viewer opens exactly one stream per spurt (+1 for the initial).
+    let expected = init.length;
+    for (let i = 0; i < 3; i++) {
+      const chunk = Buffer.alloc(50, 0x61 + i);
+      await fs.promises.appendFile(spoolPath, chunk);
+      job.spoolBytes += chunk.length;
+      expected += chunk.length;
+      // Notify until consumed (a notify that lands before parking is lost
+      // by design; the waiter re-arms, so retrying is the correct driver).
+      const deadline = Date.now() + 2000;
+      wakeSpoolWaiters(job);
+      for (const sub of job.subscribers) sub.notify();
+      while (receivedBytes() < expected && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 10));
+        wakeSpoolWaiters(job);
+        for (const sub of job.subscribers) sub.notify();
+      }
+      assert.equal(receivedBytes(), expected, `spurt ${i} fully consumed`);
+    }
+    job.liveEnded = true;
+    wakeSpoolWaiters(job);
+    for (const sub of job.subscribers) sub.notify();
+    await pump;
+    const full = Buffer.concat(received);
+    assert.equal(full.length, expected);
+    assert.ok(full.subarray(0, 4).equals(init), 'init first');
+    assert.equal(streams, 4, `exactly one stream per advance (1 initial + 3 spurts), got ${streams}`);
+    assert.equal(job.subscribers.size, 0, 'viewer detached at end');
+  } finally {
+    fsMod.createReadStream = orig;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// P1-B: sidecar atomicity — readers never observe a partial document.
+// ---------------------------------------------------------------------------
+test('P1-B: writeSidecarAtomic round-trips exact JSON with no residue', async () => {
+  const dir = mediaCacheDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const { sidecarPath } = remuxCachePaths(9001);
+  const value = { megaNodeId: 'n', sourceSize: 10, outputSize: 20, lastAccessedAt: new Date().toISOString() };
+  await writeSidecarAtomic(sidecarPath, value);
+  assert.deepEqual(JSON.parse(fs.readFileSync(sidecarPath, 'utf8')), value);
+  assert.equal(fs.readdirSync(dir).filter((n) => n.endsWith('.tmp')).length, 0, 'no temp residue');
+  fs.rmSync(sidecarPath, { force: true });
+});
+
+test('P1-B: truncated sidecar / missing sidecar -> cache miss (never corrupt serve)', async () => {
+  const dir = mediaCacheDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const { mp4Path, sidecarPath } = remuxCachePaths(9002);
+  const bytes = Buffer.from('fake-mp4');
+  fs.writeFileSync(mp4Path, bytes);
+  fs.writeFileSync(sidecarPath, '{"megaNodeId": "n", "sourceSize":'); // crash mid-write shape
+  assert.equal(await readRemuxCache(9002, 'n', bytes.length), null, 'partial sidecar is a miss, not a serve');
+  fs.rmSync(sidecarPath, { force: true });
+  assert.equal(await readRemuxCache(9002, 'n', bytes.length), null, 'missing sidecar is a miss');
+  fs.rmSync(mp4Path, { force: true });
+});
+
+// ---------------------------------------------------------------------------
+// P1-C: temp budget admission + usage accounting.
+// ---------------------------------------------------------------------------
+test('P1-C: checkMediaTempBudget fails fast only under real pressure', async () => {
+  const prev = process.env.MEDIA_TEMP_MAX_BYTES;
+  try {
+    delete process.env.MEDIA_TEMP_MAX_BYTES;
+    assert.doesNotThrow(() => checkMediaTempBudget(100 * 1024 * 1024), 'default budget admits normal jobs');
+    process.env.MEDIA_TEMP_MAX_BYTES = '1';
+    assert.throws(() => checkMediaTempBudget(100 * 1024 * 1024), MediaTempBudgetError, 'tiny budget refuses a 100MB job');
+    assert.throws(() => checkMediaTempBudget(100 * 1024 * 1024), /temporary media budget exhausted/);
+    assert.equal(new MediaTempBudgetError().name, 'MediaTempBudgetError');
+  } finally {
+    if (prev === undefined) delete process.env.MEDIA_TEMP_MAX_BYTES;
+    else process.env.MEDIA_TEMP_MAX_BYTES = prev;
+  }
+});
+
+test('P1-C: mediaTempUsage counts only temp files', async () => {
+  const dir = mediaCacheDir();
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, '9101.ts.part'), Buffer.alloc(100));
+  fs.writeFileSync(path.join(dir, '9101.live.spool'), Buffer.alloc(50));
+  fs.writeFileSync(path.join(dir, '9101.mp4'), Buffer.alloc(1000));
+  fs.writeFileSync(path.join(dir, '9101.json'), '{}');
+  const usage = mediaTempUsage();
+  assert.equal(usage.bytes, 150, 'only temps counted');
+  assert.equal(usage.files, 2);
+  fs.rmSync(path.join(dir, '9101.ts.part'), { force: true });
+  fs.rmSync(path.join(dir, '9101.live.spool'), { force: true });
+  fs.rmSync(path.join(dir, '9101.mp4'), { force: true });
+  fs.rmSync(path.join(dir, '9101.json'), { force: true });
 });

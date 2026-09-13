@@ -14,8 +14,10 @@ import type * as Prisma from "../internal/prismaNamespace"
 
 /**
  * Model SavedVideo
- * P2.0 product foundation: a user's saved/bookmark videos. Flat bookmarks -
- * NOT collections/folders. One row per (user, video).
+ * P2.0 product foundation: a user's saved/bookmark videos. One row per
+ * (user, video). Optional organization into one user-created folder per
+ * saved video (folderId null = uncategorized, shown under "All Saved").
+ * These are application-level folders only - never MEGA folders.
  */
 export type SavedVideoModel = runtime.Types.Result.DefaultSelection<Prisma.$SavedVideoPayload>
 
@@ -30,17 +32,20 @@ export type AggregateSavedVideo = {
 export type SavedVideoAvgAggregateOutputType = {
   id: number | null
   videoId: number | null
+  folderId: number | null
 }
 
 export type SavedVideoSumAggregateOutputType = {
   id: number | null
   videoId: number | null
+  folderId: number | null
 }
 
 export type SavedVideoMinAggregateOutputType = {
   id: number | null
   userId: string | null
   videoId: number | null
+  folderId: number | null
   createdAt: Date | null
 }
 
@@ -48,6 +53,7 @@ export type SavedVideoMaxAggregateOutputType = {
   id: number | null
   userId: string | null
   videoId: number | null
+  folderId: number | null
   createdAt: Date | null
 }
 
@@ -55,6 +61,7 @@ export type SavedVideoCountAggregateOutputType = {
   id: number
   userId: number
   videoId: number
+  folderId: number
   createdAt: number
   _all: number
 }
@@ -63,17 +70,20 @@ export type SavedVideoCountAggregateOutputType = {
 export type SavedVideoAvgAggregateInputType = {
   id?: true
   videoId?: true
+  folderId?: true
 }
 
 export type SavedVideoSumAggregateInputType = {
   id?: true
   videoId?: true
+  folderId?: true
 }
 
 export type SavedVideoMinAggregateInputType = {
   id?: true
   userId?: true
   videoId?: true
+  folderId?: true
   createdAt?: true
 }
 
@@ -81,6 +91,7 @@ export type SavedVideoMaxAggregateInputType = {
   id?: true
   userId?: true
   videoId?: true
+  folderId?: true
   createdAt?: true
 }
 
@@ -88,6 +99,7 @@ export type SavedVideoCountAggregateInputType = {
   id?: true
   userId?: true
   videoId?: true
+  folderId?: true
   createdAt?: true
   _all?: true
 }
@@ -182,6 +194,7 @@ export type SavedVideoGroupByOutputType = {
   id: number
   userId: string
   videoId: number
+  folderId: number | null
   createdAt: Date
   _count: SavedVideoCountAggregateOutputType | null
   _avg: SavedVideoAvgAggregateOutputType | null
@@ -212,18 +225,22 @@ export type SavedVideoWhereInput = {
   id?: Prisma.IntFilter<"SavedVideo"> | number
   userId?: Prisma.StringFilter<"SavedVideo"> | string
   videoId?: Prisma.IntFilter<"SavedVideo"> | number
+  folderId?: Prisma.IntNullableFilter<"SavedVideo"> | number | null
   createdAt?: Prisma.DateTimeFilter<"SavedVideo"> | Date | string
   user?: Prisma.XOR<Prisma.UserScalarRelationFilter, Prisma.UserWhereInput>
   video?: Prisma.XOR<Prisma.VideoScalarRelationFilter, Prisma.VideoWhereInput>
+  folder?: Prisma.XOR<Prisma.SavedFolderNullableScalarRelationFilter, Prisma.SavedFolderWhereInput> | null
 }
 
 export type SavedVideoOrderByWithRelationInput = {
   id?: Prisma.SortOrder
   userId?: Prisma.SortOrder
   videoId?: Prisma.SortOrder
+  folderId?: Prisma.SortOrderInput | Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   user?: Prisma.UserOrderByWithRelationInput
   video?: Prisma.VideoOrderByWithRelationInput
+  folder?: Prisma.SavedFolderOrderByWithRelationInput
 }
 
 export type SavedVideoWhereUniqueInput = Prisma.AtLeast<{
@@ -234,15 +251,18 @@ export type SavedVideoWhereUniqueInput = Prisma.AtLeast<{
   NOT?: Prisma.SavedVideoWhereInput | Prisma.SavedVideoWhereInput[]
   userId?: Prisma.StringFilter<"SavedVideo"> | string
   videoId?: Prisma.IntFilter<"SavedVideo"> | number
+  folderId?: Prisma.IntNullableFilter<"SavedVideo"> | number | null
   createdAt?: Prisma.DateTimeFilter<"SavedVideo"> | Date | string
   user?: Prisma.XOR<Prisma.UserScalarRelationFilter, Prisma.UserWhereInput>
   video?: Prisma.XOR<Prisma.VideoScalarRelationFilter, Prisma.VideoWhereInput>
+  folder?: Prisma.XOR<Prisma.SavedFolderNullableScalarRelationFilter, Prisma.SavedFolderWhereInput> | null
 }, "id" | "userId_videoId">
 
 export type SavedVideoOrderByWithAggregationInput = {
   id?: Prisma.SortOrder
   userId?: Prisma.SortOrder
   videoId?: Prisma.SortOrder
+  folderId?: Prisma.SortOrderInput | Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   _count?: Prisma.SavedVideoCountOrderByAggregateInput
   _avg?: Prisma.SavedVideoAvgOrderByAggregateInput
@@ -258,6 +278,7 @@ export type SavedVideoScalarWhereWithAggregatesInput = {
   id?: Prisma.IntWithAggregatesFilter<"SavedVideo"> | number
   userId?: Prisma.StringWithAggregatesFilter<"SavedVideo"> | string
   videoId?: Prisma.IntWithAggregatesFilter<"SavedVideo"> | number
+  folderId?: Prisma.IntNullableWithAggregatesFilter<"SavedVideo"> | number | null
   createdAt?: Prisma.DateTimeWithAggregatesFilter<"SavedVideo"> | Date | string
 }
 
@@ -265,12 +286,14 @@ export type SavedVideoCreateInput = {
   createdAt?: Date | string
   user: Prisma.UserCreateNestedOneWithoutSavedVideosInput
   video: Prisma.VideoCreateNestedOneWithoutSavedByInput
+  folder?: Prisma.SavedFolderCreateNestedOneWithoutSavedVideosInput
 }
 
 export type SavedVideoUncheckedCreateInput = {
   id?: number
   userId: string
   videoId: number
+  folderId?: number | null
   createdAt?: Date | string
 }
 
@@ -278,12 +301,14 @@ export type SavedVideoUpdateInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   user?: Prisma.UserUpdateOneRequiredWithoutSavedVideosNestedInput
   video?: Prisma.VideoUpdateOneRequiredWithoutSavedByNestedInput
+  folder?: Prisma.SavedFolderUpdateOneWithoutSavedVideosNestedInput
 }
 
 export type SavedVideoUncheckedUpdateInput = {
   id?: Prisma.IntFieldUpdateOperationsInput | number
   userId?: Prisma.StringFieldUpdateOperationsInput | string
   videoId?: Prisma.IntFieldUpdateOperationsInput | number
+  folderId?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
@@ -291,6 +316,7 @@ export type SavedVideoCreateManyInput = {
   id?: number
   userId: string
   videoId: number
+  folderId?: number | null
   createdAt?: Date | string
 }
 
@@ -302,6 +328,7 @@ export type SavedVideoUncheckedUpdateManyInput = {
   id?: Prisma.IntFieldUpdateOperationsInput | number
   userId?: Prisma.StringFieldUpdateOperationsInput | string
   videoId?: Prisma.IntFieldUpdateOperationsInput | number
+  folderId?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
@@ -324,18 +351,21 @@ export type SavedVideoCountOrderByAggregateInput = {
   id?: Prisma.SortOrder
   userId?: Prisma.SortOrder
   videoId?: Prisma.SortOrder
+  folderId?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
 }
 
 export type SavedVideoAvgOrderByAggregateInput = {
   id?: Prisma.SortOrder
   videoId?: Prisma.SortOrder
+  folderId?: Prisma.SortOrder
 }
 
 export type SavedVideoMaxOrderByAggregateInput = {
   id?: Prisma.SortOrder
   userId?: Prisma.SortOrder
   videoId?: Prisma.SortOrder
+  folderId?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
 }
 
@@ -343,12 +373,14 @@ export type SavedVideoMinOrderByAggregateInput = {
   id?: Prisma.SortOrder
   userId?: Prisma.SortOrder
   videoId?: Prisma.SortOrder
+  folderId?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
 }
 
 export type SavedVideoSumOrderByAggregateInput = {
   id?: Prisma.SortOrder
   videoId?: Prisma.SortOrder
+  folderId?: Prisma.SortOrder
 }
 
 export type SavedVideoCreateNestedManyWithoutVideoInput = {
@@ -435,14 +467,58 @@ export type SavedVideoUncheckedUpdateManyWithoutUserNestedInput = {
   deleteMany?: Prisma.SavedVideoScalarWhereInput | Prisma.SavedVideoScalarWhereInput[]
 }
 
+export type SavedVideoCreateNestedManyWithoutFolderInput = {
+  create?: Prisma.XOR<Prisma.SavedVideoCreateWithoutFolderInput, Prisma.SavedVideoUncheckedCreateWithoutFolderInput> | Prisma.SavedVideoCreateWithoutFolderInput[] | Prisma.SavedVideoUncheckedCreateWithoutFolderInput[]
+  connectOrCreate?: Prisma.SavedVideoCreateOrConnectWithoutFolderInput | Prisma.SavedVideoCreateOrConnectWithoutFolderInput[]
+  createMany?: Prisma.SavedVideoCreateManyFolderInputEnvelope
+  connect?: Prisma.SavedVideoWhereUniqueInput | Prisma.SavedVideoWhereUniqueInput[]
+}
+
+export type SavedVideoUncheckedCreateNestedManyWithoutFolderInput = {
+  create?: Prisma.XOR<Prisma.SavedVideoCreateWithoutFolderInput, Prisma.SavedVideoUncheckedCreateWithoutFolderInput> | Prisma.SavedVideoCreateWithoutFolderInput[] | Prisma.SavedVideoUncheckedCreateWithoutFolderInput[]
+  connectOrCreate?: Prisma.SavedVideoCreateOrConnectWithoutFolderInput | Prisma.SavedVideoCreateOrConnectWithoutFolderInput[]
+  createMany?: Prisma.SavedVideoCreateManyFolderInputEnvelope
+  connect?: Prisma.SavedVideoWhereUniqueInput | Prisma.SavedVideoWhereUniqueInput[]
+}
+
+export type SavedVideoUpdateManyWithoutFolderNestedInput = {
+  create?: Prisma.XOR<Prisma.SavedVideoCreateWithoutFolderInput, Prisma.SavedVideoUncheckedCreateWithoutFolderInput> | Prisma.SavedVideoCreateWithoutFolderInput[] | Prisma.SavedVideoUncheckedCreateWithoutFolderInput[]
+  connectOrCreate?: Prisma.SavedVideoCreateOrConnectWithoutFolderInput | Prisma.SavedVideoCreateOrConnectWithoutFolderInput[]
+  upsert?: Prisma.SavedVideoUpsertWithWhereUniqueWithoutFolderInput | Prisma.SavedVideoUpsertWithWhereUniqueWithoutFolderInput[]
+  createMany?: Prisma.SavedVideoCreateManyFolderInputEnvelope
+  set?: Prisma.SavedVideoWhereUniqueInput | Prisma.SavedVideoWhereUniqueInput[]
+  disconnect?: Prisma.SavedVideoWhereUniqueInput | Prisma.SavedVideoWhereUniqueInput[]
+  delete?: Prisma.SavedVideoWhereUniqueInput | Prisma.SavedVideoWhereUniqueInput[]
+  connect?: Prisma.SavedVideoWhereUniqueInput | Prisma.SavedVideoWhereUniqueInput[]
+  update?: Prisma.SavedVideoUpdateWithWhereUniqueWithoutFolderInput | Prisma.SavedVideoUpdateWithWhereUniqueWithoutFolderInput[]
+  updateMany?: Prisma.SavedVideoUpdateManyWithWhereWithoutFolderInput | Prisma.SavedVideoUpdateManyWithWhereWithoutFolderInput[]
+  deleteMany?: Prisma.SavedVideoScalarWhereInput | Prisma.SavedVideoScalarWhereInput[]
+}
+
+export type SavedVideoUncheckedUpdateManyWithoutFolderNestedInput = {
+  create?: Prisma.XOR<Prisma.SavedVideoCreateWithoutFolderInput, Prisma.SavedVideoUncheckedCreateWithoutFolderInput> | Prisma.SavedVideoCreateWithoutFolderInput[] | Prisma.SavedVideoUncheckedCreateWithoutFolderInput[]
+  connectOrCreate?: Prisma.SavedVideoCreateOrConnectWithoutFolderInput | Prisma.SavedVideoCreateOrConnectWithoutFolderInput[]
+  upsert?: Prisma.SavedVideoUpsertWithWhereUniqueWithoutFolderInput | Prisma.SavedVideoUpsertWithWhereUniqueWithoutFolderInput[]
+  createMany?: Prisma.SavedVideoCreateManyFolderInputEnvelope
+  set?: Prisma.SavedVideoWhereUniqueInput | Prisma.SavedVideoWhereUniqueInput[]
+  disconnect?: Prisma.SavedVideoWhereUniqueInput | Prisma.SavedVideoWhereUniqueInput[]
+  delete?: Prisma.SavedVideoWhereUniqueInput | Prisma.SavedVideoWhereUniqueInput[]
+  connect?: Prisma.SavedVideoWhereUniqueInput | Prisma.SavedVideoWhereUniqueInput[]
+  update?: Prisma.SavedVideoUpdateWithWhereUniqueWithoutFolderInput | Prisma.SavedVideoUpdateWithWhereUniqueWithoutFolderInput[]
+  updateMany?: Prisma.SavedVideoUpdateManyWithWhereWithoutFolderInput | Prisma.SavedVideoUpdateManyWithWhereWithoutFolderInput[]
+  deleteMany?: Prisma.SavedVideoScalarWhereInput | Prisma.SavedVideoScalarWhereInput[]
+}
+
 export type SavedVideoCreateWithoutVideoInput = {
   createdAt?: Date | string
   user: Prisma.UserCreateNestedOneWithoutSavedVideosInput
+  folder?: Prisma.SavedFolderCreateNestedOneWithoutSavedVideosInput
 }
 
 export type SavedVideoUncheckedCreateWithoutVideoInput = {
   id?: number
   userId: string
+  folderId?: number | null
   createdAt?: Date | string
 }
 
@@ -478,17 +554,20 @@ export type SavedVideoScalarWhereInput = {
   id?: Prisma.IntFilter<"SavedVideo"> | number
   userId?: Prisma.StringFilter<"SavedVideo"> | string
   videoId?: Prisma.IntFilter<"SavedVideo"> | number
+  folderId?: Prisma.IntNullableFilter<"SavedVideo"> | number | null
   createdAt?: Prisma.DateTimeFilter<"SavedVideo"> | Date | string
 }
 
 export type SavedVideoCreateWithoutUserInput = {
   createdAt?: Date | string
   video: Prisma.VideoCreateNestedOneWithoutSavedByInput
+  folder?: Prisma.SavedFolderCreateNestedOneWithoutSavedVideosInput
 }
 
 export type SavedVideoUncheckedCreateWithoutUserInput = {
   id?: number
   videoId: number
+  folderId?: number | null
   createdAt?: Date | string
 }
 
@@ -517,48 +596,121 @@ export type SavedVideoUpdateManyWithWhereWithoutUserInput = {
   data: Prisma.XOR<Prisma.SavedVideoUpdateManyMutationInput, Prisma.SavedVideoUncheckedUpdateManyWithoutUserInput>
 }
 
+export type SavedVideoCreateWithoutFolderInput = {
+  createdAt?: Date | string
+  user: Prisma.UserCreateNestedOneWithoutSavedVideosInput
+  video: Prisma.VideoCreateNestedOneWithoutSavedByInput
+}
+
+export type SavedVideoUncheckedCreateWithoutFolderInput = {
+  id?: number
+  userId: string
+  videoId: number
+  createdAt?: Date | string
+}
+
+export type SavedVideoCreateOrConnectWithoutFolderInput = {
+  where: Prisma.SavedVideoWhereUniqueInput
+  create: Prisma.XOR<Prisma.SavedVideoCreateWithoutFolderInput, Prisma.SavedVideoUncheckedCreateWithoutFolderInput>
+}
+
+export type SavedVideoCreateManyFolderInputEnvelope = {
+  data: Prisma.SavedVideoCreateManyFolderInput | Prisma.SavedVideoCreateManyFolderInput[]
+}
+
+export type SavedVideoUpsertWithWhereUniqueWithoutFolderInput = {
+  where: Prisma.SavedVideoWhereUniqueInput
+  update: Prisma.XOR<Prisma.SavedVideoUpdateWithoutFolderInput, Prisma.SavedVideoUncheckedUpdateWithoutFolderInput>
+  create: Prisma.XOR<Prisma.SavedVideoCreateWithoutFolderInput, Prisma.SavedVideoUncheckedCreateWithoutFolderInput>
+}
+
+export type SavedVideoUpdateWithWhereUniqueWithoutFolderInput = {
+  where: Prisma.SavedVideoWhereUniqueInput
+  data: Prisma.XOR<Prisma.SavedVideoUpdateWithoutFolderInput, Prisma.SavedVideoUncheckedUpdateWithoutFolderInput>
+}
+
+export type SavedVideoUpdateManyWithWhereWithoutFolderInput = {
+  where: Prisma.SavedVideoScalarWhereInput
+  data: Prisma.XOR<Prisma.SavedVideoUpdateManyMutationInput, Prisma.SavedVideoUncheckedUpdateManyWithoutFolderInput>
+}
+
 export type SavedVideoCreateManyVideoInput = {
   id?: number
   userId: string
+  folderId?: number | null
   createdAt?: Date | string
 }
 
 export type SavedVideoUpdateWithoutVideoInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   user?: Prisma.UserUpdateOneRequiredWithoutSavedVideosNestedInput
+  folder?: Prisma.SavedFolderUpdateOneWithoutSavedVideosNestedInput
 }
 
 export type SavedVideoUncheckedUpdateWithoutVideoInput = {
   id?: Prisma.IntFieldUpdateOperationsInput | number
   userId?: Prisma.StringFieldUpdateOperationsInput | string
+  folderId?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
 export type SavedVideoUncheckedUpdateManyWithoutVideoInput = {
   id?: Prisma.IntFieldUpdateOperationsInput | number
   userId?: Prisma.StringFieldUpdateOperationsInput | string
+  folderId?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
 export type SavedVideoCreateManyUserInput = {
   id?: number
   videoId: number
+  folderId?: number | null
   createdAt?: Date | string
 }
 
 export type SavedVideoUpdateWithoutUserInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   video?: Prisma.VideoUpdateOneRequiredWithoutSavedByNestedInput
+  folder?: Prisma.SavedFolderUpdateOneWithoutSavedVideosNestedInput
 }
 
 export type SavedVideoUncheckedUpdateWithoutUserInput = {
   id?: Prisma.IntFieldUpdateOperationsInput | number
   videoId?: Prisma.IntFieldUpdateOperationsInput | number
+  folderId?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
 export type SavedVideoUncheckedUpdateManyWithoutUserInput = {
   id?: Prisma.IntFieldUpdateOperationsInput | number
+  videoId?: Prisma.IntFieldUpdateOperationsInput | number
+  folderId?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+}
+
+export type SavedVideoCreateManyFolderInput = {
+  id?: number
+  userId: string
+  videoId: number
+  createdAt?: Date | string
+}
+
+export type SavedVideoUpdateWithoutFolderInput = {
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  user?: Prisma.UserUpdateOneRequiredWithoutSavedVideosNestedInput
+  video?: Prisma.VideoUpdateOneRequiredWithoutSavedByNestedInput
+}
+
+export type SavedVideoUncheckedUpdateWithoutFolderInput = {
+  id?: Prisma.IntFieldUpdateOperationsInput | number
+  userId?: Prisma.StringFieldUpdateOperationsInput | string
+  videoId?: Prisma.IntFieldUpdateOperationsInput | number
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+}
+
+export type SavedVideoUncheckedUpdateManyWithoutFolderInput = {
+  id?: Prisma.IntFieldUpdateOperationsInput | number
+  userId?: Prisma.StringFieldUpdateOperationsInput | string
   videoId?: Prisma.IntFieldUpdateOperationsInput | number
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -569,48 +721,58 @@ export type SavedVideoSelect<ExtArgs extends runtime.Types.Extensions.InternalAr
   id?: boolean
   userId?: boolean
   videoId?: boolean
+  folderId?: boolean
   createdAt?: boolean
   user?: boolean | Prisma.UserDefaultArgs<ExtArgs>
   video?: boolean | Prisma.VideoDefaultArgs<ExtArgs>
+  folder?: boolean | Prisma.SavedVideo$folderArgs<ExtArgs>
 }, ExtArgs["result"]["savedVideo"]>
 
 export type SavedVideoSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
   userId?: boolean
   videoId?: boolean
+  folderId?: boolean
   createdAt?: boolean
   user?: boolean | Prisma.UserDefaultArgs<ExtArgs>
   video?: boolean | Prisma.VideoDefaultArgs<ExtArgs>
+  folder?: boolean | Prisma.SavedVideo$folderArgs<ExtArgs>
 }, ExtArgs["result"]["savedVideo"]>
 
 export type SavedVideoSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
   userId?: boolean
   videoId?: boolean
+  folderId?: boolean
   createdAt?: boolean
   user?: boolean | Prisma.UserDefaultArgs<ExtArgs>
   video?: boolean | Prisma.VideoDefaultArgs<ExtArgs>
+  folder?: boolean | Prisma.SavedVideo$folderArgs<ExtArgs>
 }, ExtArgs["result"]["savedVideo"]>
 
 export type SavedVideoSelectScalar = {
   id?: boolean
   userId?: boolean
   videoId?: boolean
+  folderId?: boolean
   createdAt?: boolean
 }
 
-export type SavedVideoOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "userId" | "videoId" | "createdAt", ExtArgs["result"]["savedVideo"]>
+export type SavedVideoOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "userId" | "videoId" | "folderId" | "createdAt", ExtArgs["result"]["savedVideo"]>
 export type SavedVideoInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   user?: boolean | Prisma.UserDefaultArgs<ExtArgs>
   video?: boolean | Prisma.VideoDefaultArgs<ExtArgs>
+  folder?: boolean | Prisma.SavedVideo$folderArgs<ExtArgs>
 }
 export type SavedVideoIncludeCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   user?: boolean | Prisma.UserDefaultArgs<ExtArgs>
   video?: boolean | Prisma.VideoDefaultArgs<ExtArgs>
+  folder?: boolean | Prisma.SavedVideo$folderArgs<ExtArgs>
 }
 export type SavedVideoIncludeUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   user?: boolean | Prisma.UserDefaultArgs<ExtArgs>
   video?: boolean | Prisma.VideoDefaultArgs<ExtArgs>
+  folder?: boolean | Prisma.SavedVideo$folderArgs<ExtArgs>
 }
 
 export type $SavedVideoPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
@@ -618,11 +780,13 @@ export type $SavedVideoPayload<ExtArgs extends runtime.Types.Extensions.Internal
   objects: {
     user: Prisma.$UserPayload<ExtArgs>
     video: Prisma.$VideoPayload<ExtArgs>
+    folder: Prisma.$SavedFolderPayload<ExtArgs> | null
   }
   scalars: runtime.Types.Extensions.GetPayloadResult<{
     id: number
     userId: string
     videoId: number
+    folderId: number | null
     createdAt: Date
   }, ExtArgs["result"]["savedVideo"]>
   composites: {}
@@ -1020,6 +1184,7 @@ export interface Prisma__SavedVideoClient<T, Null = never, ExtArgs extends runti
   readonly [Symbol.toStringTag]: "PrismaPromise"
   user<T extends Prisma.UserDefaultArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.UserDefaultArgs<ExtArgs>>): Prisma.Prisma__UserClient<runtime.Types.Result.GetResult<Prisma.$UserPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | Null, Null, ExtArgs, GlobalOmitOptions>
   video<T extends Prisma.VideoDefaultArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.VideoDefaultArgs<ExtArgs>>): Prisma.Prisma__VideoClient<runtime.Types.Result.GetResult<Prisma.$VideoPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | Null, Null, ExtArgs, GlobalOmitOptions>
+  folder<T extends Prisma.SavedVideo$folderArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.SavedVideo$folderArgs<ExtArgs>>): Prisma.Prisma__SavedFolderClient<runtime.Types.Result.GetResult<Prisma.$SavedFolderPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | null, null, ExtArgs, GlobalOmitOptions>
   /**
    * Attaches callbacks for the resolution and/or rejection of the Promise.
    * @param onfulfilled The callback to execute when the Promise is resolved.
@@ -1052,6 +1217,7 @@ export interface SavedVideoFieldRefs {
   readonly id: Prisma.FieldRef<"SavedVideo", 'Int'>
   readonly userId: Prisma.FieldRef<"SavedVideo", 'String'>
   readonly videoId: Prisma.FieldRef<"SavedVideo", 'Int'>
+  readonly folderId: Prisma.FieldRef<"SavedVideo", 'Int'>
   readonly createdAt: Prisma.FieldRef<"SavedVideo", 'DateTime'>
 }
     
@@ -1449,6 +1615,25 @@ export type SavedVideoDeleteManyArgs<ExtArgs extends runtime.Types.Extensions.In
    * Limit how many SavedVideos to delete.
    */
   limit?: number
+}
+
+/**
+ * SavedVideo.folder
+ */
+export type SavedVideo$folderArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the SavedFolder
+   */
+  select?: Prisma.SavedFolderSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the SavedFolder
+   */
+  omit?: Prisma.SavedFolderOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.SavedFolderInclude<ExtArgs> | null
+  where?: Prisma.SavedFolderWhereInput
 }
 
 /**

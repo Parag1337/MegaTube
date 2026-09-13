@@ -404,6 +404,7 @@ export const ModelName = {
   Session: 'Session',
   WatchlistItem: 'WatchlistItem',
   SavedVideo: 'SavedVideo',
+  SavedFolder: 'SavedFolder',
   WatchHistory: 'WatchHistory'
 } as const
 
@@ -420,7 +421,7 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
     omit: GlobalOmitOptions
   }
   meta: {
-    modelProps: "creator" | "video" | "user" | "megaAccount" | "session" | "watchlistItem" | "savedVideo" | "watchHistory"
+    modelProps: "creator" | "video" | "user" | "megaAccount" | "session" | "watchlistItem" | "savedVideo" | "savedFolder" | "watchHistory"
     txIsolationLevel: TransactionIsolationLevel
   }
   model: {
@@ -942,6 +943,80 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         }
       }
     }
+    SavedFolder: {
+      payload: Prisma.$SavedFolderPayload<ExtArgs>
+      fields: Prisma.SavedFolderFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.SavedFolderFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SavedFolderPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.SavedFolderFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SavedFolderPayload>
+        }
+        findFirst: {
+          args: Prisma.SavedFolderFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SavedFolderPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.SavedFolderFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SavedFolderPayload>
+        }
+        findMany: {
+          args: Prisma.SavedFolderFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SavedFolderPayload>[]
+        }
+        create: {
+          args: Prisma.SavedFolderCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SavedFolderPayload>
+        }
+        createMany: {
+          args: Prisma.SavedFolderCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.SavedFolderCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SavedFolderPayload>[]
+        }
+        delete: {
+          args: Prisma.SavedFolderDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SavedFolderPayload>
+        }
+        update: {
+          args: Prisma.SavedFolderUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SavedFolderPayload>
+        }
+        deleteMany: {
+          args: Prisma.SavedFolderDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.SavedFolderUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.SavedFolderUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SavedFolderPayload>[]
+        }
+        upsert: {
+          args: Prisma.SavedFolderUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SavedFolderPayload>
+        }
+        aggregate: {
+          args: Prisma.SavedFolderAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateSavedFolder>
+        }
+        groupBy: {
+          args: Prisma.SavedFolderGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.SavedFolderGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.SavedFolderCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.SavedFolderCountAggregateOutputType> | number
+        }
+      }
+    }
     WatchHistory: {
       payload: Prisma.$WatchHistoryPayload<ExtArgs>
       fields: Prisma.WatchHistoryFieldRefs
@@ -1083,6 +1158,7 @@ export const VideoScalarFieldEnum = {
   fileSize: 'fileSize',
   mimeType: 'mimeType',
   duration: 'duration',
+  mp4Faststart: 'mp4Faststart',
   thumbnail: 'thumbnail',
   thumbnailAvailable: 'thumbnailAvailable',
   embedUrl: 'embedUrl',
@@ -1156,10 +1232,21 @@ export const SavedVideoScalarFieldEnum = {
   id: 'id',
   userId: 'userId',
   videoId: 'videoId',
+  folderId: 'folderId',
   createdAt: 'createdAt'
 } as const
 
 export type SavedVideoScalarFieldEnum = (typeof SavedVideoScalarFieldEnum)[keyof typeof SavedVideoScalarFieldEnum]
+
+
+export const SavedFolderScalarFieldEnum = {
+  id: 'id',
+  userId: 'userId',
+  name: 'name',
+  createdAt: 'createdAt'
+} as const
+
+export type SavedFolderScalarFieldEnum = (typeof SavedFolderScalarFieldEnum)[keyof typeof SavedFolderScalarFieldEnum]
 
 
 export const WatchHistoryScalarFieldEnum = {
@@ -1394,6 +1481,7 @@ export type GlobalOmitConfig = {
   session?: Prisma.SessionOmit
   watchlistItem?: Prisma.WatchlistItemOmit
   savedVideo?: Prisma.SavedVideoOmit
+  savedFolder?: Prisma.SavedFolderOmit
   watchHistory?: Prisma.WatchHistoryOmit
 }
 

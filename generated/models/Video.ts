@@ -61,6 +61,7 @@ export type VideoMinAggregateOutputType = {
   fileSize: bigint | null
   mimeType: string | null
   duration: number | null
+  mp4Faststart: boolean | null
   thumbnail: string | null
   thumbnailAvailable: boolean | null
   embedUrl: string | null
@@ -89,6 +90,7 @@ export type VideoMaxAggregateOutputType = {
   fileSize: bigint | null
   mimeType: string | null
   duration: number | null
+  mp4Faststart: boolean | null
   thumbnail: string | null
   thumbnailAvailable: boolean | null
   embedUrl: string | null
@@ -117,6 +119,7 @@ export type VideoCountAggregateOutputType = {
   fileSize: number
   mimeType: number
   duration: number
+  mp4Faststart: number
   thumbnail: number
   thumbnailAvailable: number
   embedUrl: number
@@ -165,6 +168,7 @@ export type VideoMinAggregateInputType = {
   fileSize?: true
   mimeType?: true
   duration?: true
+  mp4Faststart?: true
   thumbnail?: true
   thumbnailAvailable?: true
   embedUrl?: true
@@ -193,6 +197,7 @@ export type VideoMaxAggregateInputType = {
   fileSize?: true
   mimeType?: true
   duration?: true
+  mp4Faststart?: true
   thumbnail?: true
   thumbnailAvailable?: true
   embedUrl?: true
@@ -221,6 +226,7 @@ export type VideoCountAggregateInputType = {
   fileSize?: true
   mimeType?: true
   duration?: true
+  mp4Faststart?: true
   thumbnail?: true
   thumbnailAvailable?: true
   embedUrl?: true
@@ -336,6 +342,7 @@ export type VideoGroupByOutputType = {
   fileSize: bigint | null
   mimeType: string | null
   duration: number | null
+  mp4Faststart: boolean | null
   thumbnail: string | null
   thumbnailAvailable: boolean
   embedUrl: string | null
@@ -387,6 +394,7 @@ export type VideoWhereInput = {
   fileSize?: Prisma.BigIntNullableFilter<"Video"> | bigint | number | null
   mimeType?: Prisma.StringNullableFilter<"Video"> | string | null
   duration?: Prisma.IntNullableFilter<"Video"> | number | null
+  mp4Faststart?: Prisma.BoolNullableFilter<"Video"> | boolean | null
   thumbnail?: Prisma.StringNullableFilter<"Video"> | string | null
   thumbnailAvailable?: Prisma.BoolFilter<"Video"> | boolean
   embedUrl?: Prisma.StringNullableFilter<"Video"> | string | null
@@ -420,6 +428,7 @@ export type VideoOrderByWithRelationInput = {
   fileSize?: Prisma.SortOrderInput | Prisma.SortOrder
   mimeType?: Prisma.SortOrderInput | Prisma.SortOrder
   duration?: Prisma.SortOrderInput | Prisma.SortOrder
+  mp4Faststart?: Prisma.SortOrderInput | Prisma.SortOrder
   thumbnail?: Prisma.SortOrderInput | Prisma.SortOrder
   thumbnailAvailable?: Prisma.SortOrder
   embedUrl?: Prisma.SortOrderInput | Prisma.SortOrder
@@ -457,6 +466,7 @@ export type VideoWhereUniqueInput = Prisma.AtLeast<{
   fileSize?: Prisma.BigIntNullableFilter<"Video"> | bigint | number | null
   mimeType?: Prisma.StringNullableFilter<"Video"> | string | null
   duration?: Prisma.IntNullableFilter<"Video"> | number | null
+  mp4Faststart?: Prisma.BoolNullableFilter<"Video"> | boolean | null
   thumbnail?: Prisma.StringNullableFilter<"Video"> | string | null
   thumbnailAvailable?: Prisma.BoolFilter<"Video"> | boolean
   embedUrl?: Prisma.StringNullableFilter<"Video"> | string | null
@@ -490,6 +500,7 @@ export type VideoOrderByWithAggregationInput = {
   fileSize?: Prisma.SortOrderInput | Prisma.SortOrder
   mimeType?: Prisma.SortOrderInput | Prisma.SortOrder
   duration?: Prisma.SortOrderInput | Prisma.SortOrder
+  mp4Faststart?: Prisma.SortOrderInput | Prisma.SortOrder
   thumbnail?: Prisma.SortOrderInput | Prisma.SortOrder
   thumbnailAvailable?: Prisma.SortOrder
   embedUrl?: Prisma.SortOrderInput | Prisma.SortOrder
@@ -526,6 +537,7 @@ export type VideoScalarWhereWithAggregatesInput = {
   fileSize?: Prisma.BigIntNullableWithAggregatesFilter<"Video"> | bigint | number | null
   mimeType?: Prisma.StringNullableWithAggregatesFilter<"Video"> | string | null
   duration?: Prisma.IntNullableWithAggregatesFilter<"Video"> | number | null
+  mp4Faststart?: Prisma.BoolNullableWithAggregatesFilter<"Video"> | boolean | null
   thumbnail?: Prisma.StringNullableWithAggregatesFilter<"Video"> | string | null
   thumbnailAvailable?: Prisma.BoolWithAggregatesFilter<"Video"> | boolean
   embedUrl?: Prisma.StringNullableWithAggregatesFilter<"Video"> | string | null
@@ -551,6 +563,7 @@ export type VideoCreateInput = {
   fileSize?: bigint | number | null
   mimeType?: string | null
   duration?: number | null
+  mp4Faststart?: boolean | null
   thumbnail?: string | null
   thumbnailAvailable?: boolean
   embedUrl?: string | null
@@ -584,6 +597,7 @@ export type VideoUncheckedCreateInput = {
   fileSize?: bigint | number | null
   mimeType?: string | null
   duration?: number | null
+  mp4Faststart?: boolean | null
   thumbnail?: string | null
   thumbnailAvailable?: boolean
   embedUrl?: string | null
@@ -612,6 +626,7 @@ export type VideoUpdateInput = {
   fileSize?: Prisma.NullableBigIntFieldUpdateOperationsInput | bigint | number | null
   mimeType?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   duration?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  mp4Faststart?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   thumbnail?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   thumbnailAvailable?: Prisma.BoolFieldUpdateOperationsInput | boolean
   embedUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -645,6 +660,7 @@ export type VideoUncheckedUpdateInput = {
   fileSize?: Prisma.NullableBigIntFieldUpdateOperationsInput | bigint | number | null
   mimeType?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   duration?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  mp4Faststart?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   thumbnail?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   thumbnailAvailable?: Prisma.BoolFieldUpdateOperationsInput | boolean
   embedUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -676,6 +692,7 @@ export type VideoCreateManyInput = {
   fileSize?: bigint | number | null
   mimeType?: string | null
   duration?: number | null
+  mp4Faststart?: boolean | null
   thumbnail?: string | null
   thumbnailAvailable?: boolean
   embedUrl?: string | null
@@ -701,6 +718,7 @@ export type VideoUpdateManyMutationInput = {
   fileSize?: Prisma.NullableBigIntFieldUpdateOperationsInput | bigint | number | null
   mimeType?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   duration?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  mp4Faststart?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   thumbnail?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   thumbnailAvailable?: Prisma.BoolFieldUpdateOperationsInput | boolean
   embedUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -729,6 +747,7 @@ export type VideoUncheckedUpdateManyInput = {
   fileSize?: Prisma.NullableBigIntFieldUpdateOperationsInput | bigint | number | null
   mimeType?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   duration?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  mp4Faststart?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   thumbnail?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   thumbnailAvailable?: Prisma.BoolFieldUpdateOperationsInput | boolean
   embedUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -772,6 +791,7 @@ export type VideoCountOrderByAggregateInput = {
   fileSize?: Prisma.SortOrder
   mimeType?: Prisma.SortOrder
   duration?: Prisma.SortOrder
+  mp4Faststart?: Prisma.SortOrder
   thumbnail?: Prisma.SortOrder
   thumbnailAvailable?: Prisma.SortOrder
   embedUrl?: Prisma.SortOrder
@@ -809,6 +829,7 @@ export type VideoMaxOrderByAggregateInput = {
   fileSize?: Prisma.SortOrder
   mimeType?: Prisma.SortOrder
   duration?: Prisma.SortOrder
+  mp4Faststart?: Prisma.SortOrder
   thumbnail?: Prisma.SortOrder
   thumbnailAvailable?: Prisma.SortOrder
   embedUrl?: Prisma.SortOrder
@@ -837,6 +858,7 @@ export type VideoMinOrderByAggregateInput = {
   fileSize?: Prisma.SortOrder
   mimeType?: Prisma.SortOrder
   duration?: Prisma.SortOrder
+  mp4Faststart?: Prisma.SortOrder
   thumbnail?: Prisma.SortOrder
   thumbnailAvailable?: Prisma.SortOrder
   embedUrl?: Prisma.SortOrder
@@ -918,6 +940,10 @@ export type NullableIntFieldUpdateOperationsInput = {
   decrement?: number
   multiply?: number
   divide?: number
+}
+
+export type NullableBoolFieldUpdateOperationsInput = {
+  set?: boolean | null
 }
 
 export type BoolFieldUpdateOperationsInput = {
@@ -1026,6 +1052,7 @@ export type VideoCreateWithoutCreatorInput = {
   fileSize?: bigint | number | null
   mimeType?: string | null
   duration?: number | null
+  mp4Faststart?: boolean | null
   thumbnail?: string | null
   thumbnailAvailable?: boolean
   embedUrl?: string | null
@@ -1057,6 +1084,7 @@ export type VideoUncheckedCreateWithoutCreatorInput = {
   fileSize?: bigint | number | null
   mimeType?: string | null
   duration?: number | null
+  mp4Faststart?: boolean | null
   thumbnail?: string | null
   thumbnailAvailable?: boolean
   embedUrl?: string | null
@@ -1116,6 +1144,7 @@ export type VideoScalarWhereInput = {
   fileSize?: Prisma.BigIntNullableFilter<"Video"> | bigint | number | null
   mimeType?: Prisma.StringNullableFilter<"Video"> | string | null
   duration?: Prisma.IntNullableFilter<"Video"> | number | null
+  mp4Faststart?: Prisma.BoolNullableFilter<"Video"> | boolean | null
   thumbnail?: Prisma.StringNullableFilter<"Video"> | string | null
   thumbnailAvailable?: Prisma.BoolFilter<"Video"> | boolean
   embedUrl?: Prisma.StringNullableFilter<"Video"> | string | null
@@ -1141,6 +1170,7 @@ export type VideoCreateWithoutMegaAccountInput = {
   fileSize?: bigint | number | null
   mimeType?: string | null
   duration?: number | null
+  mp4Faststart?: boolean | null
   thumbnail?: string | null
   thumbnailAvailable?: boolean
   embedUrl?: string | null
@@ -1172,6 +1202,7 @@ export type VideoUncheckedCreateWithoutMegaAccountInput = {
   fileSize?: bigint | number | null
   mimeType?: string | null
   duration?: number | null
+  mp4Faststart?: boolean | null
   thumbnail?: string | null
   thumbnailAvailable?: boolean
   embedUrl?: string | null
@@ -1225,6 +1256,7 @@ export type VideoCreateWithoutWatchlistedByInput = {
   fileSize?: bigint | number | null
   mimeType?: string | null
   duration?: number | null
+  mp4Faststart?: boolean | null
   thumbnail?: string | null
   thumbnailAvailable?: boolean
   embedUrl?: string | null
@@ -1257,6 +1289,7 @@ export type VideoUncheckedCreateWithoutWatchlistedByInput = {
   fileSize?: bigint | number | null
   mimeType?: string | null
   duration?: number | null
+  mp4Faststart?: boolean | null
   thumbnail?: string | null
   thumbnailAvailable?: boolean
   embedUrl?: string | null
@@ -1300,6 +1333,7 @@ export type VideoUpdateWithoutWatchlistedByInput = {
   fileSize?: Prisma.NullableBigIntFieldUpdateOperationsInput | bigint | number | null
   mimeType?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   duration?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  mp4Faststart?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   thumbnail?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   thumbnailAvailable?: Prisma.BoolFieldUpdateOperationsInput | boolean
   embedUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -1332,6 +1366,7 @@ export type VideoUncheckedUpdateWithoutWatchlistedByInput = {
   fileSize?: Prisma.NullableBigIntFieldUpdateOperationsInput | bigint | number | null
   mimeType?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   duration?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  mp4Faststart?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   thumbnail?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   thumbnailAvailable?: Prisma.BoolFieldUpdateOperationsInput | boolean
   embedUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -1359,6 +1394,7 @@ export type VideoCreateWithoutSavedByInput = {
   fileSize?: bigint | number | null
   mimeType?: string | null
   duration?: number | null
+  mp4Faststart?: boolean | null
   thumbnail?: string | null
   thumbnailAvailable?: boolean
   embedUrl?: string | null
@@ -1391,6 +1427,7 @@ export type VideoUncheckedCreateWithoutSavedByInput = {
   fileSize?: bigint | number | null
   mimeType?: string | null
   duration?: number | null
+  mp4Faststart?: boolean | null
   thumbnail?: string | null
   thumbnailAvailable?: boolean
   embedUrl?: string | null
@@ -1434,6 +1471,7 @@ export type VideoUpdateWithoutSavedByInput = {
   fileSize?: Prisma.NullableBigIntFieldUpdateOperationsInput | bigint | number | null
   mimeType?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   duration?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  mp4Faststart?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   thumbnail?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   thumbnailAvailable?: Prisma.BoolFieldUpdateOperationsInput | boolean
   embedUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -1466,6 +1504,7 @@ export type VideoUncheckedUpdateWithoutSavedByInput = {
   fileSize?: Prisma.NullableBigIntFieldUpdateOperationsInput | bigint | number | null
   mimeType?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   duration?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  mp4Faststart?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   thumbnail?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   thumbnailAvailable?: Prisma.BoolFieldUpdateOperationsInput | boolean
   embedUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -1493,6 +1532,7 @@ export type VideoCreateWithoutWatchHistoryInput = {
   fileSize?: bigint | number | null
   mimeType?: string | null
   duration?: number | null
+  mp4Faststart?: boolean | null
   thumbnail?: string | null
   thumbnailAvailable?: boolean
   embedUrl?: string | null
@@ -1525,6 +1565,7 @@ export type VideoUncheckedCreateWithoutWatchHistoryInput = {
   fileSize?: bigint | number | null
   mimeType?: string | null
   duration?: number | null
+  mp4Faststart?: boolean | null
   thumbnail?: string | null
   thumbnailAvailable?: boolean
   embedUrl?: string | null
@@ -1568,6 +1609,7 @@ export type VideoUpdateWithoutWatchHistoryInput = {
   fileSize?: Prisma.NullableBigIntFieldUpdateOperationsInput | bigint | number | null
   mimeType?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   duration?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  mp4Faststart?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   thumbnail?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   thumbnailAvailable?: Prisma.BoolFieldUpdateOperationsInput | boolean
   embedUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -1600,6 +1642,7 @@ export type VideoUncheckedUpdateWithoutWatchHistoryInput = {
   fileSize?: Prisma.NullableBigIntFieldUpdateOperationsInput | bigint | number | null
   mimeType?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   duration?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  mp4Faststart?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   thumbnail?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   thumbnailAvailable?: Prisma.BoolFieldUpdateOperationsInput | boolean
   embedUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -1629,6 +1672,7 @@ export type VideoCreateManyCreatorInput = {
   fileSize?: bigint | number | null
   mimeType?: string | null
   duration?: number | null
+  mp4Faststart?: boolean | null
   thumbnail?: string | null
   thumbnailAvailable?: boolean
   embedUrl?: string | null
@@ -1654,6 +1698,7 @@ export type VideoUpdateWithoutCreatorInput = {
   fileSize?: Prisma.NullableBigIntFieldUpdateOperationsInput | bigint | number | null
   mimeType?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   duration?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  mp4Faststart?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   thumbnail?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   thumbnailAvailable?: Prisma.BoolFieldUpdateOperationsInput | boolean
   embedUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -1685,6 +1730,7 @@ export type VideoUncheckedUpdateWithoutCreatorInput = {
   fileSize?: Prisma.NullableBigIntFieldUpdateOperationsInput | bigint | number | null
   mimeType?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   duration?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  mp4Faststart?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   thumbnail?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   thumbnailAvailable?: Prisma.BoolFieldUpdateOperationsInput | boolean
   embedUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -1715,6 +1761,7 @@ export type VideoUncheckedUpdateManyWithoutCreatorInput = {
   fileSize?: Prisma.NullableBigIntFieldUpdateOperationsInput | bigint | number | null
   mimeType?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   duration?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  mp4Faststart?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   thumbnail?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   thumbnailAvailable?: Prisma.BoolFieldUpdateOperationsInput | boolean
   embedUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -1742,6 +1789,7 @@ export type VideoCreateManyMegaAccountInput = {
   fileSize?: bigint | number | null
   mimeType?: string | null
   duration?: number | null
+  mp4Faststart?: boolean | null
   thumbnail?: string | null
   thumbnailAvailable?: boolean
   embedUrl?: string | null
@@ -1767,6 +1815,7 @@ export type VideoUpdateWithoutMegaAccountInput = {
   fileSize?: Prisma.NullableBigIntFieldUpdateOperationsInput | bigint | number | null
   mimeType?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   duration?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  mp4Faststart?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   thumbnail?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   thumbnailAvailable?: Prisma.BoolFieldUpdateOperationsInput | boolean
   embedUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -1798,6 +1847,7 @@ export type VideoUncheckedUpdateWithoutMegaAccountInput = {
   fileSize?: Prisma.NullableBigIntFieldUpdateOperationsInput | bigint | number | null
   mimeType?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   duration?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  mp4Faststart?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   thumbnail?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   thumbnailAvailable?: Prisma.BoolFieldUpdateOperationsInput | boolean
   embedUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -1828,6 +1878,7 @@ export type VideoUncheckedUpdateManyWithoutMegaAccountInput = {
   fileSize?: Prisma.NullableBigIntFieldUpdateOperationsInput | bigint | number | null
   mimeType?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   duration?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  mp4Faststart?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   thumbnail?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   thumbnailAvailable?: Prisma.BoolFieldUpdateOperationsInput | boolean
   embedUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -1905,6 +1956,7 @@ export type VideoSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = 
   fileSize?: boolean
   mimeType?: boolean
   duration?: boolean
+  mp4Faststart?: boolean
   thumbnail?: boolean
   thumbnailAvailable?: boolean
   embedUrl?: boolean
@@ -1939,6 +1991,7 @@ export type VideoSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Extensi
   fileSize?: boolean
   mimeType?: boolean
   duration?: boolean
+  mp4Faststart?: boolean
   thumbnail?: boolean
   thumbnailAvailable?: boolean
   embedUrl?: boolean
@@ -1969,6 +2022,7 @@ export type VideoSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensi
   fileSize?: boolean
   mimeType?: boolean
   duration?: boolean
+  mp4Faststart?: boolean
   thumbnail?: boolean
   thumbnailAvailable?: boolean
   embedUrl?: boolean
@@ -1999,6 +2053,7 @@ export type VideoSelectScalar = {
   fileSize?: boolean
   mimeType?: boolean
   duration?: boolean
+  mp4Faststart?: boolean
   thumbnail?: boolean
   thumbnailAvailable?: boolean
   embedUrl?: boolean
@@ -2010,7 +2065,7 @@ export type VideoSelectScalar = {
   megaModifiedAt?: boolean
 }
 
-export type VideoOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "megaAccountId" | "megaUrl" | "megaFileId" | "megaFileKey" | "megaFilename" | "megaNodeId" | "parentNodeId" | "fileKeyEncrypted" | "title" | "slug" | "creatorId" | "creatorAssignment" | "fileSize" | "mimeType" | "duration" | "thumbnail" | "thumbnailAvailable" | "embedUrl" | "sortOrder" | "tags" | "createdAt" | "updatedAt" | "megaFa" | "megaModifiedAt", ExtArgs["result"]["video"]>
+export type VideoOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "megaAccountId" | "megaUrl" | "megaFileId" | "megaFileKey" | "megaFilename" | "megaNodeId" | "parentNodeId" | "fileKeyEncrypted" | "title" | "slug" | "creatorId" | "creatorAssignment" | "fileSize" | "mimeType" | "duration" | "mp4Faststart" | "thumbnail" | "thumbnailAvailable" | "embedUrl" | "sortOrder" | "tags" | "createdAt" | "updatedAt" | "megaFa" | "megaModifiedAt", ExtArgs["result"]["video"]>
 export type VideoInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   creator?: boolean | Prisma.Video$creatorArgs<ExtArgs>
   megaAccount?: boolean | Prisma.Video$megaAccountArgs<ExtArgs>
@@ -2054,6 +2109,13 @@ export type $VideoPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs 
     fileSize: bigint | null
     mimeType: string | null
     duration: number | null
+    /**
+     * MP4 moov placement from the background layout probe (Phase P1.2):
+     * true = faststart (moov first), false = non-faststart (moov at end,
+     * served via the faststart cache). Null = unknown (not yet probed).
+     * Trusted only when fileSize still matches the fresh MEGA size.
+     */
+    mp4Faststart: boolean | null
     thumbnail: string | null
     thumbnailAvailable: boolean
     embedUrl: string | null
@@ -2513,6 +2575,7 @@ export interface VideoFieldRefs {
   readonly fileSize: Prisma.FieldRef<"Video", 'BigInt'>
   readonly mimeType: Prisma.FieldRef<"Video", 'String'>
   readonly duration: Prisma.FieldRef<"Video", 'Int'>
+  readonly mp4Faststart: Prisma.FieldRef<"Video", 'Boolean'>
   readonly thumbnail: Prisma.FieldRef<"Video", 'String'>
   readonly thumbnailAvailable: Prisma.FieldRef<"Video", 'Boolean'>
   readonly embedUrl: Prisma.FieldRef<"Video", 'String'>

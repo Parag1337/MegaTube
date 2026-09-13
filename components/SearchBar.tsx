@@ -2,41 +2,55 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { SearchIcon, CloseIcon } from '@/components/icons';
 
-export function SearchBar() {
+export function SearchBar({
+  initialValue = '',
+  autoFocus = false,
+  id = 'site-search',
+  onSubmitted,
+}: {
+  initialValue?: string;
+  autoFocus?: boolean;
+  id?: string;
+  onSubmitted?: () => void;
+}) {
   const router = useRouter();
-  const [value, setValue] = useState('');
+  const [value, setValue] = useState(initialValue);
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const q = value.trim();
     router.push(q ? `/search?q=${encodeURIComponent(q)}` : '/search');
+    onSubmitted?.();
   }
 
   return (
-    <form onSubmit={handleSubmit} role="search" className="relative w-full">
+    <form onSubmit={handleSubmit} role="search" className="w-full">
       <div className="relative flex items-center">
-        <svg 
-          className="absolute left-3 h-4 w-4 text-muted" 
-          viewBox="0 0 24 24" 
-          fill="none" 
-          stroke="currentColor" 
-          strokeWidth="2" 
-          strokeLinecap="round" 
-          strokeLinejoin="round"
-          aria-hidden
-        >
-          <circle cx="11" cy="11" r="8"/>
-          <path d="m21 21-4.3-4.3"/>
-        </svg>
+        <span className="pointer-events-none absolute left-4 text-muted" aria-hidden>
+          <SearchIcon className="h-[18px] w-[18px]" />
+        </span>
         <input
+          id={id}
           type="search"
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          placeholder="Search"
-          aria-label="Search videos"
-          className="w-full rounded-full border border-border bg-surface px-10 py-2 text-sm text-foreground placeholder:text-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+          placeholder="Search videos and creators"
+          aria-label="Search videos and creators"
+          autoFocus={autoFocus}
+          className="h-10 w-full rounded-full border border-border bg-surface pl-11 pr-10 text-sm text-foreground placeholder:text-muted-light focus:border-border-light focus:bg-surface-raised focus:outline-none"
         />
+        {value && (
+          <button
+            type="button"
+            onClick={() => setValue('')}
+            aria-label="Clear search"
+            className="absolute right-1.5 flex h-7 w-7 items-center justify-center rounded-full text-muted hover:bg-surface-hover hover:text-foreground"
+          >
+            <CloseIcon className="h-4 w-4" />
+          </button>
+        )}
       </div>
     </form>
   );

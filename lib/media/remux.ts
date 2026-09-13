@@ -132,6 +132,21 @@ export function remuxCachePaths(videoId: number): { mp4Path: string; sidecarPath
   };
 }
 
+/**
+ * Atomically replace a sidecar file (P1-B): write to a unique temp name on
+ * the same filesystem, then rename over the target. Readers (cache lookup,
+ * eviction, LRU touch) always see the old or the new document — never a
+ * truncated partial from a crash/kill mid-write. A partial that loses its
+ * writer would otherwise turn a VALID mp4 unservable until stale-reclaim
+ * deletes it. Temp residue (crashed writer) matches no cache pattern and is
+ * ignored by every reader; the orphan sweep removes it by age.
+ */
+export async function writeSidecarAtomic(sidecarPath: string, value: unknown): Promise<void> {
+  const tmpPath = `${sidecarPath}.${process.pid}.tmp`;
+  await fs.promises.writeFile(tmpPath, JSON.stringify(value));
+  await fs.promises.rename(tmpPath, sidecarPath);
+}
+
 interface RemuxSidecar {
   megaNodeId: string;
   sourceSize: number;
@@ -546,7 +561,36 @@ export interface LiveRemuxJob {
   liveError: unknown;
   initSegment: Buffer | null;
   subscribers: Set<LiveSubscriber>;
+  /**
+   * One-shot waiters for init publication / live end (waitForLiveInit).
+   * Woken only at init publish or endBroadcast — never per chunk.
+   */
   waiters: Array<() => void>;
+  /**
+   * Spool-growth waiters (waitForSpoolOffset). Woken on EVERY spool growth
+   * (broadcast append, init durable) and at live end via wakeSpoolWaiters;
+   * each entry re-checks the frontier and re-registers itself while
+   * unsatisfied, so over-waking is harmless and no waiter can be stranded
+   * by growth it missed. Kept separate from `waiters`: init waiters must
+   * NOT fire per chunk (an early wake would reject them as failed).
+   */
+  spoolWaiters: Array<() => void>;
+  /**
+   * Zero-subscriber shutdown state (subscriber-aware lifecycle):
+   * - `dying`: shutdown decided (grace expired or explicit cancel). New
+   *   requests must not join this job; getOrCreate treats it as absent.
+   * - `cancelling`: teardown in progress (guards against double shutdown).
+   * - `settled`: terminal teardown ran (slot released, registry cleaned).
+   * - `graceTimer`: pending zero-subscriber grace countdown, if any.
+   */
+  dying: boolean;
+  cancelling: boolean;
+  settled: boolean;
+  graceTimer: ReturnType<typeof setTimeout> | null;
+  /** Aborts the upstream MEGA download + dependent work on cancellation. */
+  abortController: AbortController;
+  /** Rejects `ready` when cancelled before upstream headers arrive. */
+  xReadyReject: ((err: unknown) => void) | null;
   /** DIAG: number of requests that joined this job after creation. */
   xJoinedCount: number;
 }
@@ -563,19 +607,182 @@ const MAX_CONCURRENT_REMUX = Number(process.env.MAX_CONCURRENT_REMUX) || 2;
 let activeRemux = 0;
 const remuxWaiters: (() => void)[] = [];
 
-async function acquireRemuxSlot(): Promise<void> {
+/**
+ * Bounded slot acquisition (P0 remux-starvation fix): rejects with
+ * RemuxSlotUnavailableError when no slot frees within `timeoutMs` (or when
+ * `signal` aborts first), so a route handler can degrade to serving media
+ * bytes another way instead of waiting forever behind an expiring preflight
+ * timeout. Waiters that time out are removed from the FIFO (never handed a
+ * phantom slot later); aborted browser requests release their queue place
+ * the same way, so dead requests never consume a slot.
+ */
+export class RemuxSlotUnavailableError extends Error {
+  constructor() {
+    super('remux slot unavailable');
+    this.name = 'RemuxSlotUnavailableError';
+  }
+}
+
+export const REMUX_SLOT_WAIT_MS = 10_000;
+
+// ---------------------------------------------------------------------------
+// Temporary-media budget (P1-C): one cold job transiently holds up to ~3x
+// the source size (ts.part download + live spool + part.mp4 file output)
+// before publishing the final mp4. The finished-cache budget does not cover
+// these, so admission also gates on temp pressure + real disk space and
+// fails fast (retryable) instead of filling the disk mid-download.
+// ---------------------------------------------------------------------------
+
+/** Max bytes of temp media (*.ts.part, *.live.spool, *.part.mp4) allowed (env-overridable). */
+export const DEFAULT_MEDIA_TEMP_MAX_BYTES = 2 * 1024 * 1024 * 1024; // 2 GiB
+
+export function mediaTempMaxBytes(): number {
+  const raw = process.env.MEDIA_TEMP_MAX_BYTES;
+  if (raw !== undefined) {
+    const m = raw.trim().match(/^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb|tb)?$/i);
+    if (m) {
+      const value = Number(m[1]);
+      const unit = (m[2] ?? 'b').toLowerCase();
+      const mult = unit === 'tb' ? 1024 ** 4 : unit === 'gb' ? 1024 ** 3 : unit === 'mb' ? 1024 ** 2 : unit === 'kb' ? 1024 : 1;
+      if (Number.isFinite(value) && value > 0) return Math.floor(value * mult);
+    }
+  }
+  return DEFAULT_MEDIA_TEMP_MAX_BYTES;
+}
+
+/** Peak temp multiplier vs source size (download + spool + file output). */
+export const MEDIA_TEMP_PEAK_FACTOR = 3;
+/** Floor of free disk kept for OS health beyond one job's peak need. */
+export const MEDIA_TEMP_DISK_HEADROOM_BYTES = 256 * 1024 * 1024; // 256 MiB
+
+export class MediaTempBudgetError extends Error {
+  constructor() {
+    super('temporary media budget exhausted');
+    this.name = 'MediaTempBudgetError';
+  }
+}
+
+const TEMP_FILE_RE = /^(\d+)\.(ts\.part|live\.spool|part\.mp4)$/;
+
+/** Current temp-media footprint (never throws; best-effort accounting). */
+export function mediaTempUsage(): { bytes: number; files: number } {
+  try {
+    const dir = mediaCacheDir();
+    const names = fs.readdirSync(dir);
+    let bytes = 0;
+    let files = 0;
+    for (const name of names) {
+      if (!TEMP_FILE_RE.test(name)) continue;
+      try {
+        const stat = fs.statSync(path.join(dir, name));
+        if (stat.isFile()) {
+          bytes += stat.size;
+          files++;
+        }
+      } catch {
+        // raced deletion - ignore
+      }
+    }
+    return { bytes, files };
+  } catch {
+    return { bytes: 0, files: 0 };
+  }
+}
+
+function diskFreeBytes(dir: string): number | null {
+  try {
+    const st = (fs as unknown as { statfsSync?: (p: string) => { bfree: number; bsize: number } }).statfsSync;
+    if (typeof st !== 'function') return null;
+    const { bfree, bsize } = st.call(fs, dir);
+    if (!Number.isFinite(bfree) || !Number.isFinite(bsize) || bfree < 0 || bsize <= 0) return null;
+    return bfree * bsize;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fail-fast admission for a new cold job (P1-C): throws
+ * MediaTempBudgetError when temp pressure or real disk space cannot cover
+ * this job's peak (~3x source + headroom). Fail-OPEN on any telemetry
+ * failure: never break playback because a stat call failed. Callers map
+ * the error to a retryable 503 (the job warms nothing and registers
+ * nothing, so a retry later can succeed).
+ */
+export function checkMediaTempBudget(sourceSize: number): void {
+  const need = Math.ceil(Number(sourceSize) * MEDIA_TEMP_PEAK_FACTOR);
+  if (!Number.isFinite(need) || need < 0) return;
+  const dir = mediaCacheDir();
+  try {
+    const usage = mediaTempUsage();
+    if (usage.bytes + need > mediaTempMaxBytes()) {
+      throw new MediaTempBudgetError();
+    }
+  } catch (err) {
+    if (err instanceof MediaTempBudgetError) throw err;
+    // accounting failure -> fall through to the disk check, then fail open
+  }
+  const free = diskFreeBytes(dir);
+  if (free !== null && free < need + MEDIA_TEMP_DISK_HEADROOM_BYTES) {
+    throw new MediaTempBudgetError();
+  }
+}
+
+export async function tryAcquireRemuxSlot(
+  timeoutMs: number = REMUX_SLOT_WAIT_MS,
+  signal?: AbortSignal,
+): Promise<void> {
+  // A pre-aborted viewer must never consume a slot: check BEFORE the
+  // fast-path grant, otherwise an aborted request steals pool capacity.
+  if (signal?.aborted) throw new RemuxSlotUnavailableError();
   if (activeRemux < MAX_CONCURRENT_REMUX) {
     activeRemux++;
     return;
   }
-  await new Promise<void>((resolve) => remuxWaiters.push(resolve));
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const idx = remuxWaiters.indexOf(onGrant);
+      if (idx >= 0) remuxWaiters.splice(idx, 1);
+      cleanup();
+      reject(new RemuxSlotUnavailableError());
+    }, timeoutMs);
+    const onAbort = () => {
+      const idx = remuxWaiters.indexOf(onGrant);
+      if (idx >= 0) remuxWaiters.splice(idx, 1);
+      cleanup();
+      reject(new RemuxSlotUnavailableError());
+    };
+    const onGrant = () => {
+      cleanup();
+      resolve();
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    // FIFO note: timed waiters reuse the same queue as unbounded waiters.
+    // A timed waiter that reaches the head is granted the slot immediately
+    // like any other waiter; only expiry/abort removes it early.
+    remuxWaiters.push(onGrant);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
   activeRemux++;
 }
 
 function releaseRemuxSlot(): void {
-  activeRemux--;
+  // Guarded: timed-out/aborted waiters are removed from the FIFO before they
+  // are ever granted a slot, but release paths run in finally blocks that can
+  // overlap job teardown — never let the counter go negative and poison
+  // future admission.
+  activeRemux = Math.max(0, activeRemux - 1);
   const next = remuxWaiters.shift();
   if (next) next();
+}
+
+/** Admission stats for the route's fail-fast path (P0: never burn the whole
+ *  preflight budget queued behind a saturated remux pool). */
+export function getRemuxSlotStats(): { active: number; max: number; queued: number } {
+  return { active: activeRemux, max: MAX_CONCURRENT_REMUX, queued: remuxWaiters.length };
 }
 
 export function getLiveRemuxStats(): { active: number; videoIds: number[] } {
@@ -583,6 +790,22 @@ export function getLiveRemuxStats(): { active: number; videoIds: number[] } {
     active: liveJobs.size,
     videoIds: [...liveJobs.keys()],
   };
+}
+
+/**
+ * Wake every registered spool-offset waiter. Each waiter re-checks the
+ * frontier against its target and re-registers itself while unsatisfied, so
+ * waking early or often is harmless; never waking strands seekers. Called
+ * on every spool growth (broadcast append, init durable) and at live end.
+ */
+export function wakeSpoolWaiters(job: LiveRemuxJob): void {
+  for (const w of job.spoolWaiters.splice(0)) {
+    try {
+      w();
+    } catch {
+      // A waiter must never break the broadcast loop.
+    }
+  }
 }
 
 function broadcast(job: LiveRemuxJob, chunk: Buffer): void {
@@ -599,6 +822,9 @@ function broadcast(job: LiveRemuxJob, chunk: Buffer): void {
     .then(() => fs.promises.appendFile(job.spoolPath, chunk))
     .then(() => {
       job.spoolBytes += chunk.length;
+      // P0-B: spool growth must wake offset waiters (they re-check the
+      // frontier and re-register while unsatisfied).
+      wakeSpoolWaiters(job);
     })
     .catch((err) => {
       // A failed spool append is exceptional (local temp disk). Readers may
@@ -620,6 +846,131 @@ function endBroadcast(job: LiveRemuxJob, err: unknown): void {
   );
   for (const sub of job.subscribers) sub.notify();
   for (const w of job.waiters.splice(0)) w();
+  wakeSpoolWaiters(job);
+}
+
+/**
+ * Zero-subscriber grace period (subscriber-aware lifecycle): when the last
+ * viewer leaves, the job is NOT killed immediately — a short window absorbs
+ * remounts/retries/refreshes (the P1.3 player typically returns within
+ * seconds). Only a job still unwatched when the window expires is
+ * cancelled. Configurable; default 10 s.
+ */
+export const ZERO_SUBSCRIBER_GRACE_MS = 10_000;
+
+export function zeroSubscriberGraceMs(): number {
+  const n = Number(process.env.MEDIA_ZERO_SUBSCRIBER_GRACE_MS);
+  return Number.isFinite(n) && n >= 0 ? n : ZERO_SUBSCRIBER_GRACE_MS;
+}
+
+/**
+ * Intentional lifecycle cancellation (zero subscribers, grace expired).
+ * Named (not a generic Error) so logs/teardown treat it as normal cleanup
+ * rather than a server failure — never a 502/503 cause by itself.
+ */
+export class LiveJobCancelledError extends Error {
+  constructor(reason = 'zero subscribers') {
+    super(`live remux cancelled: ${reason}`);
+    this.name = 'LiveJobCancelledError';
+  }
+}
+
+/**
+ * A viewer attached: cancel any pending grace shutdown. Idempotent —
+ * attaching twice (or attaching to a job with no timer) is a no-op.
+ */
+export function noteSubscriberAttached(job: LiveRemuxJob): void {
+  cancelGraceTimer(job);
+}
+
+/**
+ * A viewer detached: when the count reaches zero, arm the grace countdown.
+ * Detaching an already-removed viewer is harmless (set semantics + size
+ * check), so duplicate cleanup can never corrupt the lifecycle.
+ */
+export function noteSubscriberDetached(job: LiveRemuxJob): void {
+  if (job.subscribers.size === 0) armGraceTimer(job);
+}
+
+/** Cancel a pending grace countdown (new interest arrived). */
+export function cancelGraceTimer(job: LiveRemuxJob): void {
+  if (job.graceTimer !== null) {
+    clearTimeout(job.graceTimer);
+    job.graceTimer = null;
+  }
+}
+
+/**
+ * Arm the zero-subscriber grace countdown. No-op unless the job is alive,
+ * unwatched, and has no timer running. At expiry the job is cancelled iff
+ * still unwatched (a concurrent attach cancels first — see
+ * noteSubscriberAttached); expiry always re-checks instead of trusting
+ * decade-old state.
+ */
+function armGraceTimer(job: LiveRemuxJob): void {
+  if (job.graceTimer !== null) return;
+  if (job.dying || job.cancelling || job.settled || job.liveEnded) return;
+  if (job.subscribers.size > 0) return;
+  const waitMs = zeroSubscriberGraceMs();
+  job.graceTimer = setTimeout(() => {
+    job.graceTimer = null;
+    // Re-verify: an attach racing expiry cancels the timer, so reaching
+    // here with subscribers means the cancel was missed — stand down and
+    // let the next detach re-arm instead of killing a watched job.
+    if (job.subscribers.size > 0 || job.dying || job.cancelling || job.settled || job.liveEnded) return;
+    cancelLiveRemuxJob(job, 'zero-subscriber grace expired');
+  }, waitMs);
+}
+
+/**
+ * Retain a job for server-owned background work (e.g. the MP4 cache-warm
+ * path, which never creates a viewer response). The holder counts as a
+ * subscriber so the grace logic leaves warm jobs alone; release it when
+ * the job settles. The returned release is idempotent.
+ */
+export function retainLiveRemuxJob(job: LiveRemuxJob): () => void {
+  const holder: LiveSubscriber = { notify: () => {}, detached: false };
+  job.subscribers.add(holder);
+  cancelGraceTimer(job);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    holder.detached = true;
+    job.subscribers.delete(holder);
+    noteSubscriberDetached(job);
+  };
+}
+
+/**
+ * Cancel a live job: abort upstream work, end the broadcast, remove the
+ * registry entry. Idempotent via cancelling/settled guards — safe to call
+ * from the grace timer, error paths, and tests concurrently.
+ *
+ * Slot release is DELIBERATELY not done here: the job's own finally owns
+ * the single releaseRemuxSlot call, so cancellation can never double-
+ * release (or leak: aborting the download forces the pipeline through
+ * catch -> fail -> finally promptly).
+ */
+export function cancelLiveRemuxJob(job: LiveRemuxJob, reason = 'zero subscribers'): void {
+  if (job.cancelling || job.settled) return;
+  job.cancelling = true;
+  job.dying = true;
+  cancelGraceTimer(job);
+  if (liveJobs.get(job.videoId) === job) liveJobs.delete(job.videoId);
+  const err = new LiveJobCancelledError(reason);
+  try {
+    job.abortController.abort();
+  } catch {
+    // ignore
+  }
+  try {
+    job.xReadyReject?.(err);
+  } catch {
+    // ignore
+  }
+  console.log(`[livejob] ${job.videoId} cancelled (${reason}) at +${Date.now() - job.xStartedAt}ms`);
+  endBroadcast(job, err);
 }
 
 /**
@@ -629,7 +980,17 @@ function endBroadcast(job: LiveRemuxJob, err: unknown): void {
  */
 export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
   const existing = liveJobs.get(src.videoId);
-  if (existing) return existing;
+  // A dying job (grace-expired shutdown in progress) must never be handed
+  // out: the caller creates a fresh pipeline instead. Brief download
+  // overlap during teardown is bounded and safe (old upstream is aborted;
+  // temp cleanup is identity-guarded in the job finally).
+  if (existing && !existing.dying) return existing;
+
+  // P1-C admission BEFORE registering: a rejected job warms nothing,
+  // registers nothing, and holds no slot — callers answer retryable 503
+  // and a later retry can succeed. Joins of running jobs bypass this
+  // (their resources are already committed).
+  checkMediaTempBudget(src.size);
 
   const job: LiveRemuxJob = {
     videoId: src.videoId,
@@ -647,10 +1008,25 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
     initSegment: null,
     subscribers: new Set(),
     waiters: [],
+    spoolWaiters: [],
+    dying: false,
+    cancelling: false,
+    settled: false,
+    graceTimer: null,
+    abortController: new AbortController(),
+    xReadyReject: null,
     xJoinedCount: 0,
   };
   console.warn(`[livejob] ${src.videoId} start size=${src.size}`);
   liveJobs.set(src.videoId, job);
+  // NOTE: no grace timer is armed here. Arming happens only when interest
+  // demonstrably empties: a subscriber detaching to zero, a waiter settling
+  // with nobody attached, or a request leaving the live section without
+  // attaching (route finally). Arming at creation would race the creator's
+  // own preflight (session + a=g + sniff + ready + init can exceed any
+  // safe grace bound on slow MEGA) and self-cancel healthy new jobs.
+  // Warm jobs retain an explicit holder instead (see retainLiveRemuxJob).
+  armGraceTimer(job);
   const spoolPath = path.join(mediaCacheDir(), `${src.videoId}.live.spool`);
   job.spoolPath = spoolPath;
   // The spool must start EMPTY so replay readers are byte-continuous from 0.
@@ -668,7 +1044,18 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
 
   const fail = (err: unknown): null => {
     const detail = err instanceof Error ? `${err.name}: ${err.message.slice(0, 200)}` : typeof err;
-    console.warn(`[media] live remux video ${src.videoId} failed: ${detail}`);
+    // Intentional lifecycle cancellation is normal cleanup, not a server
+    // failure: log quietly so it never looks like a 502/503 cause. This
+    // covers both the explicit cancel error and an AbortError arriving
+    // after cancellation was decided (abort racing a genuine fetch).
+    const quiet =
+      err instanceof LiveJobCancelledError ||
+      (job.cancelling && err instanceof Error && err.name === 'AbortError');
+    if (quiet) {
+      console.log(`[livejob] ${src.videoId} cancelled: ${detail}`);
+    } else {
+      console.warn(`[media] live remux video ${src.videoId} failed: ${detail}`);
+    }
     try {
       liveProc?.kill('SIGKILL');
     } catch {
@@ -679,7 +1066,11 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
     } catch {
       // ignore
     }
-    endBroadcast(job, err instanceof Error ? err : new Error(String(err)));
+    // The cancellation path already broadcast the terminal state; a second
+    // endBroadcast would only re-notify (harmless but noisy), so skip it.
+    if (!job.liveEnded) {
+      endBroadcast(job, err instanceof Error ? err : new Error(String(err)));
+    }
     return null;
   };
 
@@ -690,6 +1081,10 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
     readyResolve = resolve;
     readyReject = reject;
   });
+  // Cancellation before upstream headers must fail the preflight promptly
+  // (instead of hanging it until the route timeout): rejecting a settled
+  // promise is a no-op, so no resolved-state tracking is needed.
+  job.xReadyReject = (err: unknown) => readyReject(err);
   // Avoid unhandled rejection when nobody awaits ready (e.g. viewers that
   // detached before the fetch settled - cache still carries the outcome).
   job.ready.catch(() => {});
@@ -702,7 +1097,21 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
   job.spoolInitWritten.catch(() => {});
 
   job.cache = (async (): Promise<{ path: string; size: number } | null> => {
-    await acquireRemuxSlot();
+    // P0: bounded admission — a saturated pool must fail this job fast (so
+    // the route can answer honestly with 503+Retry-After) instead of parking
+    // it in an unbounded FIFO while every viewer-facing timeout expires.
+    //
+    // Phase 6 invariant: the finally below is the ONLY releaser, but it
+    // must release ONLY what was acquired — a failed acquisition followed
+    // by an unconditional release would hand out a phantom slot.
+    let slotHeld = false;
+    try {
+      await tryAcquireRemuxSlot(REMUX_SLOT_WAIT_MS);
+      slotHeld = true;
+    } catch (err) {
+      readyReject(err);
+      return fail(err);
+    }
     const startedAt = Date.now();
     try {
       const dir = mediaCacheDir();
@@ -718,7 +1127,12 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
       // The fetch runs through the caller's retry wrapper; a reached-here
       // non-OK status (509 bandwidth, 404/410 gone) is reported via
       // job.ready so the route can answer honest JSON BEFORE headers.
-      const upstream = await src.fetchCiphertext(`${src.upstreamUrl}/0-${src.size - 1}`);
+      // The job abort signal lets zero-subscriber cancellation stop the
+      // download promptly instead of running it to completion unwatched.
+      const upstream = await src.fetchCiphertext(
+        `${src.upstreamUrl}/0-${src.size - 1}`,
+        job.abortController.signal,
+      );
       if (!upstream.ok || !upstream.body) {
         const err = Object.assign(new Error(`upstream ${upstream.status}`), {
           upstreamStatus: upstream.status,
@@ -856,12 +1270,22 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
           );
           // DURABLE FIRST (Bug 2 correctness): persist init+tail to the
           // spool so every current/future viewer replays byte-continuously
-          // from offset 0. Init bytes are broadcast through the same ordered
-          // chain as fragments - no second writer can interleave.
+          // from offset 0.
+          //
+          // ATOMICITY (P0-A root cause): init AND tail are appended inside a
+          // SINGLE chain link that never re-reads job.spoolSynced. The old
+          // code chained the tail append onto the then-current spoolSynced,
+          // so a fragment broadcast landing between the two microtask steps
+          // chained AHEAD of the tail: the first post-init chunk (moof #1)
+          // ended up at EOF and every viewer received init + raw mdat
+          // payload with no moof -> Chrome FFmpegDemuxer seek failure at
+          // readyState 0. With one link, broadcasts can only chain after the
+          // complete init+tail unit, so the spool is always a byte-exact
+          // prefix of ffmpeg's stdout.
           job.spoolSynced = job.spoolSynced
             .catch(() => {})
-            .then(() => fs.promises.appendFile(job.spoolPath, job.initSegment as Buffer))
-            .then(() => {
+            .then(async () => {
+              await fs.promises.appendFile(job.spoolPath, job.initSegment as Buffer);
               job.spoolBytes += (job.initSegment as Buffer).length;
               if (preKnown == null) {
                 // Remember where the mvhd duration field lives in the spool
@@ -875,27 +1299,20 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
                 }
               }
               if (tail.length > 0) {
-                job.spoolSynced = job.spoolSynced
-                  .then(() => fs.promises.appendFile(job.spoolPath, tail))
-                  .then(() => {
-                    job.spoolBytes += tail.length;
-                  })
-                  .catch((err) => {
-                    console.warn(
-                      `[livejob] ${src.videoId} spool write failed: ${err instanceof Error ? err.message.slice(0, 120) : typeof err}`,
-                    );
-                  });
+                await fs.promises.appendFile(job.spoolPath, tail);
+                job.spoolBytes += tail.length;
               }
+              wakeSpoolWaiters(job);
             })
             .then(() => {
               spoolInitWrittenResolve();
             })
-          	.catch((err) => {
-            	console.warn(
-              `[livejob] ${src.videoId} spool init write failed: ${err instanceof Error ? err.message.slice(0, 120) : typeof err}`,
-            );
-            spoolInitWrittenResolve();
-          });
+           	.catch((err) => {
+             	console.warn(
+               `[livejob] ${src.videoId} spool init write failed: ${err instanceof Error ? err.message.slice(0, 120) : typeof err}`,
+             );
+             spoolInitWrittenResolve();
+           });
           for (const w of job.waiters.splice(0)) w();
           initAccum = [];
         };
@@ -942,6 +1359,35 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
         decryptor.on('error', rejectDl);
         ws.on('finish', () => resolveDl());
         ws.on('error', rejectDl);
+        // Zero-subscriber cancellation tears the pipeline down promptly.
+        // Stream destroy alone does not reliably reject (plain destroy()
+        // emits 'close', not 'error'), so reject explicitly too: promise
+        // settlement is once-only, so a later genuine outcome is unaffected.
+        // Rejection flows through the normal fail -> finally path (single
+        // slot release, guarded temp cleanup). No-ops when already finished.
+        const onJobAbort = () => {
+          try {
+            nodeUpstream.destroy();
+          } catch {
+            // ignore
+          }
+          try {
+            decryptor.destroy();
+          } catch {
+            // ignore
+          }
+          try {
+            ws.destroy();
+          } catch {
+            // ignore
+          }
+          rejectDl(new LiveJobCancelledError('zero subscribers'));
+        };
+        if (job.abortController.signal.aborted) {
+          onJobAbort();
+        } else {
+          job.abortController.signal.addEventListener('abort', onJobAbort, { once: true });
+        }
         decryptor.on('data', (c: Buffer) => {
           if (!ffIn.destroyed) {
             try {
@@ -983,9 +1429,24 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
       const stat = await fs.promises.stat(mp4Tmp);
       if (stat.size <= 0) throw new Error('ffmpeg produced an empty file');
       await fs.promises.rename(mp4Tmp, mp4Path);
-      await fs.promises.writeFile(
+      // P1-B: the mp4 rename above is atomic; the sidecar MUST be too, or a
+      // crash between the two leaves a valid mp4 unservable (lookup treats
+      // a missing/partial sidecar as stale and eviction eventually DELETES
+      // the good file). Order stays rename-then-sidecar: the reverse crash
+      // window (sidecar without mp4) is invisible to the *.mp4-scanning
+      // eviction and would linger; an mp4 without sidecar self-heals via
+      // stale reclaim, and the live job stays registered (joinable) until
+      // its finally runs, so no duplicate cold work starts in the window.
+      await writeSidecarAtomic(
         sidecarPath,
-        JSON.stringify({ megaNodeId: src.megaNodeId, sourceSize: src.size, outputSize: stat.size }),
+        // lastAccessedAt seeds LRU tracking (P1.5); old sidecars without it
+        // fall back to file mtime, so pre-existing caches keep working.
+        {
+          megaNodeId: src.megaNodeId,
+          sourceSize: src.size,
+          outputSize: stat.size,
+          lastAccessedAt: new Date().toISOString(),
+        },
       );
       await fs.promises.rm(tsTmp, { force: true });
       return { path: mp4Path, size: stat.size };
@@ -993,7 +1454,13 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
       readyReject(err);
       return fail(err);
     } finally {
-      releaseRemuxSlot();
+      // Single slot release: this finally is the ONLY releaser, and only
+      // when acquisition succeeded. Cancellation never releases directly —
+      // it aborts the download, which funnels through catch -> fail ->
+      // here exactly once per job.
+      if (slotHeld) releaseRemuxSlot();
+      job.settled = true;
+      cancelGraceTimer(job);
       if (liveJobs.get(src.videoId) === job) liveJobs.delete(src.videoId);
       try {
         liveJobProbeAborts.get(job)?.abort();
@@ -1003,13 +1470,20 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
       // Bug 6: this job's temp files must never outlive it. The temp .ts
       // download is removed here whether the remux succeeded, failed, or was
       // interrupted - a successful cache (mp4Path + sidecar) is untouched.
+      //
+      // Identity-guarded: temp names are per-videoId, so a FRESHER job for
+      // the same video (created after this one was evicted/cancelled) may
+      // already own them — never delete another live job's working files.
+      // (A fresher job cleans its own temps in its own finally.)
       try {
-        const dir = mediaCacheDir();
-        await Promise.all([
-          fs.promises.rm(path.join(dir, `${src.videoId}.part.mp4`), { force: true }),
-          fs.promises.rm(path.join(dir, `${src.videoId}.ts.part`), { force: true }),
-          fs.promises.rm(path.join(dir, `${src.videoId}.live.spool`), { force: true }),
-        ]);
+        if (liveJobs.get(src.videoId) === undefined || liveJobs.get(src.videoId) === job) {
+          const dir = mediaCacheDir();
+          await Promise.all([
+            fs.promises.rm(path.join(dir, `${src.videoId}.part.mp4`), { force: true }),
+            fs.promises.rm(path.join(dir, `${src.videoId}.ts.part`), { force: true }),
+            fs.promises.rm(path.join(dir, `${src.videoId}.live.spool`), { force: true }),
+          ]);
+        }
       } catch {
         // ignore cleanup errors
       }
@@ -1017,6 +1491,18 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
   })();
 
   return job;
+}
+
+/**
+ * Evict a dead live remux job so a retry can start fresh (P0 transient-404
+ * handling: the failed job's upstream URL may be stale; the replacement job
+ * is created against a freshly resolved URL and cannot be poisoned by the
+ * old one). Only removes the exact job object passed — never a newer job
+ * that raced in for the same video. No-op when the map already holds
+ * something else (e.g. the dead job already tore down).
+ */
+export function evictLiveRemuxJob(videoId: number, job: LiveRemuxJob): void {
+  if (liveJobs.get(videoId) === job) liveJobs.delete(videoId);
 }
 
 /**
@@ -1062,7 +1548,12 @@ export async function cleanupOrphanedTempFiles(): Promise<void> {
  */
 export function joinLiveRemuxJob(videoId: number): void {
   const job = liveJobs.get(videoId);
-  if (job) job.xJoinedCount++;
+  if (!job) return;
+  job.xJoinedCount++;
+  // A join is interest: the request is heading for preflight and will
+  // subscribe on success, so a running grace countdown must not kill the
+  // job underneath it. No-op when no timer is armed.
+  cancelGraceTimer(job);
 }
 
 /**
@@ -1091,8 +1582,18 @@ export function waitForLiveInit(job: LiveRemuxJob): Promise<Buffer> {
  * (`*` = total unknown while warming - valid per RFC 7233).
  */
 /**
+ * Bound on a single spool-offset wait (P0-B): a broken frontier (stalled
+ * ffmpeg, wedged download) must settle instead of hanging a request until
+ * browser abort. Settles with the current frontier like every other
+ * non-growth outcome, so the caller falls through to the cache/honest-503
+ * path instead of serving a lie.
+ */
+export const SPOOL_WAIT_TIMEOUT_MS = 30_000;
+
+/**
  * Resolve once the spool holds at least `offset` bytes (or the live has
- * ended / the viewer is gone). Returns the actual frontier at settle time.
+ * ended / the waiter times out / the viewer is gone). Returns the actual
+ * frontier at settle time.
  *
  * Used by the route for cold MPEG-TS seeks: a position inside the already
  * spooled fMP4 window can be served from the live stream without waiting
@@ -1102,55 +1603,79 @@ export function waitForSpoolOffset(
   job: LiveRemuxJob,
   offset: number,
   signal?: AbortSignal,
+  timeoutMs: number = SPOOL_WAIT_TIMEOUT_MS,
 ): Promise<number> {
   if (job.spoolBytes >= offset) return Promise.resolve(job.spoolBytes);
   if (job.liveEnded) return Promise.resolve(job.spoolBytes);
   return new Promise<number>((resolve) => {
     let done = false;
     let waiter: (() => void) | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const finish = () => {
       if (done) return;
       done = true;
-      const idx = waiter ? job.waiters.indexOf(waiter) : -1;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      const idx = waiter ? job.spoolWaiters.indexOf(waiter) : -1;
       if (waiter) {
         const w = waiter;
         waiter = null;
-        if (idx >= 0) job.waiters.splice(idx, 1);
+        if (idx >= 0) job.spoolWaiters.splice(idx, 1);
         w();
       }
       signal?.removeEventListener('abort', onAbort);
+      // A waiter that settles by timeout/abort on a still-running,
+      // unwatched job re-arms the grace check (growth/end settlements
+      // either subscribe or observe a finished job — no arm needed then,
+      // and armGraceTimer self-guards regardless).
+      if (job.subscribers.size === 0) armGraceTimer(job);
       resolve(job.spoolBytes);
     };
     const check = () => {
-      if (done) return; // settled via abort/end - never re-register
+      if (done) return; // settled via abort/end/timeout - never re-register
       // A notify consumes the registered entry; drop it before deciding.
-      const idx = waiter ? job.waiters.indexOf(waiter) : -1;
-      if (waiter && idx >= 0) job.waiters.splice(idx, 1);
+      const idx = waiter ? job.spoolWaiters.indexOf(waiter) : -1;
+      if (waiter && idx >= 0) job.spoolWaiters.splice(idx, 1);
       waiter = null;
       if (job.spoolBytes >= offset || job.liveEnded) {
         finish();
         return;
       }
-      // Not there yet: re-register for the next broadcast/end notification.
+      // Not there yet: re-register for the next growth/end notification.
+      // Active waiting is interest in the job: cancel any grace countdown
+      // so a seeker watching the frontier cannot lose the job underneath.
       waiter = check;
-      job.waiters.push(check);
+      job.spoolWaiters.push(check);
+      cancelGraceTimer(job);
     };
     const onAbort = () => finish();
+    const onTimeout = () => finish();
     signal?.addEventListener('abort', onAbort);
+    // No unref: a pending bounded wait is real work and must keep the loop
+    // alive until it settles (at most timeoutMs); finish() always clears it.
+    timer = setTimeout(onTimeout, timeoutMs);
     check();
   });
 }
 
 /**
- * True when `start` falls inside the fMP4 window the live spool can serve:
- * past the init segment and either already buffered or the live is still
- * running (bytes will arrive). False at 0 (the normal live path) and when
- * the start is beyond anything the live can provide (finished job with a
- * short spool).
+ * True when `start` is an fMP4-spool offset this live can serve: any offset
+ * below the current frontier, or any offset while the live is still running
+ * (bytes may still arrive — the caller waits bounded via waitForSpoolOffset).
+ * False at 0 (the normal start-0 live path owns it) and when the start is
+ * beyond anything a finished live produced.
+ *
+ * Coordinate warning: `start` MUST be an fMP4 output offset (byte position
+ * in the representation being served), never a source-TS offset. The two
+ * compressions have different sizes and unrelated per-offset meanings.
  */
 export function canServeSeekFromSpool(job: LiveRemuxJob, start: number): boolean {
   if (start <= 0) return false;
-  if (start < job.initSpoolOffset) return false;
+  // A dying job (shutdown decided) serves nothing live: fall through to the
+  // finished-cache / honest-503 path instead of attaching to a teardown.
+  if (job.dying) return false;
   if (job.spoolBytes > start) return true;
   // Not buffered yet: only the still-running live can ever reach it.
   return !job.liveEnded;
@@ -1162,8 +1687,19 @@ export function createLiveResponse(
   signal?: AbortSignal,
   startOffset: number = 0,
 ): Response {
+  // A viewer that went away during preflight must not leave a phantom
+  // subscriber: the abort listener below would never fire for an
+  // already-aborted signal, pinning the viewer count above zero forever
+  // (grace shutdown could never arm). Serve nothing and register nothing —
+  // nobody is listening anymore.
+  if (signal?.aborted) {
+    return new Response(null, { status: 204 });
+  }
   const sub: LiveSubscriber = { notify: () => {}, detached: false };
   job.subscribers.add(sub);
+  // Subscriber-aware lifecycle: this viewer keeps the job alive; its
+  // departure may arm the zero-subscriber grace countdown.
+  noteSubscriberAttached(job);
   let waiter: (() => void) | null = null;
   let aborted = false;
   let abortReject: ((err: Error) => void) | null = null;
@@ -1177,6 +1713,7 @@ export function createLiveResponse(
     if (!sub.detached) {
       sub.detached = true;
       job.subscribers.delete(sub);
+      noteSubscriberDetached(job);
       if (waiter) {
         const w = waiter;
         waiter = null;
@@ -1277,7 +1814,11 @@ export function createLiveResponse(
     'Cache-Control': 'no-store',
   });
   if (endByte !== null || startOffset > 0) {
-    // Total is unknown while the live warms ('*' is valid per RFC 7233).
+    // Spool-backed range (P0-C): offsets are fMP4 OUTPUT coordinates into
+    // the representation being served — the same byte space the start-0
+    // live response emits, which is also the space the browser's own Range
+    // refers to (it never saw source-TS bytes). Total is unknown while the
+    // live warms ('*' is valid per RFC 7233).
     // Once the live has ended the total is final: clamp the end (a viewer
     // may have asked beyond what the source actually produced).
     const effectiveEnd = endByte !== null ? Math.min(endByte, job.spoolBytes - 1) : job.spoolBytes - 1;
@@ -1285,6 +1826,9 @@ export function createLiveResponse(
       ? `bytes ${startOffset}-${Math.max(startOffset, effectiveEnd)}/${job.spoolBytes}`
       : `bytes ${startOffset}-${endByte ?? ''}/*`;
     headers.set('Content-Range', total);
+    // Unlike the open-ended live stream, a spool slice IS a satisfiable,
+    // stable byte range of a concrete prefix — advertise it honestly.
+    headers.set('Accept-Ranges', 'bytes');
     headers.set('X-Media-Path', 'live-spool');
     return new Response(webOut, { status: 206, headers });
   }
@@ -1303,8 +1847,10 @@ export function createCachedFileResponse(
   end: number,
   size: number,
   signal?: AbortSignal,
+  onDone?: () => void,
 ): Response {
   const nodeStream = fs.createReadStream(absPath, { start, end });
+  if (onDone) nodeStream.once('close', onDone);
   let aborted = false;
   if (signal) {
     signal.addEventListener('abort', () => {

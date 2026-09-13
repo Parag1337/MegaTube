@@ -126,6 +126,15 @@ export async function removeFromWatchlist(userId: string, videoId: number): Prom
   return removed.count > 0;
 }
 
+/**
+ * Clear the user's whole watchlist. Returns the number of removed rows.
+ * Saved Videos and History are untouched.
+ */
+export async function clearWatchlist(userId: string): Promise<number> {
+  const removed = await prisma.watchlistItem.deleteMany({ where: { userId } });
+  return removed.count;
+}
+
 /** Whether a particular video is in the user's watchlist. */
 export async function isOnWatchlist(userId: string, videoId: number): Promise<boolean> {
   const row = await prisma.watchlistItem.findUnique({
@@ -136,13 +145,37 @@ export async function isOnWatchlist(userId: string, videoId: number): Promise<bo
 }
 
 // ---------------------------------------------------------------------------
-// Saved Videos (flat bookmarks - NOT collections/folders)
+// Saved Videos (bookmarks, optionally organized in user-created folders)
 // ---------------------------------------------------------------------------
 
-/** All saved videos for a user, most recently saved first. */
-export async function listSavedVideos(userId: string, page = 1): Promise<PageResult<SerializedVideo>> {
+export type SavedVideoFolderFilter =
+  | { kind: 'all' }
+  | { kind: 'uncategorized' }
+  | { kind: 'folder'; folderId: number };
+
+export type SavedItem = SerializedVideo & { folderId: number | null };
+
+/**
+ * Saved videos for a user, most recently saved first.
+ *
+ * folderFilter narrows the listing (default: everything = "All Saved"):
+ *   { kind: 'all' }            - every saved video;
+ *   { kind: 'uncategorized' }  - saved videos in no folder;
+ *   { kind: 'folder', folderId } - saved videos inside one folder.
+ * A folderId belonging to another user matches nothing (never leaks).
+ */
+export async function listSavedVideos(
+  userId: string,
+  page = 1,
+  folderFilter: SavedVideoFolderFilter = { kind: 'all' },
+): Promise<PageResult<SavedItem>> {
   const { safePage, perPage, skip } = pageWindow(page);
-  const where = { userId };
+  const where =
+    folderFilter.kind === 'all'
+      ? { userId }
+      : folderFilter.kind === 'uncategorized'
+        ? { userId, folderId: null }
+        : { userId, folderId: folderFilter.folderId };
   const [rows, total] = await Promise.all([
     prisma.savedVideo.findMany({
       where,
@@ -154,7 +187,7 @@ export async function listSavedVideos(userId: string, page = 1): Promise<PageRes
     prisma.savedVideo.count({ where }),
   ]);
   return {
-    items: rows.map((r) => serializeVideo(r.video)),
+    items: rows.map((r) => ({ ...serializeVideo(r.video), folderId: r.folderId })),
     total,
     page: safePage,
     perPage,

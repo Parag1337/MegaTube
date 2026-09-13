@@ -1,52 +1,72 @@
 import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
+import { randomBytes } from 'node:crypto';
 import { getCurrentUser } from '@/lib/auth';
-import { searchVideos } from '@/lib/videos';
+import { isRandomSearchCommand, listRandomVideos, searchVideos } from '@/lib/videos';
 import { VideoGrid } from '@/components/VideoGrid';
+import { VideoGridSkeleton, EmptyState, Button } from '@/components/ui';
 import { Pagination } from '@/components/Pagination';
 import { SearchBar } from '@/components/SearchBar';
+import { SearchIcon, ShuffleIcon, FilmIcon } from '@/components/icons';
 
 export const metadata = { title: 'Search' };
 
 export const dynamic = 'force-dynamic';
 
 interface SearchPageProps {
-  searchParams: Promise<{ q?: string; page?: string }>;
+  searchParams: Promise<{ q?: string; page?: string; randomSeed?: string }>;
 }
 
-async function Results({ query, page, userId }: { query: string; page: number; userId: string }) {
-  const { items, total, page: currentPage, totalPages } = await searchVideos(query, page, userId);
+async function Results({
+  query,
+  page,
+  userId,
+  randomSeed,
+}: {
+  query: string;
+  page: number;
+  userId: string;
+  randomSeed: string;
+}) {
+  const isRandom = isRandomSearchCommand(query);
+  const { items, total, page: currentPage, totalPages } = isRandom
+    ? await listRandomVideos(userId, page, randomSeed)
+    : await searchVideos(query, page, userId);
 
   if (!query.trim()) {
     return (
-      <div className="flex min-h-[400px] items-center justify-center rounded-lg border border-border bg-surface">
-        <div className="text-center">
-          <svg className="mx-auto h-12 w-12 text-muted-light mb-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="11" cy="11" r="8"/>
-            <path d="m21 21-4.3-4.3"/>
-          </svg>
-          <p className="text-muted">Type something to search videos.</p>
-        </div>
-      </div>
+      <EmptyState
+        icon={<SearchIcon className="h-7 w-7" />}
+        title="Search your library"
+        body="Look up titles, creators, or words from the original MEGA filenames."
+      />
     );
   }
 
   if (items.length === 0) {
     return (
-      <div className="flex min-h-[400px] items-center justify-center rounded-lg border border-border bg-surface">
-        <div className="text-center">
-          <svg className="mx-auto h-12 w-12 text-muted-light mb-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="11" cy="11" r="8"/>
-            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-            <line x1="8" y1="11" x2="14" y2="11"/>
-          </svg>
-          <p className="text-muted">
-            No videos found for &ldquo;{query}&rdquo;.
-          </p>
-        </div>
-      </div>
+      <EmptyState
+        icon={isRandom ? <FilmIcon className="h-7 w-7" /> : <SearchIcon className="h-7 w-7" />}
+        title={isRandom ? 'No videos in your library yet' : `No results for “${query}”`}
+        body={
+          isRandom ? (
+            'Sync a MEGA account first — then Shuffle has something to pick from.'
+          ) : (
+            'Check the spelling, try fewer words, or search for a creator name.'
+          )
+        }
+        action={
+          isRandom ? (
+            <Button href="/account" variant="primary">Go to Account</Button>
+          ) : undefined
+        }
+      />
     );
   }
+
+  const basePath =
+    `/search?q=${encodeURIComponent(query)}` +
+    (isRandom ? `&randomSeed=${encodeURIComponent(randomSeed)}` : '');
 
   return (
     <>
@@ -54,8 +74,17 @@ async function Results({ query, page, userId }: { query: string; page: number; u
       <Pagination
         page={currentPage}
         totalPages={totalPages}
-        basePath={`/search?q=${encodeURIComponent(query)}`}
+        basePath={basePath}
       />
+      {isRandom && totalPages > 1 && (
+        <form method="GET" action="/search" className="mt-6 text-center">
+          <input type="hidden" name="q" value={query} />
+          <Button type="submit" variant="secondary">
+            <ShuffleIcon className="h-4 w-4" />
+            Reshuffle
+          </Button>
+        </form>
+      )}
       <p className="mt-4 text-center text-xs text-muted">
         {total} result{total === 1 ? '' : 's'}
       </p>
@@ -70,20 +99,40 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
   const params = await searchParams;
   const query = params.q ?? '';
   const page = Number(params.page) || 1;
+  // A fresh seed per #random search visit gives a fresh ordering; the seed
+  // rides along in pagination URLs so pages 1..N share one ordering.
+  // Reloading without a seed reshuffles (per spec); paginating keeps it.
+  const randomSeed =
+    params.randomSeed && params.randomSeed.length > 0
+      ? params.randomSeed
+      : randomBytes(8).toString('hex');
+  const isRandom = isRandomSearchCommand(query);
 
   return (
-    <div className="px-4 py-6 sm:px-6">
-      <div className="mx-auto max-w-[1800px]">
-        <h1 className="mb-6 text-xl font-semibold">
-          {query.trim() ? <>Search results for &ldquo;{query}&rdquo;</> : 'Search'}
+    <div className="px-4 py-6 md:px-6">
+      <div className="mx-auto max-w-[2000px]">
+        <h1 className="mb-1 text-xl font-bold tracking-tight">
+          {isRandom ? (
+            <span className="inline-flex items-center gap-2">
+              <ShuffleIcon className="h-5 w-5 text-accent" />
+              Shuffle
+            </span>
+          ) : query.trim() ? (
+            <>Results for “{query}”</>
+          ) : (
+            'Search'
+          )}
         </h1>
+        {!isRandom && query.trim() && (
+          <p className="mb-5 text-[13px] text-muted">Matching titles, creators, and filenames</p>
+        )}
 
         <div className="mb-6 max-w-xl">
-          <SearchBar />
+          <SearchBar initialValue={isRandom ? '' : query} />
         </div>
 
-        <Suspense fallback={<p className="py-16 text-center text-muted">Searching…</p>}>
-          <Results query={query} page={page} userId={user.id} />
+        <Suspense fallback={<VideoGridSkeleton />}>
+          <Results query={query} page={page} userId={user.id} randomSeed={randomSeed} />
         </Suspense>
       </div>
     </div>

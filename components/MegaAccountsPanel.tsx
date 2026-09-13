@@ -100,15 +100,15 @@ function statusMeta(status: Status): { dot: string; label: string } {
     case 'SYNCING':
       return { dot: 'bg-accent', label: 'Syncing…' };
     case 'SYNCED':
-      return { dot: 'bg-green-500', label: 'Synced' };
+      return { dot: 'bg-success', label: 'Synced' };
     case 'CONNECTED':
-      return { dot: 'bg-green-500', label: 'Connected' };
+      return { dot: 'bg-success', label: 'Connected' };
     case 'REAUTH_REQUIRED':
-      return { dot: 'bg-yellow-500', label: 'Re-authentication required' };
+      return { dot: 'bg-warning', label: 'Re-authentication required' };
     case 'ERROR':
-      return { dot: 'bg-yellow-500', label: 'Sync failed' };
+      return { dot: 'bg-warning', label: 'Sync failed' };
     case 'DISCONNECTED':
-      return { dot: 'bg-zinc-500', label: 'Disconnected' };
+      return { dot: 'bg-muted-light', label: 'Disconnected' };
   }
 }
 
@@ -194,10 +194,14 @@ function SyncProgressCard({ progress }: { progress: SyncProgressDto }) {
       : null;
 
   return (
-    <div className="mt-2 rounded-lg border border-border bg-surface p-3 text-xs">
+    <div
+      role="status"
+      aria-label={pct === null ? 'Scanning MEGA account' : `Syncing library, ${pct} percent`}
+      className="mt-3 rounded-2xl border border-border bg-surface p-4 text-[13px]"
+    >
       {pct === null ? (
         <>
-          <p className="font-medium">Scanning MEGA…</p>
+          <p className="font-semibold">Scanning MEGA…</p>
           <p className="mt-1 text-muted">
             {progress.nodesScanned !== null ? `${progress.nodesScanned.toLocaleString()} nodes scanned` : 'Preparing…'}
             {progress.totalVideos !== null && progress.totalVideos > 0
@@ -209,13 +213,19 @@ function SyncProgressCard({ progress }: { progress: SyncProgressDto }) {
       ) : (
         <>
           <div className="flex items-center justify-between">
-            <p className="font-medium">Syncing library</p>
-            <p className="text-muted">{pct}%</p>
+            <p className="font-semibold">Syncing library</p>
+            <p className="font-medium tabular-nums text-muted">{pct}%</p>
           </div>
-          <div className="mt-1 h-1.5 w-full overflow-hidden rounded bg-background">
-            <div className="h-full bg-accent transition-all" style={{ width: `${pct}%` }} />
+          <div
+            className="mt-2 h-2 w-full overflow-hidden rounded-full bg-background"
+            role="progressbar"
+            aria-valuenow={pct}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
+            <div className="h-full rounded-full bg-accent transition-[width]" style={{ width: `${pct}%` }} />
           </div>
-          <p className="mt-1 text-muted">
+          <p className="mt-2 text-muted">
             {progress.processedVideos.toLocaleString()} / {progress.totalVideos!.toLocaleString()} videos
           </p>
           <p className="mt-1 text-muted">
@@ -239,8 +249,8 @@ function SyncProgressCard({ progress }: { progress: SyncProgressDto }) {
 function SyncResultCard({ meta }: { meta: SyncMetaDto }) {
   if (meta.outcome === 'completed') {
     return (
-      <div className="mt-2 rounded-lg border border-green-500/30 bg-green-500/5 p-3 text-xs">
-        <p className="font-medium text-green-500">Sync complete</p>
+      <div className="mt-3 rounded-2xl border border-success/30 bg-success/5 p-4 text-[13px]">
+        <p className="font-semibold text-success">Sync complete</p>
         <p className="mt-1 text-muted">
           {meta.totalVideos.toLocaleString()} video{meta.totalVideos === 1 ? '' : 's'} ·{' '}
           {meta.created} added · {meta.updated} updated · {meta.removed} removed
@@ -251,15 +261,15 @@ function SyncResultCard({ meta }: { meta: SyncMetaDto }) {
   }
   if (meta.outcome === 'interrupted') {
     return (
-      <div className="mt-2 rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-3 text-xs">
-        <p className="font-medium text-yellow-600">Sync was interrupted</p>
+      <div className="mt-3 rounded-2xl border border-warning/30 bg-warning/5 p-4 text-[13px]">
+        <p className="font-semibold text-warning">Sync was interrupted</p>
         <p className="mt-1 text-muted">It will be retried automatically.</p>
       </div>
     );
   }
   return (
-    <div className="mt-2 rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-3 text-xs">
-      <p className="font-medium text-yellow-600">Last sync failed</p>
+    <div className="mt-3 rounded-2xl border border-warning/30 bg-warning/5 p-4 text-[13px]">
+      <p className="font-semibold text-warning">Last sync failed</p>
       <p className="mt-1 text-muted">Will retry automatically with backoff.</p>
     </div>
   );
@@ -436,30 +446,35 @@ export function MegaAccountsPanel() {
   const anySyncing = (accounts ?? []).some((a) => a.status === 'SYNCING');
 
   return (
-    <section className="rounded-lg border border-border bg-surface p-6">
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Connected MEGA Accounts</h2>
+    <section aria-labelledby="mega-accounts-heading" className="rounded-2xl border border-border bg-surface p-5 sm:p-6">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h2 id="mega-accounts-heading" className="text-[15px] font-semibold">MEGA accounts</h2>
         <button
           type="button"
           onClick={() => {
             setShowAdd((v) => !v);
             setAddError(null);
           }}
-          className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover"
+          aria-expanded={showAdd}
+          className={`inline-flex h-9 items-center rounded-full px-4 text-sm font-medium transition-colors ${
+            showAdd
+              ? 'bg-surface-raised text-foreground hover:bg-surface-overlay'
+              : 'bg-accent text-white hover:bg-accent-hover'
+          }`}
         >
-          {showAdd ? 'Cancel' : '+ Add MEGA Account'}
+          {showAdd ? 'Cancel' : '+ Add account'}
         </button>
       </div>
 
       {showAdd && (
-        <form onSubmit={submitAdd} className="mb-5 space-y-3 rounded-lg border border-border bg-background p-4">
-          <p className="text-sm text-muted">
+        <form onSubmit={submitAdd} className="mb-5 space-y-4 rounded-2xl border border-border bg-background p-4 sm:p-5">
+          <p className="text-sm leading-relaxed text-muted">
             Link a MEGA account to sync its private video library. Your MEGA password is used
             once to start a secure session and is never stored.
           </p>
           <div>
-            <label htmlFor="mega-label" className="mb-1 block text-sm font-medium text-muted">
-              Label (optional)
+            <label htmlFor="mega-label" className="mb-1.5 block text-[13px] font-medium">
+              Label <span className="font-normal text-muted">(optional)</span>
             </label>
             <input
               id="mega-label"
@@ -467,11 +482,11 @@ export function MegaAccountsPanel() {
               onChange={(e) => setAddLabel(e.target.value)}
               maxLength={50}
               placeholder="e.g. Main MEGA"
-              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none"
+              className="h-11 w-full rounded-xl border border-border bg-surface px-4 text-sm placeholder:text-muted-light focus:border-accent focus:outline-none"
             />
           </div>
           <div>
-            <label htmlFor="mega-email" className="mb-1 block text-sm font-medium text-muted">
+            <label htmlFor="mega-email" className="mb-1.5 block text-[13px] font-medium">
               MEGA email
             </label>
             <input
@@ -480,11 +495,11 @@ export function MegaAccountsPanel() {
               required
               value={addEmail}
               onChange={(e) => setAddEmail(e.target.value)}
-              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none"
+              className="h-11 w-full rounded-xl border border-border bg-surface px-4 text-sm placeholder:text-muted-light focus:border-accent focus:outline-none"
             />
           </div>
           <div>
-            <label htmlFor="mega-password" className="mb-1 block text-sm font-medium text-muted">
+            <label htmlFor="mega-password" className="mb-1.5 block text-[13px] font-medium">
               MEGA password
             </label>
             <input
@@ -494,12 +509,12 @@ export function MegaAccountsPanel() {
               autoComplete="new-password"
               value={addPassword}
               onChange={(e) => setAddPassword(e.target.value)}
-              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none"
+              className="h-11 w-full rounded-xl border border-border bg-surface px-4 text-sm placeholder:text-muted-light focus:border-accent focus:outline-none"
             />
           </div>
           <div>
-            <label htmlFor="mega-mfa" className="mb-1 block text-sm font-medium text-muted">
-              2FA code (if enabled on this MEGA account)
+            <label htmlFor="mega-mfa" className="mb-1.5 block text-[13px] font-medium">
+              2FA code <span className="font-normal text-muted">(if enabled on this MEGA account)</span>
             </label>
             <input
               id="mega-mfa"
@@ -507,30 +522,31 @@ export function MegaAccountsPanel() {
               autoComplete="one-time-code"
               value={addMfa}
               onChange={(e) => setAddMfa(e.target.value)}
-              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none"
+              className="h-11 w-full rounded-xl border border-border bg-surface px-4 text-sm placeholder:text-muted-light focus:border-accent focus:outline-none"
             />
           </div>
-          {addError && <p className="text-sm text-destructive">{addError}</p>}
+          {addError && <p role="alert" className="text-sm text-destructive">{addError}</p>}
           <button
             type="submit"
             disabled={addBusy}
-            className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
+            className="inline-flex h-10 items-center rounded-full bg-accent px-5 text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
           >
-            {addBusy ? 'Connecting…' : 'Connect MEGA Account'}
+            {addBusy ? 'Connecting…' : 'Connect MEGA account'}
           </button>
         </form>
       )}
 
-      {loadError && <p className="mb-4 text-sm text-destructive">{loadError}</p>}
+      {loadError && <p role="alert" className="mb-4 text-sm text-destructive">{loadError}</p>}
 
       {accounts === null ? (
-        <div className="space-y-3">
-          <div className="h-16 animate-pulse rounded-lg bg-surface" />
-          <div className="h-16 animate-pulse rounded-lg bg-surface" />
+        <div className="space-y-3" role="status" aria-label="Loading MEGA accounts">
+          <div className="mt-skeleton h-[76px] rounded-2xl" />
+          <div className="mt-skeleton h-[76px] rounded-2xl" />
+          <span className="sr-only">Loading MEGA accounts…</span>
         </div>
       ) : accounts.length === 0 ? (
-        <p className="text-sm text-muted">
-          No MEGA accounts linked yet. Use “+ Add MEGA Account” to sync your private video
+        <p className="text-sm leading-relaxed text-muted">
+          No MEGA accounts linked yet. Add one above to sync your private video
           library.
         </p>
       ) : (
@@ -540,35 +556,33 @@ export function MegaAccountsPanel() {
             const active = busyId === a.id;
             const live = a.status === 'SYNCING' ? a.progress : null;
             return (
-              <li key={a.id} className="rounded-lg border border-border bg-background p-4">
+              <li key={a.id} className="rounded-2xl border border-border bg-background p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="flex items-center gap-2 text-sm font-semibold">
                       <span
-                        className={`inline-block h-2.5 w-2.5 rounded-full ${meta.dot} ${
+                        className={`inline-block h-2 w-2 rounded-full ${meta.dot} ${
                           a.status === 'SYNCING' ? 'animate-pulse' : ''
                         }`}
                         aria-hidden
                       />
-                      {a.label}
+                      <span className="truncate">{a.label}</span>
+                      <span className="sr-only">— {meta.label}</span>
                     </p>
-                    <a
-                      href={`mailto:${a.megaEmail}`}
-                      className="mt-0.5 block truncate text-sm text-muted hover:text-foreground"
-                    >
+                    <p className="mt-0.5 truncate text-[13px] text-muted">
                       {a.megaEmail}
-                    </a>
+                    </p>
                     {a.status !== 'SYNCING' && (
                       <p className="mt-1 text-xs text-muted">
                         {a.status === 'DISCONNECTED'
                           ? 'Disconnected'
                           : a.status === 'REAUTH_REQUIRED'
-                            ? 'Re-authentication required — reconnect to sync again'
+                            ? 'Session expired — reconnect to sync again'
                             : a.status === 'ERROR'
                               ? 'Sync failed'
                               : a.status === 'CONNECTED'
                                 ? 'Connected — not yet synced'
-                                : `Last synced: ${relativeTime(a.lastSyncCompletedAt)}`}
+                                : `Last synced ${relativeTime(a.lastSyncCompletedAt)}`}
                       </p>
                     )}
                     {a.status !== 'DISCONNECTED' && (
@@ -587,9 +601,9 @@ export function MegaAccountsPanel() {
                         type="button"
                         onClick={() => void triggerSync(a.id)}
                         disabled={active || a.status === 'SYNCING'}
-                        className="rounded-lg border border-border px-3 py-1.5 text-xs transition-colors hover:bg-surface disabled:opacity-50"
+                        className="inline-flex h-9 items-center rounded-full bg-surface-raised px-4 text-[13px] font-medium transition-colors hover:bg-surface-overlay disabled:opacity-50"
                       >
-                        {a.status === 'SYNCING' ? 'Syncing…' : 'Sync Now'}
+                        {a.status === 'SYNCING' ? 'Syncing…' : 'Sync now'}
                       </button>
                     )}
                     {a.status === 'REAUTH_REQUIRED' && (
@@ -600,7 +614,7 @@ export function MegaAccountsPanel() {
                           setReauthError(null);
                         }}
                         disabled={active}
-                        className="rounded-lg border border-border px-3 py-1.5 text-xs transition-colors hover:bg-surface disabled:opacity-50"
+                        className="inline-flex h-9 items-center rounded-full bg-accent px-4 text-[13px] font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
                       >
                         Reconnect
                       </button>
@@ -610,7 +624,7 @@ export function MegaAccountsPanel() {
                         type="button"
                         onClick={() => void disconnect(a.id)}
                         disabled={active || a.status === 'SYNCING'}
-                        className="rounded-lg border border-border px-3 py-1.5 text-xs text-destructive transition-colors hover:bg-surface disabled:opacity-50"
+                        className="inline-flex h-9 items-center rounded-full px-4 text-[13px] font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
                       >
                         Disconnect
                       </button>
@@ -629,12 +643,11 @@ export function MegaAccountsPanel() {
                 {reauthFor === a.id && (
                   <form
                     onSubmit={(e) => void submitReauth(a.id, e)}
-                    className="mt-3 space-y-2 rounded-lg border border-border bg-background p-3"
+                    className="mt-3 space-y-3 rounded-2xl border border-border bg-surface p-4"
                   >
-                    <p className="text-xs text-muted">
+                    <p className="text-[13px] leading-relaxed text-muted">
                       This MEGA session expired or was revoked. Enter your MEGA password to
-                      reconnect. The password is used once to establish a new secure session and
-                      is never stored or displayed again.
+                      reconnect — used once, never stored.
                     </p>
                     <input
                       type="password"
@@ -644,7 +657,7 @@ export function MegaAccountsPanel() {
                       value={reauthPassword}
                       onChange={(e) => setReauthPassword(e.target.value)}
                       disabled={reauthBusy}
-                      className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none"
+                      className="h-11 w-full rounded-xl border border-border bg-background px-4 text-sm placeholder:text-muted-light focus:border-accent focus:outline-none"
                       aria-label={`MEGA password for ${a.label}`}
                     />
                     <input
@@ -654,15 +667,15 @@ export function MegaAccountsPanel() {
                       value={reauthMfa}
                       onChange={(e) => setReauthMfa(e.target.value)}
                       disabled={reauthBusy}
-                      className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none"
+                      className="h-11 w-full rounded-xl border border-border bg-background px-4 text-sm placeholder:text-muted-light focus:border-accent focus:outline-none"
                       aria-label={`2FA code for ${a.label}`}
                     />
-                    {reauthError && <p className="text-xs text-destructive">{reauthError}</p>}
+                    {reauthError && <p role="alert" className="text-[13px] text-destructive">{reauthError}</p>}
                     <div className="flex gap-2">
                       <button
                         type="submit"
                         disabled={reauthBusy || !reauthPassword}
-                        className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+                        className="inline-flex h-10 items-center rounded-full bg-accent px-5 text-sm font-medium text-white disabled:opacity-50"
                       >
                         {reauthBusy ? 'Reconnecting…' : 'Reconnect'}
                       </button>
@@ -675,7 +688,7 @@ export function MegaAccountsPanel() {
                           setReauthMfa('');
                         }}
                         disabled={reauthBusy}
-                        className="rounded-lg border border-border px-3 py-1.5 text-xs"
+                        className="inline-flex h-10 items-center rounded-full px-4 text-sm font-medium text-muted hover:bg-surface-hover hover:text-foreground"
                       >
                         Cancel
                       </button>
@@ -689,9 +702,8 @@ export function MegaAccountsPanel() {
       )}
 
       {anySyncing && (
-        <p className="mt-4 text-xs text-muted">
-          Synchronization runs in the background — the rest of the site stays usable while this
-          happens.
+        <p className="mt-4 text-xs leading-relaxed text-muted">
+          Sync runs in the background — the rest of the site stays usable.
         </p>
       )}
     </section>

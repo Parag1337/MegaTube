@@ -27,5 +27,9 @@ export async function register() {
     require('./lib/media/remux')
       .cleanupOrphanedTempFiles()
       .catch(() => {});
+    // P1.5: background media-cache eviction (size cap + LRU). Interval-based
+    // and deferred past startup - never in the playback startup path.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('./lib/media/cache').startMediaCacheMaintenance();
   }
 }

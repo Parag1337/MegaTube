@@ -16,6 +16,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import VideoCreatorControl from '@/app/video/[slug]/VideoCreatorControl';
 import { DotsIcon } from '@/components/icons';
+import { startDownload } from '@/components/downloadClient';
 import { useSession } from '@/components/useSession';
 
 interface VideoCardMenuProps {
@@ -34,6 +35,7 @@ export function VideoCardMenu({ videoId, creator, isPrivate = false }: VideoCard
   const [saved, setSaved] = useState(false);
   const [signedIn, setSignedIn] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState('');
   const ref = useRef<HTMLDivElement>(null);
 
@@ -110,6 +112,24 @@ export function VideoCardMenu({ videoId, creator, isPrivate = false }: VideoCard
     }
   }
 
+  async function download() {
+    setDownloading(true);
+    setError('');
+    try {
+      const result = await startDownload(videoId);
+      if (result.started) {
+        setOpen(false);
+      } else if (result.reason === 'busy') {
+        // Double-click collapsed into the in-flight download - just close.
+        setOpen(false);
+      } else {
+        setError(result.message ?? 'Could not start the download.');
+      }
+    } finally {
+      setDownloading(false);
+    }
+  }
+
   const itemCls =
     'flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-foreground transition-colors hover:bg-surface-hover disabled:opacity-50';
 
@@ -177,6 +197,15 @@ export function VideoCardMenu({ videoId, creator, isPrivate = false }: VideoCard
                 className={itemCls}
               >
                 {saved ? 'Unsave video' : 'Save video'}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={busy || downloading}
+                onClick={download}
+                className={itemCls}
+              >
+                {downloading ? 'Preparing download…' : 'Download'}
               </button>
               {isPrivate && (
                 <VideoCreatorControl

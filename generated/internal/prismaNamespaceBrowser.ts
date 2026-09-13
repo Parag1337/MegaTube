@@ -58,6 +58,7 @@ export const ModelName = {
   Session: 'Session',
   WatchlistItem: 'WatchlistItem',
   SavedVideo: 'SavedVideo',
+  SavedFolder: 'SavedFolder',
   WatchHistory: 'WatchHistory'
 } as const
 
@@ -105,6 +106,7 @@ export const VideoScalarFieldEnum = {
   fileSize: 'fileSize',
   mimeType: 'mimeType',
   duration: 'duration',
+  mp4Faststart: 'mp4Faststart',
   thumbnail: 'thumbnail',
   thumbnailAvailable: 'thumbnailAvailable',
   embedUrl: 'embedUrl',
@@ -178,10 +180,21 @@ export const SavedVideoScalarFieldEnum = {
   id: 'id',
   userId: 'userId',
   videoId: 'videoId',
+  folderId: 'folderId',
   createdAt: 'createdAt'
 } as const
 
 export type SavedVideoScalarFieldEnum = (typeof SavedVideoScalarFieldEnum)[keyof typeof SavedVideoScalarFieldEnum]
+
+
+export const SavedFolderScalarFieldEnum = {
+  id: 'id',
+  userId: 'userId',
+  name: 'name',
+  createdAt: 'createdAt'
+} as const
+
+export type SavedFolderScalarFieldEnum = (typeof SavedFolderScalarFieldEnum)[keyof typeof SavedFolderScalarFieldEnum]
 
 
 export const WatchHistoryScalarFieldEnum = {

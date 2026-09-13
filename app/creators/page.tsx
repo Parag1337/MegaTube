@@ -1,6 +1,8 @@
 import Link from 'next/link';
 import { getCurrentUser } from '@/lib/auth';
 import { listCreators } from '@/lib/videos';
+import { Avatar, EmptyState, Button } from '@/components/ui';
+import { CreatorsIcon } from '@/components/icons';
 import CreateCreatorButton from './CreateCreatorButton';
 
 export const metadata = { title: 'Creators' };
@@ -11,10 +13,15 @@ export default async function CreatorsPage() {
   const user = await getCurrentUser();
   if (!user) {
     return (
-      <div className="px-4 py-6 sm:px-6">
-        <div className="mx-auto max-w-[1800px]">
-          <h1 className="mb-6 text-xl font-semibold">Creators</h1>
-          <p className="text-muted">Please log in to view your creators.</p>
+      <div className="px-4 py-6 md:px-6">
+        <div className="mx-auto max-w-[2000px]">
+          <h1 className="mb-6 text-xl font-bold tracking-tight">Creators</h1>
+          <EmptyState
+            icon={<CreatorsIcon className="h-7 w-7" />}
+            title="Sign in to see your creators"
+            body="Creators are extracted from your video filenames when you sync."
+            action={<Button href="/login" variant="primary">Sign in</Button>}
+          />
         </div>
       </div>
     );
@@ -23,54 +30,49 @@ export default async function CreatorsPage() {
   const creators = await listCreators(user.id);
 
   return (
-    <div className="px-4 py-6 sm:px-6">
-      <div className="mx-auto max-w-[1800px]">
-        <div className="mb-6 flex items-center justify-between">
-          <h1 className="text-xl font-semibold">Creators</h1>
+    <div className="px-4 py-6 md:px-6">
+      <div className="mx-auto max-w-[2000px]">
+        <div className="mb-5 flex items-end justify-between gap-4">
+          <div>
+            <h1 className="text-xl font-bold tracking-tight">Creators</h1>
+            {creators.length > 0 && (
+              <p className="mt-1 text-[13px] text-muted">
+                {creators.length} creator{creators.length === 1 ? '' : 's'} in your library
+              </p>
+            )}
+          </div>
           <CreateCreatorButton />
         </div>
 
         {creators.length === 0 ? (
-          <div className="flex min-h-[400px] items-center justify-center rounded-lg border border-border bg-surface">
-            <div className="text-center">
-              <svg className="mx-auto h-12 w-12 text-muted-light mb-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-                <circle cx="9" cy="7" r="4"/>
-                <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-                <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-              </svg>
-              <p className="text-muted mb-4">No creators yet.</p>
-              <p className="text-sm text-muted-light">Creators will be automatically assigned from video filenames, or you can create them manually.</p>
-            </div>
-          </div>
+          <EmptyState
+            icon={<CreatorsIcon className="h-7 w-7" />}
+            title="No creators yet"
+            body="Creators are picked up automatically from “Creator - Title” filenames when you sync — or create one manually."
+          />
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+          <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
             {creators.map((creator) => (
-              <Link
-                key={creator.id}
-                href={`/creator/${creator.slug}`}
-                className="flex items-center gap-3 rounded-lg border border-border bg-surface p-4 transition-colors hover:bg-surface-hover"
-              >
-                {creator.avatar ? (
-                  <img
-                    src={`/api/creators/${creator.id}/photo`}
-                    alt=""
-                    className="h-12 w-12 rounded-full object-cover"
+              <li key={creator.id}>
+                <Link
+                  href={`/creator/${creator.slug}`}
+                  className="flex items-center gap-4 rounded-2xl border border-border bg-surface p-4 transition-colors hover:border-border-light hover:bg-surface-raised"
+                >
+                  <Avatar
+                    name={creator.name}
+                    photoUrl={creator.avatar ? `/api/creators/${creator.id}/photo` : null}
+                    size="lg"
                   />
-                ) : (
-                  <span className="flex h-12 w-12 items-center justify-center rounded-full bg-surface-hover text-lg font-bold text-accent">
-                    {creator.name.charAt(0).toUpperCase()}
+                  <span className="min-w-0">
+                    <span className="block truncate text-[15px] font-semibold">{creator.name}</span>
+                    <span className="mt-0.5 block text-[13px] text-muted">
+                      {creator._count.videos} video{creator._count.videos === 1 ? '' : 's'}
+                    </span>
                   </span>
-                )}
-                <div className="min-w-0">
-                  <p className="truncate font-medium">{creator.name}</p>
-                  <p className="text-xs text-muted">
-                    {creator._count.videos} video{creator._count.videos === 1 ? '' : 's'}
-                  </p>
-                </div>
-              </Link>
+                </Link>
+              </li>
             ))}
-          </div>
+          </ul>
         )}
       </div>
     </div>

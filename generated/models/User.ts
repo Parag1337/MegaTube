@@ -187,6 +187,7 @@ export type UserWhereInput = {
   creators?: Prisma.CreatorListRelationFilter
   watchlist?: Prisma.WatchlistItemListRelationFilter
   savedVideos?: Prisma.SavedVideoListRelationFilter
+  savedFolders?: Prisma.SavedFolderListRelationFilter
   watchHistory?: Prisma.WatchHistoryListRelationFilter
 }
 
@@ -201,6 +202,7 @@ export type UserOrderByWithRelationInput = {
   creators?: Prisma.CreatorOrderByRelationAggregateInput
   watchlist?: Prisma.WatchlistItemOrderByRelationAggregateInput
   savedVideos?: Prisma.SavedVideoOrderByRelationAggregateInput
+  savedFolders?: Prisma.SavedFolderOrderByRelationAggregateInput
   watchHistory?: Prisma.WatchHistoryOrderByRelationAggregateInput
 }
 
@@ -218,6 +220,7 @@ export type UserWhereUniqueInput = Prisma.AtLeast<{
   creators?: Prisma.CreatorListRelationFilter
   watchlist?: Prisma.WatchlistItemListRelationFilter
   savedVideos?: Prisma.SavedVideoListRelationFilter
+  savedFolders?: Prisma.SavedFolderListRelationFilter
   watchHistory?: Prisma.WatchHistoryListRelationFilter
 }, "id" | "email">
 
@@ -254,6 +257,7 @@ export type UserCreateInput = {
   creators?: Prisma.CreatorCreateNestedManyWithoutUserInput
   watchlist?: Prisma.WatchlistItemCreateNestedManyWithoutUserInput
   savedVideos?: Prisma.SavedVideoCreateNestedManyWithoutUserInput
+  savedFolders?: Prisma.SavedFolderCreateNestedManyWithoutUserInput
   watchHistory?: Prisma.WatchHistoryCreateNestedManyWithoutUserInput
 }
 
@@ -268,6 +272,7 @@ export type UserUncheckedCreateInput = {
   creators?: Prisma.CreatorUncheckedCreateNestedManyWithoutUserInput
   watchlist?: Prisma.WatchlistItemUncheckedCreateNestedManyWithoutUserInput
   savedVideos?: Prisma.SavedVideoUncheckedCreateNestedManyWithoutUserInput
+  savedFolders?: Prisma.SavedFolderUncheckedCreateNestedManyWithoutUserInput
   watchHistory?: Prisma.WatchHistoryUncheckedCreateNestedManyWithoutUserInput
 }
 
@@ -282,6 +287,7 @@ export type UserUpdateInput = {
   creators?: Prisma.CreatorUpdateManyWithoutUserNestedInput
   watchlist?: Prisma.WatchlistItemUpdateManyWithoutUserNestedInput
   savedVideos?: Prisma.SavedVideoUpdateManyWithoutUserNestedInput
+  savedFolders?: Prisma.SavedFolderUpdateManyWithoutUserNestedInput
   watchHistory?: Prisma.WatchHistoryUpdateManyWithoutUserNestedInput
 }
 
@@ -296,6 +302,7 @@ export type UserUncheckedUpdateInput = {
   creators?: Prisma.CreatorUncheckedUpdateManyWithoutUserNestedInput
   watchlist?: Prisma.WatchlistItemUncheckedUpdateManyWithoutUserNestedInput
   savedVideos?: Prisma.SavedVideoUncheckedUpdateManyWithoutUserNestedInput
+  savedFolders?: Prisma.SavedFolderUncheckedUpdateManyWithoutUserNestedInput
   watchHistory?: Prisma.WatchHistoryUncheckedUpdateManyWithoutUserNestedInput
 }
 
@@ -422,6 +429,20 @@ export type UserUpdateOneRequiredWithoutSavedVideosNestedInput = {
   update?: Prisma.XOR<Prisma.XOR<Prisma.UserUpdateToOneWithWhereWithoutSavedVideosInput, Prisma.UserUpdateWithoutSavedVideosInput>, Prisma.UserUncheckedUpdateWithoutSavedVideosInput>
 }
 
+export type UserCreateNestedOneWithoutSavedFoldersInput = {
+  create?: Prisma.XOR<Prisma.UserCreateWithoutSavedFoldersInput, Prisma.UserUncheckedCreateWithoutSavedFoldersInput>
+  connectOrCreate?: Prisma.UserCreateOrConnectWithoutSavedFoldersInput
+  connect?: Prisma.UserWhereUniqueInput
+}
+
+export type UserUpdateOneRequiredWithoutSavedFoldersNestedInput = {
+  create?: Prisma.XOR<Prisma.UserCreateWithoutSavedFoldersInput, Prisma.UserUncheckedCreateWithoutSavedFoldersInput>
+  connectOrCreate?: Prisma.UserCreateOrConnectWithoutSavedFoldersInput
+  upsert?: Prisma.UserUpsertWithoutSavedFoldersInput
+  connect?: Prisma.UserWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.UserUpdateToOneWithWhereWithoutSavedFoldersInput, Prisma.UserUpdateWithoutSavedFoldersInput>, Prisma.UserUncheckedUpdateWithoutSavedFoldersInput>
+}
+
 export type UserCreateNestedOneWithoutWatchHistoryInput = {
   create?: Prisma.XOR<Prisma.UserCreateWithoutWatchHistoryInput, Prisma.UserUncheckedCreateWithoutWatchHistoryInput>
   connectOrCreate?: Prisma.UserCreateOrConnectWithoutWatchHistoryInput
@@ -446,6 +467,7 @@ export type UserCreateWithoutCreatorsInput = {
   sessions?: Prisma.SessionCreateNestedManyWithoutUserInput
   watchlist?: Prisma.WatchlistItemCreateNestedManyWithoutUserInput
   savedVideos?: Prisma.SavedVideoCreateNestedManyWithoutUserInput
+  savedFolders?: Prisma.SavedFolderCreateNestedManyWithoutUserInput
   watchHistory?: Prisma.WatchHistoryCreateNestedManyWithoutUserInput
 }
 
@@ -459,6 +481,7 @@ export type UserUncheckedCreateWithoutCreatorsInput = {
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutUserInput
   watchlist?: Prisma.WatchlistItemUncheckedCreateNestedManyWithoutUserInput
   savedVideos?: Prisma.SavedVideoUncheckedCreateNestedManyWithoutUserInput
+  savedFolders?: Prisma.SavedFolderUncheckedCreateNestedManyWithoutUserInput
   watchHistory?: Prisma.WatchHistoryUncheckedCreateNestedManyWithoutUserInput
 }
 
@@ -488,6 +511,7 @@ export type UserUpdateWithoutCreatorsInput = {
   sessions?: Prisma.SessionUpdateManyWithoutUserNestedInput
   watchlist?: Prisma.WatchlistItemUpdateManyWithoutUserNestedInput
   savedVideos?: Prisma.SavedVideoUpdateManyWithoutUserNestedInput
+  savedFolders?: Prisma.SavedFolderUpdateManyWithoutUserNestedInput
   watchHistory?: Prisma.WatchHistoryUpdateManyWithoutUserNestedInput
 }
 
@@ -501,6 +525,7 @@ export type UserUncheckedUpdateWithoutCreatorsInput = {
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutUserNestedInput
   watchlist?: Prisma.WatchlistItemUncheckedUpdateManyWithoutUserNestedInput
   savedVideos?: Prisma.SavedVideoUncheckedUpdateManyWithoutUserNestedInput
+  savedFolders?: Prisma.SavedFolderUncheckedUpdateManyWithoutUserNestedInput
   watchHistory?: Prisma.WatchHistoryUncheckedUpdateManyWithoutUserNestedInput
 }
 
@@ -514,6 +539,7 @@ export type UserCreateWithoutMegaAccountsInput = {
   creators?: Prisma.CreatorCreateNestedManyWithoutUserInput
   watchlist?: Prisma.WatchlistItemCreateNestedManyWithoutUserInput
   savedVideos?: Prisma.SavedVideoCreateNestedManyWithoutUserInput
+  savedFolders?: Prisma.SavedFolderCreateNestedManyWithoutUserInput
   watchHistory?: Prisma.WatchHistoryCreateNestedManyWithoutUserInput
 }
 
@@ -527,6 +553,7 @@ export type UserUncheckedCreateWithoutMegaAccountsInput = {
   creators?: Prisma.CreatorUncheckedCreateNestedManyWithoutUserInput
   watchlist?: Prisma.WatchlistItemUncheckedCreateNestedManyWithoutUserInput
   savedVideos?: Prisma.SavedVideoUncheckedCreateNestedManyWithoutUserInput
+  savedFolders?: Prisma.SavedFolderUncheckedCreateNestedManyWithoutUserInput
   watchHistory?: Prisma.WatchHistoryUncheckedCreateNestedManyWithoutUserInput
 }
 
@@ -556,6 +583,7 @@ export type UserUpdateWithoutMegaAccountsInput = {
   creators?: Prisma.CreatorUpdateManyWithoutUserNestedInput
   watchlist?: Prisma.WatchlistItemUpdateManyWithoutUserNestedInput
   savedVideos?: Prisma.SavedVideoUpdateManyWithoutUserNestedInput
+  savedFolders?: Prisma.SavedFolderUpdateManyWithoutUserNestedInput
   watchHistory?: Prisma.WatchHistoryUpdateManyWithoutUserNestedInput
 }
 
@@ -569,6 +597,7 @@ export type UserUncheckedUpdateWithoutMegaAccountsInput = {
   creators?: Prisma.CreatorUncheckedUpdateManyWithoutUserNestedInput
   watchlist?: Prisma.WatchlistItemUncheckedUpdateManyWithoutUserNestedInput
   savedVideos?: Prisma.SavedVideoUncheckedUpdateManyWithoutUserNestedInput
+  savedFolders?: Prisma.SavedFolderUncheckedUpdateManyWithoutUserNestedInput
   watchHistory?: Prisma.WatchHistoryUncheckedUpdateManyWithoutUserNestedInput
 }
 
@@ -582,6 +611,7 @@ export type UserCreateWithoutSessionsInput = {
   creators?: Prisma.CreatorCreateNestedManyWithoutUserInput
   watchlist?: Prisma.WatchlistItemCreateNestedManyWithoutUserInput
   savedVideos?: Prisma.SavedVideoCreateNestedManyWithoutUserInput
+  savedFolders?: Prisma.SavedFolderCreateNestedManyWithoutUserInput
   watchHistory?: Prisma.WatchHistoryCreateNestedManyWithoutUserInput
 }
 
@@ -595,6 +625,7 @@ export type UserUncheckedCreateWithoutSessionsInput = {
   creators?: Prisma.CreatorUncheckedCreateNestedManyWithoutUserInput
   watchlist?: Prisma.WatchlistItemUncheckedCreateNestedManyWithoutUserInput
   savedVideos?: Prisma.SavedVideoUncheckedCreateNestedManyWithoutUserInput
+  savedFolders?: Prisma.SavedFolderUncheckedCreateNestedManyWithoutUserInput
   watchHistory?: Prisma.WatchHistoryUncheckedCreateNestedManyWithoutUserInput
 }
 
@@ -624,6 +655,7 @@ export type UserUpdateWithoutSessionsInput = {
   creators?: Prisma.CreatorUpdateManyWithoutUserNestedInput
   watchlist?: Prisma.WatchlistItemUpdateManyWithoutUserNestedInput
   savedVideos?: Prisma.SavedVideoUpdateManyWithoutUserNestedInput
+  savedFolders?: Prisma.SavedFolderUpdateManyWithoutUserNestedInput
   watchHistory?: Prisma.WatchHistoryUpdateManyWithoutUserNestedInput
 }
 
@@ -637,6 +669,7 @@ export type UserUncheckedUpdateWithoutSessionsInput = {
   creators?: Prisma.CreatorUncheckedUpdateManyWithoutUserNestedInput
   watchlist?: Prisma.WatchlistItemUncheckedUpdateManyWithoutUserNestedInput
   savedVideos?: Prisma.SavedVideoUncheckedUpdateManyWithoutUserNestedInput
+  savedFolders?: Prisma.SavedFolderUncheckedUpdateManyWithoutUserNestedInput
   watchHistory?: Prisma.WatchHistoryUncheckedUpdateManyWithoutUserNestedInput
 }
 
@@ -650,6 +683,7 @@ export type UserCreateWithoutWatchlistInput = {
   sessions?: Prisma.SessionCreateNestedManyWithoutUserInput
   creators?: Prisma.CreatorCreateNestedManyWithoutUserInput
   savedVideos?: Prisma.SavedVideoCreateNestedManyWithoutUserInput
+  savedFolders?: Prisma.SavedFolderCreateNestedManyWithoutUserInput
   watchHistory?: Prisma.WatchHistoryCreateNestedManyWithoutUserInput
 }
 
@@ -663,6 +697,7 @@ export type UserUncheckedCreateWithoutWatchlistInput = {
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutUserInput
   creators?: Prisma.CreatorUncheckedCreateNestedManyWithoutUserInput
   savedVideos?: Prisma.SavedVideoUncheckedCreateNestedManyWithoutUserInput
+  savedFolders?: Prisma.SavedFolderUncheckedCreateNestedManyWithoutUserInput
   watchHistory?: Prisma.WatchHistoryUncheckedCreateNestedManyWithoutUserInput
 }
 
@@ -692,6 +727,7 @@ export type UserUpdateWithoutWatchlistInput = {
   sessions?: Prisma.SessionUpdateManyWithoutUserNestedInput
   creators?: Prisma.CreatorUpdateManyWithoutUserNestedInput
   savedVideos?: Prisma.SavedVideoUpdateManyWithoutUserNestedInput
+  savedFolders?: Prisma.SavedFolderUpdateManyWithoutUserNestedInput
   watchHistory?: Prisma.WatchHistoryUpdateManyWithoutUserNestedInput
 }
 
@@ -705,6 +741,7 @@ export type UserUncheckedUpdateWithoutWatchlistInput = {
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutUserNestedInput
   creators?: Prisma.CreatorUncheckedUpdateManyWithoutUserNestedInput
   savedVideos?: Prisma.SavedVideoUncheckedUpdateManyWithoutUserNestedInput
+  savedFolders?: Prisma.SavedFolderUncheckedUpdateManyWithoutUserNestedInput
   watchHistory?: Prisma.WatchHistoryUncheckedUpdateManyWithoutUserNestedInput
 }
 
@@ -718,6 +755,7 @@ export type UserCreateWithoutSavedVideosInput = {
   sessions?: Prisma.SessionCreateNestedManyWithoutUserInput
   creators?: Prisma.CreatorCreateNestedManyWithoutUserInput
   watchlist?: Prisma.WatchlistItemCreateNestedManyWithoutUserInput
+  savedFolders?: Prisma.SavedFolderCreateNestedManyWithoutUserInput
   watchHistory?: Prisma.WatchHistoryCreateNestedManyWithoutUserInput
 }
 
@@ -731,6 +769,7 @@ export type UserUncheckedCreateWithoutSavedVideosInput = {
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutUserInput
   creators?: Prisma.CreatorUncheckedCreateNestedManyWithoutUserInput
   watchlist?: Prisma.WatchlistItemUncheckedCreateNestedManyWithoutUserInput
+  savedFolders?: Prisma.SavedFolderUncheckedCreateNestedManyWithoutUserInput
   watchHistory?: Prisma.WatchHistoryUncheckedCreateNestedManyWithoutUserInput
 }
 
@@ -760,6 +799,7 @@ export type UserUpdateWithoutSavedVideosInput = {
   sessions?: Prisma.SessionUpdateManyWithoutUserNestedInput
   creators?: Prisma.CreatorUpdateManyWithoutUserNestedInput
   watchlist?: Prisma.WatchlistItemUpdateManyWithoutUserNestedInput
+  savedFolders?: Prisma.SavedFolderUpdateManyWithoutUserNestedInput
   watchHistory?: Prisma.WatchHistoryUpdateManyWithoutUserNestedInput
 }
 
@@ -773,6 +813,79 @@ export type UserUncheckedUpdateWithoutSavedVideosInput = {
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutUserNestedInput
   creators?: Prisma.CreatorUncheckedUpdateManyWithoutUserNestedInput
   watchlist?: Prisma.WatchlistItemUncheckedUpdateManyWithoutUserNestedInput
+  savedFolders?: Prisma.SavedFolderUncheckedUpdateManyWithoutUserNestedInput
+  watchHistory?: Prisma.WatchHistoryUncheckedUpdateManyWithoutUserNestedInput
+}
+
+export type UserCreateWithoutSavedFoldersInput = {
+  id?: string
+  email: string
+  passwordHash: string
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  megaAccounts?: Prisma.MegaAccountCreateNestedManyWithoutUserInput
+  sessions?: Prisma.SessionCreateNestedManyWithoutUserInput
+  creators?: Prisma.CreatorCreateNestedManyWithoutUserInput
+  watchlist?: Prisma.WatchlistItemCreateNestedManyWithoutUserInput
+  savedVideos?: Prisma.SavedVideoCreateNestedManyWithoutUserInput
+  watchHistory?: Prisma.WatchHistoryCreateNestedManyWithoutUserInput
+}
+
+export type UserUncheckedCreateWithoutSavedFoldersInput = {
+  id?: string
+  email: string
+  passwordHash: string
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  megaAccounts?: Prisma.MegaAccountUncheckedCreateNestedManyWithoutUserInput
+  sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutUserInput
+  creators?: Prisma.CreatorUncheckedCreateNestedManyWithoutUserInput
+  watchlist?: Prisma.WatchlistItemUncheckedCreateNestedManyWithoutUserInput
+  savedVideos?: Prisma.SavedVideoUncheckedCreateNestedManyWithoutUserInput
+  watchHistory?: Prisma.WatchHistoryUncheckedCreateNestedManyWithoutUserInput
+}
+
+export type UserCreateOrConnectWithoutSavedFoldersInput = {
+  where: Prisma.UserWhereUniqueInput
+  create: Prisma.XOR<Prisma.UserCreateWithoutSavedFoldersInput, Prisma.UserUncheckedCreateWithoutSavedFoldersInput>
+}
+
+export type UserUpsertWithoutSavedFoldersInput = {
+  update: Prisma.XOR<Prisma.UserUpdateWithoutSavedFoldersInput, Prisma.UserUncheckedUpdateWithoutSavedFoldersInput>
+  create: Prisma.XOR<Prisma.UserCreateWithoutSavedFoldersInput, Prisma.UserUncheckedCreateWithoutSavedFoldersInput>
+  where?: Prisma.UserWhereInput
+}
+
+export type UserUpdateToOneWithWhereWithoutSavedFoldersInput = {
+  where?: Prisma.UserWhereInput
+  data: Prisma.XOR<Prisma.UserUpdateWithoutSavedFoldersInput, Prisma.UserUncheckedUpdateWithoutSavedFoldersInput>
+}
+
+export type UserUpdateWithoutSavedFoldersInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  email?: Prisma.StringFieldUpdateOperationsInput | string
+  passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  megaAccounts?: Prisma.MegaAccountUpdateManyWithoutUserNestedInput
+  sessions?: Prisma.SessionUpdateManyWithoutUserNestedInput
+  creators?: Prisma.CreatorUpdateManyWithoutUserNestedInput
+  watchlist?: Prisma.WatchlistItemUpdateManyWithoutUserNestedInput
+  savedVideos?: Prisma.SavedVideoUpdateManyWithoutUserNestedInput
+  watchHistory?: Prisma.WatchHistoryUpdateManyWithoutUserNestedInput
+}
+
+export type UserUncheckedUpdateWithoutSavedFoldersInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  email?: Prisma.StringFieldUpdateOperationsInput | string
+  passwordHash?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  megaAccounts?: Prisma.MegaAccountUncheckedUpdateManyWithoutUserNestedInput
+  sessions?: Prisma.SessionUncheckedUpdateManyWithoutUserNestedInput
+  creators?: Prisma.CreatorUncheckedUpdateManyWithoutUserNestedInput
+  watchlist?: Prisma.WatchlistItemUncheckedUpdateManyWithoutUserNestedInput
+  savedVideos?: Prisma.SavedVideoUncheckedUpdateManyWithoutUserNestedInput
   watchHistory?: Prisma.WatchHistoryUncheckedUpdateManyWithoutUserNestedInput
 }
 
@@ -787,6 +900,7 @@ export type UserCreateWithoutWatchHistoryInput = {
   creators?: Prisma.CreatorCreateNestedManyWithoutUserInput
   watchlist?: Prisma.WatchlistItemCreateNestedManyWithoutUserInput
   savedVideos?: Prisma.SavedVideoCreateNestedManyWithoutUserInput
+  savedFolders?: Prisma.SavedFolderCreateNestedManyWithoutUserInput
 }
 
 export type UserUncheckedCreateWithoutWatchHistoryInput = {
@@ -800,6 +914,7 @@ export type UserUncheckedCreateWithoutWatchHistoryInput = {
   creators?: Prisma.CreatorUncheckedCreateNestedManyWithoutUserInput
   watchlist?: Prisma.WatchlistItemUncheckedCreateNestedManyWithoutUserInput
   savedVideos?: Prisma.SavedVideoUncheckedCreateNestedManyWithoutUserInput
+  savedFolders?: Prisma.SavedFolderUncheckedCreateNestedManyWithoutUserInput
 }
 
 export type UserCreateOrConnectWithoutWatchHistoryInput = {
@@ -829,6 +944,7 @@ export type UserUpdateWithoutWatchHistoryInput = {
   creators?: Prisma.CreatorUpdateManyWithoutUserNestedInput
   watchlist?: Prisma.WatchlistItemUpdateManyWithoutUserNestedInput
   savedVideos?: Prisma.SavedVideoUpdateManyWithoutUserNestedInput
+  savedFolders?: Prisma.SavedFolderUpdateManyWithoutUserNestedInput
 }
 
 export type UserUncheckedUpdateWithoutWatchHistoryInput = {
@@ -842,6 +958,7 @@ export type UserUncheckedUpdateWithoutWatchHistoryInput = {
   creators?: Prisma.CreatorUncheckedUpdateManyWithoutUserNestedInput
   watchlist?: Prisma.WatchlistItemUncheckedUpdateManyWithoutUserNestedInput
   savedVideos?: Prisma.SavedVideoUncheckedUpdateManyWithoutUserNestedInput
+  savedFolders?: Prisma.SavedFolderUncheckedUpdateManyWithoutUserNestedInput
 }
 
 
@@ -855,6 +972,7 @@ export type UserCountOutputType = {
   creators: number
   watchlist: number
   savedVideos: number
+  savedFolders: number
   watchHistory: number
 }
 
@@ -864,6 +982,7 @@ export type UserCountOutputTypeSelect<ExtArgs extends runtime.Types.Extensions.I
   creators?: boolean | UserCountOutputTypeCountCreatorsArgs
   watchlist?: boolean | UserCountOutputTypeCountWatchlistArgs
   savedVideos?: boolean | UserCountOutputTypeCountSavedVideosArgs
+  savedFolders?: boolean | UserCountOutputTypeCountSavedFoldersArgs
   watchHistory?: boolean | UserCountOutputTypeCountWatchHistoryArgs
 }
 
@@ -915,6 +1034,13 @@ export type UserCountOutputTypeCountSavedVideosArgs<ExtArgs extends runtime.Type
 /**
  * UserCountOutputType without action
  */
+export type UserCountOutputTypeCountSavedFoldersArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.SavedFolderWhereInput
+}
+
+/**
+ * UserCountOutputType without action
+ */
 export type UserCountOutputTypeCountWatchHistoryArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   where?: Prisma.WatchHistoryWhereInput
 }
@@ -931,6 +1057,7 @@ export type UserSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = r
   creators?: boolean | Prisma.User$creatorsArgs<ExtArgs>
   watchlist?: boolean | Prisma.User$watchlistArgs<ExtArgs>
   savedVideos?: boolean | Prisma.User$savedVideosArgs<ExtArgs>
+  savedFolders?: boolean | Prisma.User$savedFoldersArgs<ExtArgs>
   watchHistory?: boolean | Prisma.User$watchHistoryArgs<ExtArgs>
   _count?: boolean | Prisma.UserCountOutputTypeDefaultArgs<ExtArgs>
 }, ExtArgs["result"]["user"]>
@@ -966,6 +1093,7 @@ export type UserInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = 
   creators?: boolean | Prisma.User$creatorsArgs<ExtArgs>
   watchlist?: boolean | Prisma.User$watchlistArgs<ExtArgs>
   savedVideos?: boolean | Prisma.User$savedVideosArgs<ExtArgs>
+  savedFolders?: boolean | Prisma.User$savedFoldersArgs<ExtArgs>
   watchHistory?: boolean | Prisma.User$watchHistoryArgs<ExtArgs>
   _count?: boolean | Prisma.UserCountOutputTypeDefaultArgs<ExtArgs>
 }
@@ -980,6 +1108,7 @@ export type $UserPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs =
     creators: Prisma.$CreatorPayload<ExtArgs>[]
     watchlist: Prisma.$WatchlistItemPayload<ExtArgs>[]
     savedVideos: Prisma.$SavedVideoPayload<ExtArgs>[]
+    savedFolders: Prisma.$SavedFolderPayload<ExtArgs>[]
     watchHistory: Prisma.$WatchHistoryPayload<ExtArgs>[]
   }
   scalars: runtime.Types.Extensions.GetPayloadResult<{
@@ -1387,6 +1516,7 @@ export interface Prisma__UserClient<T, Null = never, ExtArgs extends runtime.Typ
   creators<T extends Prisma.User$creatorsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.User$creatorsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$CreatorPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   watchlist<T extends Prisma.User$watchlistArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.User$watchlistArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$WatchlistItemPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   savedVideos<T extends Prisma.User$savedVideosArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.User$savedVideosArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$SavedVideoPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  savedFolders<T extends Prisma.User$savedFoldersArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.User$savedFoldersArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$SavedFolderPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   watchHistory<T extends Prisma.User$watchHistoryArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.User$watchHistoryArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$WatchHistoryPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   /**
    * Attaches callbacks for the resolution and/or rejection of the Promise.
@@ -1930,6 +2060,30 @@ export type User$savedVideosArgs<ExtArgs extends runtime.Types.Extensions.Intern
   take?: number
   skip?: number
   distinct?: Prisma.SavedVideoScalarFieldEnum | Prisma.SavedVideoScalarFieldEnum[]
+}
+
+/**
+ * User.savedFolders
+ */
+export type User$savedFoldersArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the SavedFolder
+   */
+  select?: Prisma.SavedFolderSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the SavedFolder
+   */
+  omit?: Prisma.SavedFolderOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.SavedFolderInclude<ExtArgs> | null
+  where?: Prisma.SavedFolderWhereInput
+  orderBy?: Prisma.SavedFolderOrderByWithRelationInput | Prisma.SavedFolderOrderByWithRelationInput[]
+  cursor?: Prisma.SavedFolderWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.SavedFolderScalarFieldEnum | Prisma.SavedFolderScalarFieldEnum[]
 }
 
 /**

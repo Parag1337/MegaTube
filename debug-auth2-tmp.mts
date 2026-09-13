@@ -1,0 +1,13 @@
+import 'dotenv/config';
+import crypto from 'node:crypto';
+const BASE = 'http://localhost:3000';
+const { prisma } = await import('./lib/db');
+const account = await prisma.megaAccount.findUnique({ where: { id: 1 }, select: { userId: true } });
+const token = crypto.randomBytes(32).toString('hex');
+await prisma.session.create({ data: { userId: account!.userId, token, expiresAt: new Date(Date.now() + 10*60_000) } });
+const back = await prisma.session.findUnique({ where: { token } });
+console.log('session readable:', !!back, 'expiresAt:', back?.expiresAt);
+const r = await fetch(`${BASE}/api/watchlist`, { headers: { cookie: `session_token=${token}` } });
+console.log('watchlist ->', r.status, (await r.text()).slice(0,120));
+await prisma.session.deleteMany({ where: { token } });
+await prisma.$disconnect();

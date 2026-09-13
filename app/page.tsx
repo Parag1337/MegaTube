@@ -1,7 +1,8 @@
-import Link from 'next/link';
-import { listLibraryVideosForUser } from '@/lib/videos';
+import { buildHomeFeedPage } from '@/lib/homeFeed';
 import { VideoGrid } from '@/components/VideoGrid';
 import { Pagination } from '@/components/Pagination';
+import { EmptyState, Button } from '@/components/ui';
+import { FilmIcon, RefreshIcon } from '@/components/icons';
 import { getCurrentUser } from '@/lib/auth';
 import { redirect } from 'next/navigation';
 
@@ -13,43 +14,57 @@ interface HomeProps {
   searchParams: Promise<{ page?: string }>;
 }
 
+/*
+ * ONE continuous mixed Home feed. Visual design (cards, header, spacing,
+ * grid, pagination) is unchanged - only the composition comes from the
+ * quota-based builder in lib/homeFeed.ts (recent/history/related/random/
+ * variety with first-claim de-dup and deterministic interleave).
+ */
+
 export default async function HomePage({ searchParams }: HomeProps) {
   const user = await getCurrentUser();
   if (!user) redirect('/login');
 
   const params = await searchParams;
   const page = Math.max(1, Number(params.page) || 1);
-  const { items, total, page: currentPage, totalPages } = await listLibraryVideosForUser(user.id, page);
+  const feed = await buildHomeFeedPage(user.id, page);
 
   return (
-    <div className="px-4 py-6 sm:px-6">
-      <div className="mx-auto max-w-[1800px]">
-        <h1 className="mb-6 text-xl font-semibold">My Library</h1>
-
-        {items.length === 0 ? (
-          <div className="flex min-h-[400px] items-center justify-center rounded-lg border border-border bg-surface">
-            <div className="text-center">
-              <svg className="mx-auto h-12 w-12 text-muted-light mb-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                <polyline points="17 8 12 3 7 8"/>
-                <line x1="12" y1="3" x2="12" y2="15"/>
-              </svg>
-              <p className="text-muted">
-                No private videos synced yet.{' '}
-                <Link href="/account" className="text-accent hover:underline">
-                  Add a MEGA account on your Account page
-                </Link>{' '}
-                to sync your private video library.
-              </p>
-            </div>
-          </div>
+    <div className="px-4 py-6 md:px-6">
+      <div className="mx-auto max-w-[2000px]">
+        {feed.items.length === 0 ? (
+          <>
+            <h1 className="mb-6 text-xl font-bold tracking-tight">Home</h1>
+            <EmptyState
+              icon={<FilmIcon className="h-7 w-7" />}
+              title="Your library is empty"
+              body={
+                <>
+                  Connect a MEGA account and run a sync — your videos will show
+                  up here as soon as they finish indexing.
+                </>
+              }
+              action={
+                <Button href="/account" variant="primary">
+                  <RefreshIcon className="h-4 w-4" />
+                  Connect a MEGA account
+                </Button>
+              }
+            />
+          </>
         ) : (
           <>
-            <VideoGrid videos={items} priorityStart={4} />
-            <Pagination page={currentPage} totalPages={totalPages} basePath="/" />
-            <p className="mt-4 text-center text-xs text-muted">
-              {total} video{total === 1 ? '' : 's'} in your private library
-            </p>
+            <div className="mb-4 flex items-baseline justify-between gap-4">
+              <h1 className="text-xl font-bold tracking-tight">Home</h1>
+              <p className="shrink-0 text-[13px] text-muted">
+                {feed.total} video{feed.total === 1 ? '' : 's'} in your library
+              </p>
+            </div>
+            <VideoGrid
+              videos={feed.items.map((pick) => ({ ...pick.video, feedSource: pick.source }))}
+              priorityStart={page === 1 ? 4 : 0}
+            />
+            <Pagination page={feed.page} totalPages={feed.totalPages} basePath="/" />
           </>
         )}
       </div>

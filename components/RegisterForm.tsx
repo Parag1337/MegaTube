@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { Field, inputClassName, Button } from '@/components/ui';
+import { AlertIcon } from '@/components/icons';
 
 export function RegisterForm() {
   const router = useRouter();
@@ -40,17 +42,23 @@ export function RegisterForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="mx-auto max-w-sm space-y-4">
-      <h1 className="text-2xl font-semibold">Create an account</h1>
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">Create your account</h1>
+        <p className="mt-1 text-sm text-muted">Your library stays private to you.</p>
+      </div>
 
       {error && (
-        <p className="rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <p
+          role="alert"
+          className="flex items-start gap-2 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-sm text-destructive"
+        >
+          <AlertIcon className="mt-0.5 h-4 w-4 shrink-0" />
           {error}
         </p>
       )}
 
-      <div className="space-y-1">
-        <label htmlFor="email" className="block text-sm font-medium">Email</label>
+      <Field label="Email" htmlFor="email">
         <input
           id="email"
           type="email"
@@ -58,12 +66,11 @@ export function RegisterForm() {
           onChange={(e) => setEmail(e.target.value)}
           required
           autoComplete="email"
-          className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none"
+          className={inputClassName}
         />
-      </div>
+      </Field>
 
-      <div className="space-y-1">
-        <label htmlFor="password" className="block text-sm font-medium">Password</label>
+      <Field label="Password" htmlFor="password" hint="At least 8 characters.">
         <input
           id="password"
           type="password"
@@ -72,13 +79,11 @@ export function RegisterForm() {
           required
           minLength={8}
           autoComplete="new-password"
-          className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none"
+          className={inputClassName}
         />
-        <p className="text-xs text-muted">At least 8 characters.</p>
-      </div>
+      </Field>
 
-      <div className="space-y-1">
-        <label htmlFor="confirm" className="block text-sm font-medium">Confirm Password</label>
+      <Field label="Confirm password" htmlFor="confirm">
         <input
           id="confirm"
           type="password"
@@ -86,20 +91,16 @@ export function RegisterForm() {
           onChange={(e) => setConfirm(e.target.value)}
           required
           autoComplete="new-password"
-          className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none"
+          className={inputClassName}
         />
-      </div>
+      </Field>
 
-      <button
-        type="submit"
-        disabled={loading}
-        className="w-full rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
-      >
+      <Button type="submit" variant="primary" disabled={loading} className="w-full">
         {loading ? 'Creating account…' : 'Sign up'}
-      </button>
+      </Button>
 
       <p className="text-center text-sm text-muted">
-        Already have an account? <Link href="/login" className="text-accent hover:underline">Log in</Link>
+        Already have an account? <Link href="/login" className="font-medium text-accent hover:underline">Sign in</Link>
       </p>
     </form>
   );

@@ -40,6 +40,11 @@ model Video {
   fileSize           BigInt?
   mimeType           String?
   duration           Int?
+  /// MP4 moov placement from the background layout probe (Phase P1.2):
+  /// true = faststart (moov first), false = non-faststart (moov at end,
+  /// served via the faststart cache). Null = unknown (not yet probed).
+  /// Trusted only when fileSize still matches the fresh MEGA size.
+  mp4Faststart       Boolean?
   thumbnail          String?
   thumbnailAvailable Boolean      @default(false)
   embedUrl           String?
@@ -75,6 +80,7 @@ model User {
   creators     Creator[]
   watchlist    WatchlistItem[]
   savedVideos  SavedVideo[]
+  savedFolders SavedFolder[]
   watchHistory WatchHistory[]
 }
 
@@ -155,17 +161,37 @@ model WatchlistItem {
   @@index([userId, createdAt])
 }
 
-/// P2.0 product foundation: a user's saved/bookmark videos. Flat bookmarks -
-/// NOT collections/folders. One row per (user, video).
+/// P2.0 product foundation: a user's saved/bookmark videos. One row per
+/// (user, video). Optional organization into one user-created folder per
+/// saved video (folderId null = uncategorized, shown under "All Saved").
+/// These are application-level folders only - never MEGA folders.
 model SavedVideo {
-  id        Int      @id @default(autoincrement())
+  id        Int         @id @default(autoincrement())
   userId    String
   videoId   Int
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  video     Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  folderId  Int?
+  createdAt DateTime    @default(now())
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video     Video       @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  folder    SavedFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
 
   @@unique([userId, videoId])
+  @@index([userId, createdAt])
+  @@index([userId, folderId])
+}
+
+/// P2.1: simple user-created folders organizing Saved Videos. Deleting a
+/// folder never deletes videos - its videos return to uncategorized
+/// (folderId SetNull). Names are unique per user.
+model SavedFolder {
+  id          Int          @id @default(autoincrement())
+  userId      String
+  name        String
+  createdAt   DateTime     @default(now())
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  savedVideos SavedVideo[]
+
+  @@unique([userId, name])
   @@index([userId, createdAt])
 }
 

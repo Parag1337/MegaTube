@@ -35,14 +35,16 @@ export default async function WatchlistPage({ searchParams }: WatchlistPageProps
               {result.total} video{result.total === 1 ? '' : 's'} saved to watch later
             </p>
           </div>
-          <WatchlistActions slugs={result.items.map((v) => v.slug)} />
+          <WatchlistActions
+            items={result.items.map((v) => ({ id: v.id, slug: v.slug, title: v.title }))}
+          />
         </div>
 
         {result.items.length === 0 ? (
           <EmptyState
             icon={<BookmarkIcon className="h-7 w-7" />}
             title="Your watchlist is empty"
-            body="Open any video's ⋮ menu and choose “Add to Watchlist” to park it here."
+            body="Open any video's three-dot menu and choose “Add to Watchlist” to park it here."
             action={
               <Link
                 href="/library"
