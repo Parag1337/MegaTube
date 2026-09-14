@@ -13,11 +13,11 @@
  * Precedence (highest first):  !  >  &&  >  || (explicit or implicit)
  *
  * Design notes:
- * - The tokenizer never lets user input become SQL or FTS operators: every
- *   TERM is compiled to a bound parameter (a double-quoted FTS5 phrase with
- *   embedded quotes doubled, or a LIKE pattern with %/_/\ escaped). Boolean
- *   structure is rebuilt in SQL from the AST - user text only ever travels
- *   as parameter values.
+ * - The tokenizer never lets user input become SQL or full-text operators:
+ *   every TERM is compiled to a bound parameter (an ILIKE pattern with
+ *   %/_/\ escaped, or a phraseto_tsquery value). Boolean structure is
+ *   rebuilt in SQL from the AST - user text only ever travels as parameter
+ *   values.
  * - `!` is an operator only at a token boundary (start of input, after
  *   whitespace, `(`, `&&`, `||` or another `!`). Inside a word (`Wow!`,
  *   `apple!`) it is a literal character, so ordinary titles never become
@@ -275,17 +275,13 @@ export function literalSearchNode(input: string): SearchNode | null {
 }
 
 /**
- * Whether a term can use the FTS5 trigram index. Trigram queries with fewer
- * than 3 characters match nothing, so such terms are evaluated with LIKE
- * instead (same database-side query, different predicate).
+ * Whether a term can use the PostgreSQL trigram/FTS-backed fast path.
+ * Trigram similarity with fewer than 3 characters has no signal, so such
+ * terms are evaluated with a plain ILIKE over the Video columns instead
+ * (same database-side query, different predicate).
  */
 export function isFtsEligibleTerm(value: string): boolean {
   return value.split(/\s+/).every((piece) => piece.length >= 3);
-}
-
-/** Quote a term as a single FTS5 phrase (embedded quotes doubled). */
-export function ftsPhraseExpression(value: string): string {
-  return `"${value.replace(/"/g, '""')}"`;
 }
 
 /** Escape LIKE wildcards so a term only ever matches literally. */
@@ -294,9 +290,10 @@ export function likePattern(value: string): string {
 }
 
 /**
- * Positive (non-negated) FTS-eligible terms, deduped, for relevance ranking.
+ * Positive (non-negated) fast-path terms, deduped, for relevance ranking.
  * Boolean filtering and ranking are separate concerns: the filter decides
- * eligibility, these terms decide the order via BM25.
+ * eligibility, these terms decide the order via weighted ts_rank plus
+ * trigram similarity.
  */
 export function positiveFtsTerms(node: SearchNode): string[] {
   const out: string[] = [];
@@ -323,19 +320,30 @@ export function positiveFtsTerms(node: SearchNode): string[] {
 // SQL compilation (Prisma.sql fragments, user text only as bound parameters)
 // ---------------------------------------------------------------------------
 
+/**
+ * One TERM as an index-backed substring probe.
+ *
+ * PostgreSQL full-text search matches whole lexemes only, which would lose
+ * the mid-word substring behavior of the SQLite trigram index ("ventur" must
+ * still find "Adventures"). The trigram-maintained "VideoSearch"."alltext"
+ * column (title \n filename \n creator) preserves substring semantics while
+ * the GIN gin_trgm_ops index accelerates ILIKE. Case-insensitivity comes
+ * from ILIKE (PostgreSQL LIKE is case-sensitive).
+ */
 function termFilterSql(value: string): Prisma.Sql {
   if (isFtsEligibleTerm(value)) {
-    return Prisma.sql`EXISTS(SELECT 1 FROM "VideoSearch" AS "s" WHERE "s"."rowid" = "v"."id" AND "s"."VideoSearch" MATCH ${ftsPhraseExpression(value)})`;
+    return Prisma.sql`EXISTS(SELECT 1 FROM "VideoSearch" AS "s" WHERE "s"."id" = "v"."id" AND "s"."alltext" ILIKE ${likePattern(value)} ESCAPE '\\')`;
   }
   const pattern = likePattern(value);
-  return Prisma.sql`("v"."title" LIKE ${pattern} ESCAPE '\' OR "v"."megaFilename" LIKE ${pattern} ESCAPE '\' OR EXISTS(SELECT 1 FROM "Creator" AS "c" WHERE "c"."id" = "v"."creatorId" AND "c"."name" LIKE ${pattern} ESCAPE '\'))`;
+  return Prisma.sql`("v"."title" ILIKE ${pattern} ESCAPE '\\' OR "v"."megaFilename" ILIKE ${pattern} ESCAPE '\\' OR EXISTS(SELECT 1 FROM "Creator" AS "c" WHERE "c"."id" = "v"."creatorId" AND "c"."name" ILIKE ${pattern} ESCAPE '\\'))`;
 }
 
 /**
  * Compile the AST to a SQL boolean predicate over the `v` ("Video") alias.
- * Each TERM becomes one index-backed EXISTS(MATCH) probe (or an inline LIKE
- * for sub-trigram terms); AND/OR/NOT compose in plain SQL. One query, no
- * per-term round trips, no JavaScript filtering.
+ * Each TERM becomes one index-backed EXISTS(ILIKE) probe over the maintained
+ * VideoSearch trigram column (or an inline ILIKE for sub-trigram terms);
+ * AND/OR/NOT compose in plain SQL. One query, no per-term round trips, no
+ * JavaScript filtering.
  */
 export function buildSearchFilterSql(node: SearchNode): Prisma.Sql {
   switch (node.kind) {
@@ -360,33 +368,93 @@ export function buildSearchFilterSql(node: SearchNode): Prisma.Sql {
   }
 }
 
+// Ranking: the SQLite engine ranked via BM25 over the trigram index
+// (title weighted double). PostgreSQL has no identical BM25 for this layout, so the equivalent user-visible ordering is built from two
+// complementary signals over the SAME positive terms:
+//
+//   1. ts_rank over the generated weighted tsvector (title=A, filename=B,
+//      creator=C) with weights {D:0.1, C:0.2, B:0.4, A:1.0}. ts_rank
+//      normalizes every matched lexeme by the vector's highest weight, so
+//      A=1.0 (not 2.0) keeps the title-weighted word-frequency term alive
+//      and discriminates rows that match one vs both terms (the BM25-like
+//      behavior the old engine showed). phraseto_tsquery keeps every user
+//      term a literal phrase (no operator injection, multi-word terms
+//      become <-> adjacency).
+//   2. pg_trgm similarity per field with the same 2:1:1 weights - this is
+//      what ranks partial/fuzzy substrings ("ventur" in "Adventures") that
+//      full-text search cannot see at all.
+//
+// The two are summed (trigram part scaled 0.5) and negated so that smaller
+// (= more negative) sorts first, mirroring the old bm25 ordering convention.
+// This is NOT mathematically BM25; documented behavioral difference: exact
+// lexeme matches and substring matches both rank by field-weighted strength
+// instead of corpus-wide term frequency.
+
 /**
- * BM25 relevance over the OR of all positive terms (scalar subquery, NULL
- * for rows that match no positive term - e.g. pure-NOT results). Title is
- * weighted above filename/creator (FTS column order title, filename,
- * creator). Returns null when there is nothing rankable (NOT-only queries);
- * callers then fall back to recency ordering.
+ * ts_rank field weights {D, C, B, A}. ts_rank divides each matched lexeme's
+ * weight by the array max, so the effective field ranking is A:title 2.5x,
+ * B:filename/C:creator 1.25x over the D base of 0.1 - preserving the old
+ * 2:1:1 title>filename>creator weighting while keeping the word-frequency
+ * term that discriminates one-term vs multi-term matches.
+ */
+const TS_RANK_WEIGHTS = `'{0.1,0.2,0.4,1.0}'::real[]`; // weights lead the arg list
+
+function greatestSimilaritySql(column: 'title' | 'filename' | 'creator', terms: string[]): Prisma.Sql {
+  // GREATEST requires >= 2 arguments in PostgreSQL; a single positive term
+  // degrades to the lone SIMILARITY directly.
+  const parts = terms.map((t) => Prisma.sql`SIMILARITY("r"."${Prisma.raw(column)}", ${t})`);
+  if (parts.length === 1) return parts[0];
+  return Prisma.sql`GREATEST(${Prisma.join(parts, ', ')})`;
+}
+
+/**
+ * Relevance over the OR of all positive terms (scalar subquery, NULL for
+ * rows that match no positive term - e.g. pure-NOT results). Title is
+ * weighted above filename/creator. Returns null when there is nothing
+ * rankable (NOT-only queries); callers then fall back to recency ordering.
  */
 export function buildSearchRankSql(node: SearchNode): Prisma.Sql | null {
   const terms = positiveFtsTerms(node);
   if (terms.length === 0) return null;
-  const match = terms.map(ftsPhraseExpression).join(' OR ');
-  return Prisma.sql`(SELECT bm25("VideoSearch", 2.0, 1.0, 1.0) FROM "VideoSearch" AS "r" WHERE "r"."rowid" = "v"."id" AND "r"."VideoSearch" MATCH ${match})`;
+
+  const match = Prisma.sql`(${Prisma.join(
+    terms.map((t) => Prisma.sql`"r"."alltext" ILIKE ${likePattern(t)} ESCAPE '\\'`),
+    ' OR ',
+  )})`;
+  const tsquery = Prisma.sql`${Prisma.join(
+    terms.map((t) => Prisma.sql`PHRASETO_TSQUERY('simple', ${t})`),
+    ' || ',
+  )}`;
+
+  return Prisma.sql`(SELECT -(
+      TS_RANK(${Prisma.raw(TS_RANK_WEIGHTS)}, "r"."search", ${tsquery}, 1)
+      + 0.5 * (
+        2.0 * ${greatestSimilaritySql('title', terms)}
+        + 1.0 * ${greatestSimilaritySql('filename', terms)}
+        + 1.0 * ${greatestSimilaritySql('creator', terms)}
+      )
+    )
+    FROM "VideoSearch" AS "r"
+    WHERE "r"."id" = "v"."id" AND ${match})`;
 }
 
 // ---------------------------------------------------------------------------
-// Prisma fallback (pre-migration databases without the VideoSearch table)
+// Prisma fallback (databases without the VideoSearch search table)
 // ---------------------------------------------------------------------------
 
-/** Compile the AST to a Prisma where-input with LIKE `contains` per term. */
+/**
+ * Compile the AST to a Prisma where-input with case-insensitive `contains`
+ * per term (mode:'insensitive' - PostgreSQL contains is case-sensitive by
+ * default, unlike the old SQLite LIKE semantics this fallback preserves).
+ */
 export function buildSearchPrismaWhere(node: SearchNode): Prisma.VideoWhereInput {
   switch (node.kind) {
     case 'term':
       return {
         OR: [
-          { title: { contains: node.value } },
-          { megaFilename: { contains: node.value } },
-          { creator: { is: { name: { contains: node.value } } } },
+          { title: { contains: node.value, mode: 'insensitive' } },
+          { megaFilename: { contains: node.value, mode: 'insensitive' } },
+          { creator: { is: { name: { contains: node.value, mode: 'insensitive' } } } },
         ],
       };
     case 'not':

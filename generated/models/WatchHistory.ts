@@ -478,6 +478,7 @@ export type WatchHistoryCreateOrConnectWithoutVideoInput = {
 
 export type WatchHistoryCreateManyVideoInputEnvelope = {
   data: Prisma.WatchHistoryCreateManyVideoInput | Prisma.WatchHistoryCreateManyVideoInput[]
+  skipDuplicates?: boolean
 }
 
 export type WatchHistoryUpsertWithWhereUniqueWithoutVideoInput = {
@@ -527,6 +528,7 @@ export type WatchHistoryCreateOrConnectWithoutUserInput = {
 
 export type WatchHistoryCreateManyUserInputEnvelope = {
   data: Prisma.WatchHistoryCreateManyUserInput | Prisma.WatchHistoryCreateManyUserInput[]
+  skipDuplicates?: boolean
 }
 
 export type WatchHistoryUpsertWithWhereUniqueWithoutUserInput = {
@@ -1329,6 +1331,7 @@ export type WatchHistoryCreateManyArgs<ExtArgs extends runtime.Types.Extensions.
    * The data used to create many WatchHistories.
    */
   data: Prisma.WatchHistoryCreateManyInput | Prisma.WatchHistoryCreateManyInput[]
+  skipDuplicates?: boolean
 }
 
 /**
@@ -1347,6 +1350,7 @@ export type WatchHistoryCreateManyAndReturnArgs<ExtArgs extends runtime.Types.Ex
    * The data used to create many WatchHistories.
    */
   data: Prisma.WatchHistoryCreateManyInput | Prisma.WatchHistoryCreateManyInput[]
+  skipDuplicates?: boolean
   /**
    * Choose, which related nodes to fetch as well
    */

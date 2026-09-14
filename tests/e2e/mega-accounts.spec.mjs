@@ -19,11 +19,20 @@
  */
 
 import { test, expect } from '@playwright/test';
-import Database from 'better-sqlite3';
+import pg from 'pg';
 
 const BASE = process.env.E2E_BASE_URL ?? 'http://localhost:3000';
 const HAS_MEGA_CREDS = !!(process.env.MEGA_TEST_EMAIL && process.env.MEGA_TEST_PASSWORD);
-const DB_FILE = 'data/database/app.db';
+const E2E_DATABASE_URL =
+  process.env.E2E_DATABASE_URL ??
+  'postgresql://megatube:megatube-dev-only@localhost:5433/megatube?schema=public';
+
+function withClient(fn) {
+  const client = new pg.Client({ connectionString: E2E_DATABASE_URL });
+  return client.connect().then(() =>
+    fn(client).finally(() => client.end()),
+  );
+}
 
 function randomEmail() {
   return `e2e-mega-${Date.now()}-${Math.random().toString(36).slice(2, 7)}@example.com`;
@@ -58,28 +67,26 @@ async function logout(page) {
 }
 
 function setAccountReauth(accountId) {
-  const db = new Database(DB_FILE);
-  try {
-    db.prepare("UPDATE MegaAccount SET status = 'REAUTH_REQUIRED', lastSyncError = ? WHERE id = ?").run(
-      'MEGA session expired. Reconnect required.',
-      accountId,
-    );
-  } finally {
-    db.close();
-  }
+  return withClient(async (db) => {
+    try {
+      await db.query(
+        "UPDATE MegaAccount SET status = 'REAUTH_REQUIRED', lastSyncError = $1 WHERE id = $2",
+        ['MEGA session expired. Reconnect required.', accountId],
+      );
+    } finally {
+      // Connection closed by withClient.
+    }
+  });
 }
 
 function deleteAccountByUserId(userId) {
-  const db = new Database(DB_FILE);
-  try {
-    const rows = db.prepare('SELECT id FROM MegaAccount WHERE userId = ?').all(userId);
-    for (const row of rows) {
-      db.prepare('DELETE FROM Video WHERE megaAccountId = ?').run(row.id);
-      db.prepare('DELETE FROM MegaAccount WHERE id = ?').run(row.id);
+  return withClient(async (db) => {
+    const res = await db.query('SELECT id FROM MegaAccount WHERE userId = $1', [userId]);
+    for (const row of res.rows) {
+      await db.query('DELETE FROM Video WHERE megaAccountId = $1', [row.id]);
+      await db.query('DELETE FROM MegaAccount WHERE id = $1', [row.id]);
     }
-  } finally {
-    db.close();
-  }
+  });
 }
 
 test.describe('MEGA account API — unauthenticated', () => {
@@ -294,16 +301,15 @@ test.describe('Private video ownership isolation', () => {
 
 test.describe('Cleanup', () => {
   test('removes test MEGA accounts from DB', async () => {
-    const db = new Database(DB_FILE);
-    try {
-      const rows = db
-        .prepare("SELECT id FROM User WHERE email LIKE 'e2e-mega-%@example.com'")
-        .all();
-      for (const row of rows) {
-        deleteAccountByUserId(row.id);
+    await withClient(async (db) => {
+      const res = await db.query("SELECT id FROM \"User\" WHERE email LIKE 'e2e-mega-%@example.com'");
+      for (const row of res.rows) {
+        const vres = await db.query('SELECT id FROM MegaAccount WHERE userId = $1', [row.id]);
+        for (const acc of vres.rows) {
+          await db.query('DELETE FROM Video WHERE megaAccountId = $1', [acc.id]);
+          await db.query('DELETE FROM MegaAccount WHERE id = $1', [acc.id]);
+        }
       }
-    } finally {
-      db.close();
-    }
+    });
   });
 });

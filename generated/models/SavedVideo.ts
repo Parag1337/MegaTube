@@ -529,6 +529,7 @@ export type SavedVideoCreateOrConnectWithoutVideoInput = {
 
 export type SavedVideoCreateManyVideoInputEnvelope = {
   data: Prisma.SavedVideoCreateManyVideoInput | Prisma.SavedVideoCreateManyVideoInput[]
+  skipDuplicates?: boolean
 }
 
 export type SavedVideoUpsertWithWhereUniqueWithoutVideoInput = {
@@ -578,6 +579,7 @@ export type SavedVideoCreateOrConnectWithoutUserInput = {
 
 export type SavedVideoCreateManyUserInputEnvelope = {
   data: Prisma.SavedVideoCreateManyUserInput | Prisma.SavedVideoCreateManyUserInput[]
+  skipDuplicates?: boolean
 }
 
 export type SavedVideoUpsertWithWhereUniqueWithoutUserInput = {
@@ -616,6 +618,7 @@ export type SavedVideoCreateOrConnectWithoutFolderInput = {
 
 export type SavedVideoCreateManyFolderInputEnvelope = {
   data: Prisma.SavedVideoCreateManyFolderInput | Prisma.SavedVideoCreateManyFolderInput[]
+  skipDuplicates?: boolean
 }
 
 export type SavedVideoUpsertWithWhereUniqueWithoutFolderInput = {
@@ -1453,6 +1456,7 @@ export type SavedVideoCreateManyArgs<ExtArgs extends runtime.Types.Extensions.In
    * The data used to create many SavedVideos.
    */
   data: Prisma.SavedVideoCreateManyInput | Prisma.SavedVideoCreateManyInput[]
+  skipDuplicates?: boolean
 }
 
 /**
@@ -1471,6 +1475,7 @@ export type SavedVideoCreateManyAndReturnArgs<ExtArgs extends runtime.Types.Exte
    * The data used to create many SavedVideos.
    */
   data: Prisma.SavedVideoCreateManyInput | Prisma.SavedVideoCreateManyInput[]
+  skipDuplicates?: boolean
   /**
    * Choose, which related nodes to fetch as well
    */

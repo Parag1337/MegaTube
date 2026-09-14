@@ -434,6 +434,7 @@ export type SavedFolderCreateOrConnectWithoutUserInput = {
 
 export type SavedFolderCreateManyUserInputEnvelope = {
   data: Prisma.SavedFolderCreateManyUserInput | Prisma.SavedFolderCreateManyUserInput[]
+  skipDuplicates?: boolean
 }
 
 export type SavedFolderUpsertWithWhereUniqueWithoutUserInput = {
@@ -1280,6 +1281,7 @@ export type SavedFolderCreateManyArgs<ExtArgs extends runtime.Types.Extensions.I
    * The data used to create many SavedFolders.
    */
   data: Prisma.SavedFolderCreateManyInput | Prisma.SavedFolderCreateManyInput[]
+  skipDuplicates?: boolean
 }
 
 /**
@@ -1298,6 +1300,7 @@ export type SavedFolderCreateManyAndReturnArgs<ExtArgs extends runtime.Types.Ext
    * The data used to create many SavedFolders.
    */
   data: Prisma.SavedFolderCreateManyInput | Prisma.SavedFolderCreateManyInput[]
+  skipDuplicates?: boolean
   /**
    * Choose, which related nodes to fetch as well
    */

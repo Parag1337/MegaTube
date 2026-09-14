@@ -1106,6 +1106,7 @@ export type VideoCreateOrConnectWithoutCreatorInput = {
 
 export type VideoCreateManyCreatorInputEnvelope = {
   data: Prisma.VideoCreateManyCreatorInput | Prisma.VideoCreateManyCreatorInput[]
+  skipDuplicates?: boolean
 }
 
 export type VideoUpsertWithWhereUniqueWithoutCreatorInput = {
@@ -1224,6 +1225,7 @@ export type VideoCreateOrConnectWithoutMegaAccountInput = {
 
 export type VideoCreateManyMegaAccountInputEnvelope = {
   data: Prisma.VideoCreateManyMegaAccountInput | Prisma.VideoCreateManyMegaAccountInput[]
+  skipDuplicates?: boolean
 }
 
 export type VideoUpsertWithWhereUniqueWithoutMegaAccountInput = {
@@ -2819,6 +2821,7 @@ export type VideoCreateManyArgs<ExtArgs extends runtime.Types.Extensions.Interna
    * The data used to create many Videos.
    */
   data: Prisma.VideoCreateManyInput | Prisma.VideoCreateManyInput[]
+  skipDuplicates?: boolean
 }
 
 /**
@@ -2837,6 +2840,7 @@ export type VideoCreateManyAndReturnArgs<ExtArgs extends runtime.Types.Extension
    * The data used to create many Videos.
    */
   data: Prisma.VideoCreateManyInput | Prisma.VideoCreateManyInput[]
+  skipDuplicates?: boolean
   /**
    * Choose, which related nodes to fetch as well
    */

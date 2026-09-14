@@ -1,20 +1,20 @@
 /**
  * P2.1 corrections regression tests: Saved Video folders + Clear Watchlist.
  *
- * Covers (isolated DB built from the repo migrations):
+ * Covers (against an isolated PostgreSQL database built from the repo
+ * migrations):
  *   folders: create / duplicate / invalid / list counts / rename /
  *     rename-duplicate / move into folder / move back to uncategorized /
  *     filtered listing / delete returns videos to uncategorized (never
  *     unsaves) / isolation across users
  *   watchlist: clear removes all + reports count, leaves saved/history alone
- *   migration: pre-folder saved rows survive with NULL folderId; folderId
- *     column + SavedFolder table exist on fresh DBs
+ *   migration: SavedFolder table + SavedVideo.folderId exist on fresh DBs
+ *     (the SQLite pre-folder-data replay variant retired with the SQLite
+ *     engine - schema parity is enforced by prisma migrate itself).
  */
 
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import path from 'node:path';
-import Database from 'better-sqlite3';
 import { createTestDatabase } from './helpers/test-db';
 
 const db = createTestDatabase('p2-saved-folders-unit');
@@ -211,49 +211,15 @@ test('watchlist: clear removes all, counts, leaves saved/history alone', async (
   assert.equal((await personal.listWatchlist(other.id, 1)).total, 1);
 });
 
-test('migration: pre-folder saved rows survive with NULL folderId', async () => {
-  const dir = path.resolve(process.cwd(), 'prisma/migrations');
-  const all = (await import('node:fs')).readdirSync(dir).filter((d: string) => /^\d{14}_/.test(d)).sort();
-  const target = '20260912030000_p2_saved_folders';
-  assert.ok(all.includes(target));
-  const file = path.join(path.resolve(process.cwd(), 'data/test'), 'p2-folders-existing.db');
-  const fssync = await import('node:fs');
-  try {
-    fssync.rmSync(file, { force: true });
-  } catch { /* not present */ }
-  const raw = new Database(file);
-  try {
-    for (const m of all) {
-      if (m === target) break;
-      raw.exec(fssync.readFileSync(path.join(dir, m, 'migration.sql'), 'utf8'));
-    }
-    raw.prepare(`INSERT INTO "User" ("id","email","passwordHash","createdAt","updatedAt") VALUES (?,?,?,?,?)`).run(
-      'legacy-u', 'legacy-folders@example.com', 'hash', '2026-01-01 00:00:00', '2026-01-01 00:00:00',
-    );
-    raw.prepare(
-      `INSERT INTO "MegaAccount" ("userId","label","megaEmail","encryptedSession","status","createdAt","updatedAt") VALUES (?,?,?,?,?,?,?)`,
-    ).run('legacy-u', 'Acc', 'legacy-folders@mega.test', 's', 'CONNECTED', '2026-01-01 00:00:00', '2026-01-01 00:00:00');
-    const legacyAcc = (raw.prepare('SELECT last_insert_rowid() AS id').get() as { id: number }).id;
-    raw.prepare(
-      `INSERT INTO "Video" ("megaFilename","title","slug","megaAccountId","fileSize","createdAt","updatedAt") VALUES (?,?,?,?,?,?,?)`,
-    ).run('Old Clip.mp4', 'Old Clip', 'legacy-saved-clip', legacyAcc, 1000, '2026-01-02 00:00:00', '2026-01-02 00:00:00');
-    const legacyVideo = (raw.prepare('SELECT last_insert_rowid() AS id').get() as { id: number }).id;
-    raw.prepare(`INSERT INTO "SavedVideo" ("userId","videoId","createdAt") VALUES (?,?,?)`).run(
-      'legacy-u', legacyVideo, '2026-01-03 00:00:00',
-    );
-    raw.exec(fssync.readFileSync(path.join(dir, target, 'migration.sql'), 'utf8'));
-    const row = raw.prepare('SELECT "userId","videoId","folderId" FROM "SavedVideo"').get() as {
-      userId: string; videoId: number; folderId: number | null;
-    } | undefined;
-    assert.ok(row, 'pre-existing saved row must survive');
-    assert.equal(row.userId, 'legacy-u');
-    assert.equal(row.videoId, legacyVideo);
-    assert.equal(row.folderId, null);
-    assert.ok(raw.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='SavedFolder'").get());
-  } finally {
-    raw.close();
-  }
-  try {
-    fssync.rmSync(file, { force: true });
-  } catch { /* cleanup */ }
+test('migration: SavedFolder table + folderId column exist on a fresh database', async () => {
+  // SQLite historical-replay variant retired with the SQLite engine;
+  // schema parity is enforced by prisma migrate on PostgreSQL.
+  const tables = (await prisma.$queryRawUnsafe<Array<{ tablename: string }>>(
+    `SELECT tablename FROM pg_tables WHERE schemaname = 'public'`,
+  )) as Array<{ tablename: string }>;
+  assert.ok(tables.some((t) => t.tablename === 'SavedFolder'), 'SavedFolder table must exist');
+  const cols = (await prisma.$queryRawUnsafe<Array<{ column_name: string }>>(
+    `SELECT column_name FROM information_schema.columns WHERE table_name = 'SavedVideo'`,
+  )) as Array<{ column_name: string }>;
+  assert.ok(cols.some((c) => c.column_name === 'folderId'), 'SavedVideo.folderId must exist');
 });

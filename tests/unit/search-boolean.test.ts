@@ -168,8 +168,7 @@ test('parser: malformed queries throw SearchSyntaxError', () => {
   }
 });
 
-test('parser helpers: FTS escaping, LIKE escaping, eligibility', () => {
-  assert.equal(search.ftsPhraseExpression('say "hi"'), '"say ""hi"""');
+test('parser helpers: ILIKE escaping, eligibility', () => {
   assert.equal(search.likePattern('100%_\\'), '%100\\%\\_\\\\%');
   assert.equal(search.isFtsEligibleTerm('apple'), true);
   assert.equal(search.isFtsEligibleTerm('underwater-footage'), true);

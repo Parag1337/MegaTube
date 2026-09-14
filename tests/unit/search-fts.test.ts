@@ -1,10 +1,11 @@
 /**
- * P1.3 tests: FTS5-backed search (lib/videos.ts searchVideos + triggers).
+ * Search tests: index-backed search (lib/videos.ts searchVideos + triggers).
  *
  * Covers: title/partial/creator/filename matching, case-insensitivity,
  * empty query, pagination, user isolation, special characters, short-token
- * LIKE fallback, and trigger-driven index sync (rename/reassign/delete).
- * Runs against an isolated DB built from the repo migrations (FTS included).
+ * ILIKE fallback, and trigger-driven index sync (rename/reassign/delete).
+ * Runs against an isolated PostgreSQL database built from the repo
+ * migrations (VideoSearch included).
  */
 
 import { test, before, after } from 'node:test';
@@ -175,8 +176,8 @@ test('multi-word queries use implicit OR (never phrase/AND)', async () => {
   assert.ok(found.includes('fts-galaxy'), 'galaxy term matches');
 });
 
-test('short-token queries match inline via LIKE without regressing', async () => {
-  // 'Al' (2 chars) cannot use trigrams but must still find Alpha (LIKE path).
+test('short-token queries match inline via ILIKE without regressing', async () => {
+  // 'Al' (2 chars) cannot use trigrams but must still find Alpha (ILIKE path).
   const r = await searchVideos('Al', 1, userA.id);
   assert.ok(r.items.some((v) => v.slug === 'fts-alpha'));
 });
@@ -232,20 +233,22 @@ test('index drops deleted videos via trigger', async () => {
 });
 
 // BUG-002 regression: prove that eligible queries actually execute through
-// the FTS5 path. The LIKE fallback is correct but must not mask a broken
-// FTS implementation.
-test('eligible search actually uses the FTS5 path (not just the LIKE fallback)', async () => {
+// the index-backed path. The ILIKE-over-Video fallback is correct but must
+// not mask a broken search-index implementation.
+test('eligible search actually uses the indexed path (not just the fallback)', async () => {
   const probe = await makeVideo(null, 'fts-path-probe', 'FTS Path Probe Title');
   try {
-    await prisma.$executeRaw`UPDATE "VideoSearch" SET "title" = 'FTS_PATH_PROBE_MARKER_ONLY' WHERE rowid = ${probe.id}`;
+    // Marker exists ONLY in the VideoSearch mirror, never in Video.title:
+    // a passing search proves the query hit the maintained search table.
+    await prisma.$executeRaw`UPDATE "VideoSearch" SET "title" = 'FTS_PATH_PROBE_MARKER_ONLY', "alltext" = 'FTS_PATH_PROBE_MARKER_ONLY' WHERE "id" = ${probe.id}`;
 
     const result = await searchVideos('FTS_PATH_PROBE_MARKER_ONLY', 1, undefined);
     assert.ok(
       result.items.some((v) => v.slug === 'fts-path-probe'),
-      'FTS5 must be queried: the marker string exists only in VideoSearch, not in Video.title',
+      'search table must be queried: the marker string exists only in VideoSearch, not in Video.title',
     );
   } finally {
-    await prisma.$executeRaw`UPDATE "VideoSearch" SET "title" = 'FTS Path Probe Title' WHERE rowid = ${probe.id}`;
+    await prisma.$executeRaw`UPDATE "VideoSearch" SET "title" = 'FTS Path Probe Title', "alltext" = 'FTS Path Probe Title\nFTS Path Probe Title.mp4' WHERE "id" = ${probe.id}`;
     await prisma.video.delete({ where: { id: probe.id } });
   }
 });

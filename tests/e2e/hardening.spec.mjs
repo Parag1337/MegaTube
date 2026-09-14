@@ -2,47 +2,59 @@
  * Phase 0 hardening tests: error/fallback behavior, preview cleanup under
  * stress, and touch-device semantics.
  *
- * The invalid-link fixture row is inserted and removed via better-sqlite3
- * directly (dev fixture only; no production code depends on this).
+ * The invalid-link fixture row is inserted and removed via `pg` directly
+ * against the PostgreSQL database the app under test uses
+ * (E2E_DATABASE_URL, defaulting to the local dev database). The preserved
+ * SQLite rollback database is NEVER touched by these tests.
  */
 
 import { test, expect } from '@playwright/test';
-import Database from 'better-sqlite3';
+import pg from 'pg';
 
 const BASE = process.env.E2E_BASE_URL ?? 'http://localhost:3000';
-const DB_FILE = 'data/database/app.db';
+const E2E_DATABASE_URL =
+  process.env.E2E_DATABASE_URL ??
+  'postgresql://megatube:megatube-dev-only@localhost:5433/megatube?schema=public';
 const BROKEN_SLUG = 'broken-link-test-video';
 
+function withClient(fn) {
+  const client = new pg.Client({ connectionString: E2E_DATABASE_URL });
+  return client.connect().then(() =>
+    fn(client).finally(() => client.end()),
+  );
+}
+
 function insertBrokenVideo() {
-  const db = new Database(DB_FILE);
-  const existing = db.prepare('SELECT id FROM Video WHERE slug = ?').get(BROKEN_SLUG);
-  if (!existing) {
-    db.prepare(
-      `INSERT INTO Video (megaUrl, megaFileId, megaFileKey, megaFilename, title, slug,
-        thumbnail, thumbnailAvailable, embedUrl, sortOrder, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, NULL, 0, ?, 999999, datetime('now'), datetime('now'))`,
-    ).run(
-      'https://mega.nz/file/badlink1#not-a-real-key',
-      'badlink1',
-      'not-a-real-key-not-a-real-key',
-      'broken-video.mp4',
-      'Broken Link Test Video',
-      BROKEN_SLUG,
-      'https://mega.nz/embed/badlink1#not-a-real-key-not-a-real-key',
-    );
-  }
-  db.close();
+  return withClient(async (db) => {
+    const existing = await db.query('SELECT id FROM Video WHERE slug = $1', [BROKEN_SLUG]);
+    if (existing.rowCount === 0) {
+      await db.query(
+        `INSERT INTO Video (megaUrl, megaFileId, megaFileKey, megaFilename, title, slug,
+          thumbnail, thumbnailAvailable, embedUrl, sortOrder, createdAt, updatedAt)
+         VALUES ($1, $2, $3, $4, $5, $6, NULL, false, $7, 999999, now(), now())`,
+        [
+          'https://mega.nz/file/badlink1#not-a-real-key',
+          'badlink1',
+          'not-a-real-key-not-a-real-key',
+          'broken-video.mp4',
+          'Broken Link Test Video',
+          BROKEN_SLUG,
+          'https://mega.nz/embed/badlink1#not-a-real-key-not-a-real-key',
+        ],
+      );
+    }
+  });
 }
 
 function removeBrokenVideo() {
-  const db = new Database(DB_FILE);
-  db.prepare('DELETE FROM Video WHERE slug = ?').run(BROKEN_SLUG);
-  db.close();
+  return withClient(async (db) => {
+    await db.query('DELETE FROM Video WHERE slug = $1', [BROKEN_SLUG]);
+  });
 }
 
 test.describe('error/fallback behavior', () => {
   test('a malformed MEGA link degrades its card only, never the page', async ({ page }) => {
-    insertBrokenVideo();
+    await insertBrokenVideo();
     try {
       const errors = [];
       page.on('pageerror', (e) => errors.push(e.message));
@@ -66,12 +78,12 @@ test.describe('error/fallback behavior', () => {
       await expect(brokenCard.locator('iframe')).toHaveCount(0);
       expect(errors).toEqual([]);
     } finally {
-      removeBrokenVideo();
+      await removeBrokenVideo();
     }
   });
 
   test('video page for a link MEGA cannot play still loads with its player', async ({ page }) => {
-    insertBrokenVideo();
+    await insertBrokenVideo();
     try {
       const res = await page.goto(`${BASE}/video/${BROKEN_SLUG}`, { waitUntil: 'domcontentloaded' });
       expect(res.status()).toBe(200);
@@ -81,7 +93,7 @@ test.describe('error/fallback behavior', () => {
       // Title/metadata still render.
       await expect(page.locator('h1')).toContainText('Broken Link Test Video');
     } finally {
-      removeBrokenVideo();
+      await removeBrokenVideo();
     }
   });
 
