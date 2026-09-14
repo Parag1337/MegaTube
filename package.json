@@ -8,7 +8,6 @@
     "start": "next start",
     "lint": "eslint",
     "keygen": "tsx scripts/keygen.ts",
-    "fix-account-status": "tsx scripts/fix-account-status.ts",
     "test": "tsx --test tests/**/*.test.ts",
     "test:unit": "tsx --test tests/unit/**/*.test.ts",
     "test:integration": "tsx --test tests/integration/**/*.test.ts"

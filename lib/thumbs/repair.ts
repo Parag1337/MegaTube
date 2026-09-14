@@ -60,6 +60,8 @@ export const PREFIX_BYTES = 64 * 1024 * 1024;
 export const MAX_VIDEO_BYTES = 8 * 1024 * 1024 * 1024;
 /** Max videos repaired per endpoint call (keeps one call bounded). */
 export const REPAIR_BATCH_LIMIT = 20;
+/** Safety cap for a full-library repair scan (private library: bounded by size). */
+export const FULL_SCAN_LIMIT = 5000;
 /** Per-ffmpeg-invocation timeout. */
 const FFMPEG_TIMEOUT_MS = 120_000;
 
@@ -399,7 +401,7 @@ async function fetchDecryptToFile(
   }
 }
 
-export type RepairStatus = 'skipped-good' | 'repaired' | 'failed' | 'not-found' | 'skipped-cap';
+export type RepairStatus = 'skipped-good' | 'repaired-missing' | 'repaired-black' | 'repaired-broken' | 'repaired-problematic' | 'repaired' | 'failed' | 'not-found' | 'skipped-cap';
 
 export interface RepairResult {
   videoId: number;
@@ -407,6 +409,39 @@ export interface RepairResult {
   /** Mean brightness of the stored thumbnail (when known). */
   brightness?: number | null;
   detail?: string;
+  /** Video title at repair time (for the live progress log). */
+  title?: string | null;
+  /** Wall-clock ms spent on this video (skip or repair). */
+  elapsedMs?: number;
+}
+
+/**
+ * Live lifecycle events emitted while a repair run is actually happening.
+ * The UI renders these incrementally - they must correspond to real work:
+ * - `video-start`: classification of this video begins (cheap local checks).
+ * - `video-phase` with phase `repairing`: real repair work started (MEGA
+ *   source access + frame extraction about to run). Never emitted for
+ *   videos that are skipped.
+ * - `video-phase` with phase `extracting`: the frame extraction process
+ *   (ffmpeg over real video bytes) is running now.
+ * - `video-done`: terminal state for this video with its status + elapsed.
+ */
+export type RepairPhase = 'repairing' | 'extracting';
+
+export interface RepairEvent {
+  type: 'video-start' | 'video-phase' | 'video-done';
+  videoId: number;
+  title?: string | null;
+  phase?: RepairPhase;
+  /** Repair category decided before extraction (mirrors RepairStatus). */
+  category?: RepairStatus;
+  status?: RepairStatus;
+  detail?: string;
+  elapsedMs?: number;
+  /** 1-based position in this run. */
+  index?: number;
+  /** Total videos in this run. */
+  total?: number;
 }
 
 /**
@@ -418,8 +453,14 @@ export interface RepairResult {
 export async function repairVideoThumbnail(
   userId: string,
   videoId: number,
-  opts?: { force?: boolean; deps?: ThumbRepairDeps },
+  opts?: {
+    force?: boolean;
+    deps?: ThumbRepairDeps;
+    /** Live lifecycle hook: called when real repair/extraction actually starts. */
+    onPhase?: (phase: RepairPhase, info: { category: RepairStatus }) => void;
+  },
 ): Promise<RepairResult> {
+  const t0 = Date.now();
   const deps = opts?.deps ?? defaultDeps;
   const video = await prisma.video.findFirst({
     where: {
@@ -428,22 +469,43 @@ export async function repairVideoThumbnail(
     },
     select: {
       id: true,
+      title: true,
       megaNodeId: true,
       fileKeyEncrypted: true,
       fileSize: true,
       duration: true,
       thumbnail: true,
+      thumbnailAvailable: true,
       megaAccount: { select: { id: true, encryptedSession: true } },
     },
   });
+  const elapsedMs = () => Date.now() - t0;
   if (!video || !video.megaAccount || !video.megaNodeId || !video.fileKeyEncrypted) {
-    return { videoId, status: 'not-found' };
+    return { videoId, status: 'not-found', detail: 'source unavailable', elapsedMs: elapsedMs() };
   }
 
+  let repairType: RepairStatus = 'repaired';
   if (!opts?.force) {
     const existing = await existingThumbPath(video.id);
     if (existing && verdictThumbMean(await thumbMeanBrightness(existing)) === 'usable') {
-      return { videoId, status: 'skipped-good' };
+      return { videoId, status: 'skipped-good', title: video.title, elapsedMs: elapsedMs() };
+    }
+    if (!existing) {
+      if (!video.thumbnailAvailable) {
+        repairType = 'repaired-problematic';
+      } else {
+        repairType = 'repaired-missing';
+      }
+    } else {
+      const mean = await thumbMeanBrightness(existing);
+      const verdict = verdictThumbMean(mean);
+      if (verdict === 'black') {
+        repairType = 'repaired-black';
+      } else if (verdict === 'unknown') {
+        repairType = 'repaired-broken';
+      } else {
+        repairType = 'repaired';
+      }
     }
   }
 
@@ -451,11 +513,15 @@ export async function repairVideoThumbnail(
   try {
     fileKey = decryptSecret(video.fileKeyEncrypted);
   } catch {
-    return { videoId, status: 'failed', detail: 'unreadable playback key' };
+    return { videoId, status: 'failed', title: video.title, detail: 'unreadable playback key', elapsedMs: elapsedMs() };
   }
 
+  // Real work starts here: the category above was decided from local
+  // checks only; everything below touches the actual video source.
+  opts?.onPhase?.('repairing', { category: repairType });
   const workDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), `thumb-repair-${video.id}-`));
   try {
+    opts?.onPhase?.('extracting', { category: repairType });
     const best = await (extractBestImpl ?? extractBestFrame)(
       {
         accountId: video.megaAccount.id,
@@ -468,23 +534,31 @@ export async function repairVideoThumbnail(
       workDir,
       deps,
     );
-    if (!best) return { videoId, status: 'failed', detail: 'no usable frame' };
+    if (!best) return { videoId, status: 'failed', title: video.title, detail: 'no usable frame', elapsedMs: elapsedMs() };
 
     await fs.promises.mkdir(thumbsDir(), { recursive: true });
     const dest = path.join(thumbsDir(), `${video.id}.jpg`);
     await fs.promises.copyFile(best.jpg, dest);
+    // Success is judged by the STORED file: it must exist on disk and be
+    // a bright-enough decodable image served by the thumbnail endpoint.
+    // Anything less is a failure, never a reported success.
+    const storedMean = await thumbMeanBrightness(dest);
+    if (!isUsableBrightness(storedMean)) {
+      await fs.promises.rm(dest, { force: true }).catch(() => {});
+      return { videoId, status: 'failed', title: video.title, detail: 'extracted frame unusable', elapsedMs: elapsedMs() };
+    }
     // Remove a stale sibling extension so exactly one file backs the video.
     await fs.promises.rm(path.join(thumbsDir(), `${video.id}.png`), { force: true });
     await prisma.video.update({
       where: { id: video.id },
       data: { thumbnail: `/api/media/thumbs/${video.id}`, thumbnailAvailable: true },
     });
-    return { videoId, status: 'repaired', brightness: best.brightness, detail: `seek=${best.seek}s` };
+    return { videoId, status: repairType, title: video.title, brightness: storedMean, detail: `seek=${best.seek}s`, elapsedMs: elapsedMs() };
   } catch (err) {
     console.warn(
       `[thumbs] repair failed for video ${video.id}: ${err instanceof Error ? err.message.slice(0, 120) : typeof err}`,
     );
-    return { videoId, status: 'failed', detail: 'extraction error' };
+    return { videoId, status: 'failed', title: video.title, detail: 'extraction error', elapsedMs: elapsedMs() };
   } finally {
     if (!process.env.THUMB_KEEP_WORKDIR) {
       await fs.promises.rm(workDir, { recursive: true, force: true });
@@ -497,40 +571,107 @@ export async function repairVideoThumbnail(
 export interface RepairSummary {
   scanned: number;
   repaired: number;
+  repairedMissing: number;
+  repairedBlack: number;
+  repairedBroken: number;
+  repairedProblematic: number;
   skippedGood: number;
+  notFound: number;
   failed: number;
   results: RepairResult[];
 }
 /**
  * Repair a user's library sequentially (concurrency 1 - never competes
- * with playback/remux). Candidates: videos with no thumbnail file on disk
- * or an unusable one. Bounded by `limit`. Safe to re-run: good thumbnails
- * are skipped, failures only logged.
+ * with playback/remux). Without explicit `videoIds` the WHOLE library is
+ * scanned: videos whose thumbnail is known-missing (`thumbnailAvailable`
+ * false, i.e. previously problematic) go first so the important work is
+ * never starved by an early batch cap, then the rest by id. Good
+ * thumbnails are skipped with cheap local checks only (no MEGA/video
+ * work); only repair candidates perform extraction. Safe to re-run:
+ * repaired videos are skipped next time, failures only logged.
+ *
+ * With explicit `videoIds` the run stays bounded by `limit`
+ * (post-sync background batches use this path). Emits live lifecycle
+ * events via `onEvent` as real work happens.
  */
 export async function repairUserThumbnails(
   userId: string,
-  opts?: { limit?: number; videoIds?: number[]; force?: boolean; deps?: ThumbRepairDeps },
+  opts?: { limit?: number; videoIds?: number[]; force?: boolean; deps?: ThumbRepairDeps; onEvent?: (e: RepairEvent) => void },
 ): Promise<RepairSummary> {
-  const limit = Math.max(1, Math.min(opts?.limit ?? REPAIR_BATCH_LIMIT, REPAIR_BATCH_LIMIT));
-  const where =
-    opts?.videoIds && opts.videoIds.length > 0
-      ? { megaAccount: { userId, status: { not: MEGA_ACCOUNT_STATUSES.DISCONNECTED } }, id: { in: opts.videoIds } }
-      : { megaAccount: { userId, status: { not: MEGA_ACCOUNT_STATUSES.DISCONNECTED } } };
+  const explicitIds = opts?.videoIds && opts.videoIds.length > 0;
+  const limit = explicitIds
+    ? Math.max(1, Math.min(opts?.limit ?? REPAIR_BATCH_LIMIT, REPAIR_BATCH_LIMIT))
+    : Math.max(1, Math.min(opts?.limit ?? FULL_SCAN_LIMIT, FULL_SCAN_LIMIT));
+  const emit = opts?.onEvent;
+  const where = explicitIds
+    ? { megaAccount: { userId, status: { not: MEGA_ACCOUNT_STATUSES.DISCONNECTED } }, id: { in: opts.videoIds } }
+    : { megaAccount: { userId, status: { not: MEGA_ACCOUNT_STATUSES.DISCONNECTED } } };
+  // Previously problematic videos (thumbnailAvailable false) first - they
+  // are the reason this run exists - then everything else by id.
   const videos = await prisma.video.findMany({
     where,
-    select: { id: true },
-    orderBy: { id: 'asc' },
+    select: { id: true, title: true, thumbnailAvailable: true },
+    orderBy: explicitIds ? { id: 'asc' } : [{ thumbnailAvailable: 'asc' }, { id: 'asc' }],
     take: limit,
   });
 
-  const summary: RepairSummary = { scanned: 0, repaired: 0, skippedGood: 0, failed: 0, results: [] };
+  const summary: RepairSummary = {
+    scanned: 0,
+    repaired: 0,
+    repairedMissing: 0,
+    repairedBlack: 0,
+    repairedBroken: 0,
+    repairedProblematic: 0,
+    skippedGood: 0,
+    notFound: 0,
+    failed: 0,
+    results: [],
+  };
   for (const v of videos) {
-    const r = await repairVideoThumbnail(userId, v.id, opts);
+    const index = summary.scanned + 1;
+    emit?.({ type: 'video-start', videoId: v.id, title: v.title, index, total: videos.length });
+    const r = await repairVideoThumbnail(userId, v.id, {
+      force: opts?.force,
+      deps: opts?.deps,
+      onPhase: (phase, info) => {
+        emit?.({ type: 'video-phase', videoId: v.id, title: v.title, phase, category: info.category, index, total: videos.length });
+      },
+    });
+    emit?.({
+      type: 'video-done',
+      videoId: v.id,
+      title: r.title ?? v.title,
+      status: r.status,
+      detail: r.detail,
+      elapsedMs: r.elapsedMs,
+      index,
+      total: videos.length,
+    });
     summary.scanned++;
     summary.results.push(r);
-    if (r.status === 'repaired') summary.repaired++;
-    else if (r.status === 'skipped-good') summary.skippedGood++;
-    else summary.failed++;
+    switch (r.status) {
+      case 'repaired':
+      case 'repaired-missing':
+      case 'repaired-black':
+      case 'repaired-broken':
+      case 'repaired-problematic':
+        summary.repaired++;
+        if (r.status === 'repaired-missing') summary.repairedMissing++;
+        else if (r.status === 'repaired-black') summary.repairedBlack++;
+        else if (r.status === 'repaired-broken') summary.repairedBroken++;
+        else if (r.status === 'repaired-problematic') summary.repairedProblematic++;
+        break;
+      case 'skipped-good':
+        summary.skippedGood++;
+        break;
+      case 'not-found':
+        summary.notFound++;
+        break;
+      case 'failed':
+      case 'skipped-cap':
+        summary.failed++;
+        break;
+    }
   }
   return summary;
 }
