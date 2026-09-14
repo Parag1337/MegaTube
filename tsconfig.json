@@ -33,7 +33,6 @@
   "exclude": [
     "node_modules",
     "scripts",
-    "tests",
-    "_qcount.mts"
+    "tests"
   ]
 }

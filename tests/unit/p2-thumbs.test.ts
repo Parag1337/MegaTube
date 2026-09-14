@@ -149,7 +149,7 @@ async function makeUser(email: string) {
   return prisma.user.create({ data: { email, passwordHash: PASSWORD_HASH } });
 }
 
-async function makeVideo(userId: string, slug: string, withKey: boolean) {
+async function makeVideo(userId: string, slug: string, withKey: boolean, thumbnailAvailable?: boolean) {
   const { encryptSecret } = await import('@/lib/mega/envelope');
   const acc = await prisma.megaAccount.create({
     data: { userId, label: 'Acc', megaEmail: `${slug}@mega.test`, encryptedSession: 's', status: MEGA_ACCOUNT_STATUSES.SYNCED },
@@ -166,6 +166,7 @@ async function makeVideo(userId: string, slug: string, withKey: boolean) {
       mimeType: 'video/mp4',
       duration: 100,
       fileKeyEncrypted: withKey ? encryptSecret(Buffer.alloc(32, 7)) : null,
+      ...(thumbnailAvailable !== undefined ? { thumbnailAvailable } : {}),
     },
   });
 }
@@ -223,7 +224,7 @@ test('repair: stores frame, updates DB, second run skips good', { skip: !hasFfmp
   }) as never);
   try {
     const r = await repair.repairVideoThumbnail(u.id, v.id, { deps: fakeDeps as never });
-    assert.equal(r.status, 'repaired');
+    assert.equal(r.status, 'repaired-problematic');
     assert.ok((r.brightness ?? 0) >= repair.THUMB_BRIGHTNESS_MIN, `brightness=${r.brightness}`);
     const stored = path.join(thumbsTmp, `${v.id}.jpg`);
     assert.ok(fs.existsSync(stored), 'frame persisted to thumbs dir');
@@ -370,7 +371,7 @@ test('repair: black file on disk takes the same path as a missing thumbnail', { 
   repair.__setExtractBestForTests(async () => ({ jpg: brightBmp, seek: 5, brightness: 200 }) as never);
   try {
     const r = await repair.repairVideoThumbnail(u.id, v.id, { deps: fakeDeps as never });
-    assert.equal(r.status, 'repaired');
+    assert.equal(r.status, 'repaired-black');
     assert.ok((await repair.thumbMeanBrightness(path.join(thumbsTmp, `${v.id}.jpg`)))! >= repair.THUMB_BRIGHTNESS_MIN);
     const after = await prisma.video.findUniqueOrThrow({ where: { id: v.id } });
     assert.equal(after.thumbnail, `/api/media/thumbs/${v.id}`);
@@ -396,6 +397,64 @@ test('repair: second scan skips already-repaired thumbnails (idempotent)', { ski
     assert.equal(second.skippedGood, 1);
     assert.equal(second.repaired, 0);
     assert.equal(second.failed, 0);
+  } finally {
+    repair.__setExtractBestForTests(null);
+  }
+});
+
+// ------------------------------------------------- regression: repair type categorization ----
+
+test('repair: playable video with no thumbnail and thumbnailAvailable=false → repaired-problematic', { skip: !hasFfmpeg }, async () => {
+  const u = await makeUser('thumb-prob@example.com');
+  const v = await makeVideo(u.id, 'thumb-prob-v', true, false);
+  const brightBmp = path.join(tmpRoot, 'prob-bright.bmp');
+  await fs.promises.writeFile(brightBmp, bmp(16, 16, () => [200, 200, 200]));
+  repair.__setExtractBestForTests(async () => ({ jpg: brightBmp, seek: 5, brightness: 200 }) as never);
+  try {
+    const r = await repair.repairVideoThumbnail(u.id, v.id, { deps: fakeDeps as never });
+    assert.equal(r.status, 'repaired-problematic');
+    assert.ok((await repair.thumbMeanBrightness(path.join(thumbsTmp, `${v.id}.jpg`)))! >= repair.THUMB_BRIGHTNESS_MIN);
+  } finally {
+    repair.__setExtractBestForTests(null);
+  }
+});
+
+test('repair: playable video with no thumbnail and thumbnailAvailable=true → repaired-missing', { skip: !hasFfmpeg }, async () => {
+  const u = await makeUser('thumb-miss@example.com');
+  const v = await makeVideo(u.id, 'thumb-miss-v', true, true);
+  const brightBmp = path.join(tmpRoot, 'miss-bright.bmp');
+  await fs.promises.writeFile(brightBmp, bmp(16, 16, () => [200, 200, 200]));
+  repair.__setExtractBestForTests(async () => ({ jpg: brightBmp, seek: 5, brightness: 200 }) as never);
+  try {
+    const r = await repair.repairVideoThumbnail(u.id, v.id, { deps: fakeDeps as never });
+    assert.equal(r.status, 'repaired-missing');
+    assert.ok((await repair.thumbMeanBrightness(path.join(thumbsTmp, `${v.id}.jpg`)))! >= repair.THUMB_BRIGHTNESS_MIN);
+  } finally {
+    repair.__setExtractBestForTests(null);
+  }
+});
+
+test('repair: summary counts each repair type separately', { skip: !hasFfmpeg }, async () => {
+  const u = await makeUser('thumb-cats@example.com');
+  const good = await makeVideo(u.id, 'thumb-cats-good', true, true);
+  await fs.promises.writeFile(path.join(thumbsTmp, `${good.id}.jpg`), bmp(16, 16, () => [210, 210, 210]));
+  const missing = await makeVideo(u.id, 'thumb-cats-miss', true, true);
+  const problematic = await makeVideo(u.id, 'thumb-cats-prob', true, false);
+  const black = await makeVideo(u.id, 'thumb-cats-black', true, true);
+  await fs.promises.writeFile(path.join(thumbsTmp, `${black.id}.jpg`), bmp(16, 16, () => [0, 0, 0]));
+  const brightBmp = path.join(tmpRoot, 'cats-bright.bmp');
+  await fs.promises.writeFile(brightBmp, bmp(16, 16, () => [200, 200, 200]));
+  repair.__setExtractBestForTests(async () => ({ jpg: brightBmp, seek: 5, brightness: 200 }) as never);
+  try {
+    const summary = await repair.repairUserThumbnails(u.id, { deps: fakeDeps as never });
+    assert.equal(summary.scanned, 4);
+    assert.equal(summary.skippedGood, 1);
+    assert.equal(summary.repairedMissing, 1);
+    assert.equal(summary.repairedProblematic, 1);
+    assert.equal(summary.repairedBlack, 1);
+    assert.equal(summary.repaired, 3);
+    assert.equal(summary.failed, 0);
+    assert.equal(summary.notFound, 0);
   } finally {
     repair.__setExtractBestForTests(null);
   }
