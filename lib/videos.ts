@@ -299,18 +299,21 @@ export async function getVideoBySlug(slug: string) {
 }
 
 /**
- * Database-side boolean search over the VideoSearch trigram index.
+ * Database-side boolean search over the VideoSearch trigram-maintained
+ * table.
  *
  * The AST filter decides WHICH videos are eligible (each TERM is one
- * index-backed EXISTS(MATCH) probe - or an inline LIKE for sub-3-character
+ * index-backed EXISTS(ILIKE) probe - or an inline ILIKE for sub-3-character
  * terms the trigram index cannot serve - composed with SQL AND/OR/NOT).
- * BM25 over the positive terms decides the ORDER. Ownership uses the exact
- * same rule as the LIKE path (own non-disconnected accounts plus the public
- * catalog); the user id never enters the MATCH expression itself.
+ * Weighted ts_rank + trigram similarity over the positive terms decides the
+ * ORDER. Ownership uses the exact same rule as the fallback path (own
+ * non-disconnected accounts plus the public catalog); the user id never
+ * enters the search expression itself.
  *
- * Returns null when the FTS index is unavailable (pre-migration database),
- * so the caller can use the Prisma/LIKE fallback. SearchSyntaxError is
- * never swallowed here - malformed queries propagate to the caller.
+ * Returns null when the search index is unavailable (fresh pre-migration
+ * database), so the caller can use the Prisma/ILIKE fallback.
+ * SearchSyntaxError is never swallowed here - malformed queries propagate
+ * to the caller.
  */
 async function searchVideosFts(
   ast: SearchNode,
@@ -330,13 +333,14 @@ async function searchVideosFts(
       ? Prisma.sql`v."megaAccountId" IS NULL`
       : Prisma.sql`(v."megaAccountId" IS NULL OR v."megaAccountId" IN (SELECT "id" FROM "MegaAccount" WHERE "userId" = ${userId} AND "status" <> ${MEGA_ACCOUNT_STATUSES.DISCONNECTED}))`;
 
-  // BM25 is more negative for better matches; rows with no positive-term
-  // match (pure-NOT results) get NULL and sort after ranked rows. SQLite
-  // sorts NULLs first on ASC, hence the explicit NULL guard.
+  // The rank is more negative for better matches; rows with no positive-term
+  // match (pure-NOT results) get NULL and sort after ranked rows. PostgreSQL
+  // sorts NULLs LAST on ASC by default, which is exactly the intent here:
+  // ranked rows first, unranked (pure-NOT) rows after, then recency.
   const orderBy =
     rank === null
       ? Prisma.sql`v."createdAt" DESC, v."id" DESC`
-      : Prisma.sql`CASE WHEN "rank" IS NULL THEN 1 ELSE 0 END, "rank" ASC, v."createdAt" DESC, v."id" DESC`;
+      : Prisma.sql`"rank" ASC, v."createdAt" DESC, v."id" DESC`;
   const rankSelect = rank ?? Prisma.sql`NULL`;
 
   try {
@@ -374,8 +378,8 @@ async function searchVideosFts(
       totalPages: Math.max(1, Math.ceil(total / perPage)),
     };
   } catch {
-    // FTS table missing (pre-migration database) or malformed MATCH:
-    // caller falls back to LIKE rather than failing the search.
+    // Search table missing (pre-migration database) or malformed query:
+    // caller falls back to the Prisma path rather than failing the search.
     return null;
   }
 }
@@ -438,9 +442,9 @@ async function executeSearchAst(
  *
  * Query language (lib/search.ts): whitespace is implicit OR, `||` explicit
  * OR, `&&` AND, `!` NOT, `(...)` grouping, `"..."` phrase terms. Results
- * are ranked by FTS5 BM25 over the positive terms (title weighted first);
- * NOT-only queries fall back to recency order. Throws SearchSyntaxError for
- * malformed boolean syntax.
+ * are ranked by weighted full-text + trigram relevance over the positive
+ * terms (title weighted first); NOT-only queries fall back to recency
+ * order. Throws SearchSyntaxError for malformed boolean syntax.
  */
 export async function searchVideos(
   query: string,

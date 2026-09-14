@@ -606,6 +606,7 @@ export type CreatorCreateOrConnectWithoutUserInput = {
 
 export type CreatorCreateManyUserInputEnvelope = {
   data: Prisma.CreatorCreateManyUserInput | Prisma.CreatorCreateManyUserInput[]
+  skipDuplicates?: boolean
 }
 
 export type CreatorUpsertWithWhereUniqueWithoutUserInput = {
@@ -1454,6 +1455,7 @@ export type CreatorCreateManyArgs<ExtArgs extends runtime.Types.Extensions.Inter
    * The data used to create many Creators.
    */
   data: Prisma.CreatorCreateManyInput | Prisma.CreatorCreateManyInput[]
+  skipDuplicates?: boolean
 }
 
 /**
@@ -1472,6 +1474,7 @@ export type CreatorCreateManyAndReturnArgs<ExtArgs extends runtime.Types.Extensi
    * The data used to create many Creators.
    */
   data: Prisma.CreatorCreateManyInput | Prisma.CreatorCreateManyInput[]
+  skipDuplicates?: boolean
   /**
    * Choose, which related nodes to fetch as well
    */

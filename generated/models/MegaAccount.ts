@@ -863,6 +863,7 @@ export type MegaAccountCreateOrConnectWithoutUserInput = {
 
 export type MegaAccountCreateManyUserInputEnvelope = {
   data: Prisma.MegaAccountCreateManyUserInput | Prisma.MegaAccountCreateManyUserInput[]
+  skipDuplicates?: boolean
 }
 
 export type MegaAccountUpsertWithWhereUniqueWithoutUserInput = {
@@ -1832,6 +1833,7 @@ export type MegaAccountCreateManyArgs<ExtArgs extends runtime.Types.Extensions.I
    * The data used to create many MegaAccounts.
    */
   data: Prisma.MegaAccountCreateManyInput | Prisma.MegaAccountCreateManyInput[]
+  skipDuplicates?: boolean
 }
 
 /**
@@ -1850,6 +1852,7 @@ export type MegaAccountCreateManyAndReturnArgs<ExtArgs extends runtime.Types.Ext
    * The data used to create many MegaAccounts.
    */
   data: Prisma.MegaAccountCreateManyInput | Prisma.MegaAccountCreateManyInput[]
+  skipDuplicates?: boolean
   /**
    * Choose, which related nodes to fetch as well
    */

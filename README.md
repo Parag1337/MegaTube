@@ -39,7 +39,7 @@ originals stay exactly where they are.
 
 - 🎬 **MEGA-backed library** — link one or more MEGA accounts; every video file is discovered, indexed, and tracked by its MEGA node id.
 - ▶️ **Streaming playback** — a private media endpoint decrypts MEGA files server-side and streams them to the browser with HTTP range support; browser-hostile containers (MPEG-TS) are remuxed on demand.
-- 🔎 **Fast search** — SQLite **FTS5** trigram search across titles, original MEGA filenames, and creator names, with a small boolean query language.
+- 🔎 **Fast search** — PostgreSQL full-text + **pg_trgm** search across titles, original MEGA filenames, and creator names, with a small boolean query language.
 - 🏠 **Personalized home feed** — one interleaved, quota-composed feed mixing newest adds, related picks, history-based suggestions, and randomized discovery — no isolated silos.
 - 🎲 **Shuffle / random discovery** — type `#random` in search (or hit **Reshuffle**) for a deterministic, pageable random order.
 - 👤 **Creator organization** — creators are parsed from `Creator - Title` filenames, grouped under a per-user *Unknown Creator* bucket, and manually assignable.
@@ -82,7 +82,7 @@ Next.js App Router (server components + API routes)
 User / auth layer (Clerk sign-in, legacy password sessions)
         │
         ▼
-SQLite + Prisma  → library metadata, sync state, watchlist/saved/history
+PostgreSQL + Prisma → library metadata, sync state, watchlist/saved/history
         │
         ▼
 MEGA account/session layer (megajs · encrypted session material)
@@ -128,7 +128,7 @@ Two things matter here conceptually:
 | Framework | **Next.js 16** | App Router, server components, API routes |
 | UI | **React 19** + **Tailwind CSS 4** | dark theme, responsive app shell |
 | Player | **@vidstack/react** | `<MediaPlayer>` UI over native `<video>` |
-| Data | **Prisma 7** + **SQLite** | via the `better-sqlite3` driver adapter |
+| Data | **Prisma 7** + **PostgreSQL** | via the `pg` driver adapter (`@prisma/adapter-pg`) — Neon-compatible |
 | MEGA client | **megajs 1.3** | login, node tree, file attributes, decryption |
 | Auth | **Clerk** (`@clerk/nextjs`) | hosted sign-in/up; legacy PBKDF2 password sessions kept as fallback |
 | Media processing | **ffmpeg** (system binary) | stream-copy remux (no re-encode) + thumbnail frame extraction |
@@ -177,7 +177,7 @@ There is a hard separation between **MEGA storage** and **MegaTube's local copy*
 
 | | MEGA storage | MegaTube's local data |
 | --- | --- | --- |
-| What lives there | Files, folders, encryption — the actual video bytes | SQLite metadata (titles, creators, durations, node ids) + cached artifacts (thumbnails, remuxed MP4s) |
+| What lives there | Files, folders, encryption — the actual video bytes | PostgreSQL metadata (titles, creators, durations, node ids) + cached artifacts (thumbnails, remuxed MP4s) |
 | Who owns it | The MEGA account | The MegaTube user who linked that account |
 | Is it required to play? | Yes — bytes are streamed from MEGA at playback time | No — it's a fast, searchable index over what MEGA holds |
 
@@ -268,13 +268,14 @@ The design is deliberately simple: a brightness floor on a downscaled image deci
 
 ## 🔎 Search
 
-Search is backed by a native **SQLite FTS5 trigram index** (`VideoSearch`) kept in
+Search is backed by PostgreSQL structures (`VideoSearch`) kept in
 sync with the `Video` table by database triggers, so the index can never drift from
 the data. It covers:
 
 - **titles**, **original MEGA filenames**, and **creator names**;
-- **case-insensitive substring matching** (trigram tokenization);
-- **BM25 relevance** ranking with title weighted above filename/creator.
+- **case-insensitive substring matching** (pg_trgm-accelerated ILIKE);
+- **weighted relevance** ranking (ts_rank over a generated weighted tsvector +
+  trigram similarity) with title weighted above filename/creator.
 
 Queries support a small boolean language:
 
@@ -288,9 +289,9 @@ Queries support a small boolean language:
 | `"multi word"` | one exact phrase |
 
 Precedence: `!` > `&&` > `||`. User input is always compiled to bound parameters —
-it can never become SQL or FTS operators. Terms too short for trigrams fall back
-to a LIKE path, and databases created before the FTS migration fall back to plain
-contains-matching too.
+it can never become SQL or full-text operators. Terms too short for trigrams fall
+back to an ILIKE path, and databases created before the search migration fall back
+to plain case-insensitive contains-matching too.
 
 > 🎲 **Shuffle mode:** searching the exact command `#random` (or clicking the
 > shuffle button on the search page) replaces search with a deterministic random
@@ -391,12 +392,22 @@ Add the Clerk keys to `.env` and adjust the optional knobs (see the table below)
 
 ### 3. Prepare the database
 
+Create a local PostgreSQL database (PostgreSQL 14+; Neon is used in production)
+and point `DATABASE_URL` at it:
+
 ```bash
-npx prisma migrate dev
+# Example: local cluster on port 5433
+createuser megatube --createdb   # or: CREATE ROLE megatube LOGIN CREATEDB;
+createdb megatube -O megatube    # or: CREATE DATABASE megatube OWNER megatube;
+psql -c "ALTER ROLE megatube PASSWORD '...'"
+
+npx prisma migrate deploy
 ```
 
-This creates the SQLite database (path from `DATABASE_URL`) and applies the
-included migrations (schema, indexes, FTS5 search index, product tables).
+This applies the included migrations (schema, indexes, pg_trgm search
+structures, product tables). `CREATE EXTENSION pg_trgm` inside the search
+migration requires the PostgreSQL contrib package on self-hosted servers
+(`postgresql-contrib` on Fedora/Debian); managed providers like Neon ship it.
 
 ### 4. Run it
 
@@ -415,7 +426,7 @@ Your private library appears on Home / Library as soon as videos finish indexing
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `DATABASE_URL` | ✅ | SQLite file path (default `file:./data/database/app.db`) |
+| `DATABASE_URL` | ✅ | PostgreSQL connection string (local dev: `postgresql://...localhost:5433/megatube`; production: Neon **pooled** URL) |
 | `MEGA_SESSION_ENCRYPTION_KEY` | ✅ for MEGA linking | 64-hex AES-256-GCM envelope key — `npm run keygen` |
 | `CLERK_SECRET_KEY`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | for Clerk sign-in/up | Clerk API + publishable keys |
 | `NEXT_PUBLIC_CLERK_SIGN_IN_URL`, `NEXT_PUBLIC_CLERK_SIGN_UP_URL`, `NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL`, `NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL` | with Clerk | Clerk route/redirect configuration |
@@ -472,7 +483,7 @@ lib/
   sync/                    → scheduler, worker, reconcile, queue, progress
   *.ts                     → auth, search, home feed, recommendations, personal, …
 prisma/
-  schema.prisma            → SQLite schema
+  schema.prisma            → PostgreSQL schema
   migrations/              → migration history (incl. FTS5 search index)
 scripts/                   → keygen, smoke/check probes, e2e runner, backfills
 tests/
@@ -492,6 +503,6 @@ the C++ SDK.
 ## 🙏 Acknowledgements
 
 Built on the shoulders of great open-source software: **Next.js**, **React**,
-**TypeScript**, **Prisma** + **SQLite**, **Tailwind CSS**, **Clerk**,
+**TypeScript**, **Prisma** + **PostgreSQL**, **Tailwind CSS**, **Clerk**, 
 **@vidstack/react**, **megajs**, and of course **ffmpeg** — plus the **MEGA**
 service itself for being a reliable home for private files.

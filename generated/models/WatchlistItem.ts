@@ -453,6 +453,7 @@ export type WatchlistItemCreateOrConnectWithoutVideoInput = {
 
 export type WatchlistItemCreateManyVideoInputEnvelope = {
   data: Prisma.WatchlistItemCreateManyVideoInput | Prisma.WatchlistItemCreateManyVideoInput[]
+  skipDuplicates?: boolean
 }
 
 export type WatchlistItemUpsertWithWhereUniqueWithoutVideoInput = {
@@ -499,6 +500,7 @@ export type WatchlistItemCreateOrConnectWithoutUserInput = {
 
 export type WatchlistItemCreateManyUserInputEnvelope = {
   data: Prisma.WatchlistItemCreateManyUserInput | Prisma.WatchlistItemCreateManyUserInput[]
+  skipDuplicates?: boolean
 }
 
 export type WatchlistItemUpsertWithWhereUniqueWithoutUserInput = {
@@ -1287,6 +1289,7 @@ export type WatchlistItemCreateManyArgs<ExtArgs extends runtime.Types.Extensions
    * The data used to create many WatchlistItems.
    */
   data: Prisma.WatchlistItemCreateManyInput | Prisma.WatchlistItemCreateManyInput[]
+  skipDuplicates?: boolean
 }
 
 /**
@@ -1305,6 +1308,7 @@ export type WatchlistItemCreateManyAndReturnArgs<ExtArgs extends runtime.Types.E
    * The data used to create many WatchlistItems.
    */
   data: Prisma.WatchlistItemCreateManyInput | Prisma.WatchlistItemCreateManyInput[]
+  skipDuplicates?: boolean
   /**
    * Choose, which related nodes to fetch as well
    */

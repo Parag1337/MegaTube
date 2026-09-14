@@ -1,7 +1,8 @@
 /**
  * P2.0 product foundation regression tests.
  *
- * Covers (against an isolated DB built from the repo migrations):
+ * Covers (against an isolated PostgreSQL database built from the repo
+ * migrations):
  *   Watchlist: add / duplicate add / remove / membership / isolation
  *   Saved: save / duplicate save / unsave / membership / isolation
  *   History: record / re-watch update / chronological order / remove one /
@@ -11,16 +12,13 @@
  *     multiple " - " / unknown / folder-independence / manual preservation
  *   Recommendations: same creator / title-related / current-video exclusion /
  *     ownership
- *   Migration: fresh database / pre-existing data
+ *   Migration: fresh database contains the P2 tables with unique guards
  *   Sync: creator-less videos land in the user-scoped Unknown Creator
  *     grouping; "Watch Creator - Title" parses on import; manual preserved.
  */
 
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import fsSync from 'node:fs';
-import path from 'node:path';
-import Database from 'better-sqlite3';
 import { createTestDatabase } from './helpers/test-db';
 
 const db = createTestDatabase('p2-foundation-unit');
@@ -517,61 +515,19 @@ test('sync: creator-less videos group under Unknown Creator, Watch parsed, manua
 // ---------------------------------------------------------------------------
 
 test('migration: fresh database contains the P2 tables with unique guards', async () => {
-  const file = path.join(path.resolve(process.cwd(), 'data/test'), 'p2-foundation-unit.db');
-  const check = new Database(file, { readonly: true });
-  try {
-    for (const table of ['WatchlistItem', 'SavedVideo', 'WatchHistory']) {
-      const t = check.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table) as unknown;
-      assert.ok(t, `${table} table must exist`);
-    }
-    for (const idx of ['WatchlistItem_userId_videoId_key', 'SavedVideo_userId_videoId_key', 'WatchHistory_userId_videoId_key']) {
-      const i = check.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name=?").get(idx) as unknown;
-      assert.ok(i, `${idx} unique index must exist`);
-    }
-  } finally {
-    check.close();
+  // SQLite historical-regression variant retired with the SQLite engine;
+  // the PostgreSQL equivalent verifies the P2 tables + unique guards exist
+  // on a fresh database built from the repo migrations.
+  const tables = (await prisma.$queryRawUnsafe<Array<{ tablename: string }>>(
+    `SELECT tablename FROM pg_tables WHERE schemaname = 'public'`,
+  )) as Array<{ tablename: string }>;
+  for (const table of ['WatchlistItem', 'SavedVideo', 'WatchHistory']) {
+    assert.ok(tables.some((t) => t.tablename === table), `${table} table must exist`);
   }
-});
-
-test('migration: applies over pre-P2 data without losing rows', async () => {
-  const dir = path.resolve(process.cwd(), 'prisma/migrations');
-  const all = fsSync.readdirSync(dir).filter((d: string) => /^\d{14}_/.test(d)).sort();
-  const target = '20260912020000_p2_product_foundation';
-  assert.ok(all.includes(target));
-  const file = path.join(path.resolve(process.cwd(), 'data/test'), 'p2-migrate-existing.db');
-  try {
-    fsSync.rmSync(file, { force: true });
-  } catch { /* not present */ }
-  const raw = new Database(file);
-  try {
-    for (const m of all) {
-      if (m === target) break;
-      raw.exec(fsSync.readFileSync(path.join(dir, m, 'migration.sql'), 'utf8'));
-    }
-    raw.prepare(`INSERT INTO "User" ("id","email","passwordHash","createdAt","updatedAt") VALUES (?,?,?,?,?)`).run(
-      'legacy-user', 'legacy@example.com', 'hash', '2026-01-01 00:00:00', '2026-01-01 00:00:00',
-    );
-    raw.prepare(
-      `INSERT INTO "MegaAccount" ("userId","label","megaEmail","encryptedSession","status","createdAt","updatedAt") VALUES (?,?,?,?,?,?,?)`,
-    ).run('legacy-user', 'Acc', 'legacy@mega.test', 's', 'CONNECTED', '2026-01-01 00:00:00', '2026-01-01 00:00:00');
-    const legacyAcc = (raw.prepare('SELECT last_insert_rowid() AS id').get() as { id: number }).id;
-    raw.prepare(
-      `INSERT INTO "Video" ("megaFilename","title","slug","megaAccountId","fileSize","createdAt","updatedAt") VALUES (?,?,?,?,?,?,?)`,
-    ).run('Watch Legacy Star - Old Clip.mp4', 'Old Clip', 'legacy-clip', legacyAcc, 1000, '2026-01-02 00:00:00', '2026-01-02 00:00:00');
-    raw.exec(fsSync.readFileSync(path.join(dir, target, 'migration.sql'), 'utf8'));
-    const video = raw.prepare('SELECT id, title, slug FROM "Video" WHERE slug=?').get('legacy-clip') as { id: number; title: string } | undefined;
-    assert.ok(video, 'pre-existing video row must survive the migration');
-    assert.equal(video.title, 'Old Clip');
-    // New tables accept rows for the legacy user/video (FK integrity).
-    raw.prepare(`INSERT INTO "WatchHistory" ("userId","videoId","lastWatchedAt","createdAt") VALUES (?,?,?,?)`).run(
-      'legacy-user', video.id, '2026-01-03 00:00:00', '2026-01-03 00:00:00',
-    );
-    const hist = raw.prepare('SELECT COUNT(*) AS n FROM "WatchHistory"').get() as { n: number };
-    assert.equal(hist.n, 1);
-  } finally {
-    raw.close();
+  const indexes = (await prisma.$queryRawUnsafe<Array<{ indexname: string }>>(
+    `SELECT indexname FROM pg_indexes WHERE schemaname = 'public'`,
+  )) as Array<{ indexname: string }>;
+  for (const idx of ['WatchlistItem_userId_videoId_key', 'SavedVideo_userId_videoId_key', 'WatchHistory_userId_videoId_key']) {
+    assert.ok(indexes.some((i) => i.indexname === idx), `${idx} unique index must exist`);
   }
-  try {
-    fsSync.rmSync(file, { force: true });
-  } catch { /* cleanup */ }
 });
