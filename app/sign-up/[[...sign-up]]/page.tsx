@@ -11,7 +11,7 @@ export const metadata = { title: 'Sign up' };
  */
 export default function SignUpPage() {
   return (
-    <div className="mx-auto grid w-full max-w-6xl flex-1 lg:grid-cols-2">
+    <div className="mx-auto grid w-full max-w-6xl flex-1 lg:min-h-[calc(100vh-3.5rem-1px)] lg:grid-cols-2 lg:content-center">
       <aside className="relative hidden flex-col justify-center overflow-hidden border-r border-border px-10 lg:flex xl:px-16">
         <div aria-hidden className="mt-projector-glow pointer-events-none absolute inset-0" />
         <div className="mt-enter relative">

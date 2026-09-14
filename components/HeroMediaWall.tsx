@@ -80,7 +80,7 @@ function Thumb({ className = '', seed }: { className?: string; seed: number }) {
               : 'radial-gradient(circle at 70% 30%, rgba(255,255,255,0.08), transparent 55%)',
         }}
       />
-      <span aria-hidden className="absolute bottom-1.5 right-1.5 rounded bg-black/85 px-1 py-px text-[10px] font-medium tabular-nums text-white">
+      <span aria-hidden className="mt-hero-stamp absolute bottom-1.5 right-1.5 rounded bg-black/85 px-1 py-px text-[10px] font-medium tabular-nums text-white">
         {['12:40', '04:17', '48:02', '22:31', '09:55', '1:04:12'][seed % 6]}
       </span>
     </div>
@@ -115,7 +115,7 @@ export function HeroMediaWall() {
           className="mt-depth mt-enter mt-wall-shadow relative rounded-2xl border border-border bg-surface p-3"
           style={{ '--depth': 22, '--enter-delay': '120ms' } as CSSProperties}
         >
-          <div className="relative flex aspect-video items-center justify-center overflow-hidden rounded-xl bg-black">
+          <div className="mt-hero-screen relative flex aspect-video items-center justify-center overflow-hidden rounded-xl bg-black">
             <span
               className="absolute inset-0"
               style={{
@@ -123,7 +123,7 @@ export function HeroMediaWall() {
                   'radial-gradient(ellipse 70% 90% at 50% 110%, rgba(255,0,51,0.28), transparent 60%)',
               }}
             />
-            <span className="mt-rec absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-black/70 px-2 py-1 text-[10px] font-semibold tracking-wide text-white">
+            <span className="mt-hero-live mt-rec absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-black/70 px-2 py-1 text-[10px] font-semibold tracking-wide text-white">
               <span className="h-1.5 w-1.5 rounded-full bg-accent" />
               NOW SHOWING
             </span>
@@ -131,11 +131,11 @@ export function HeroMediaWall() {
               <PlayIcon className="h-6 w-6 text-white" />
             </span>
             <span className="absolute inset-x-3 bottom-3">
-              <span className="relative block h-1 overflow-hidden rounded-full bg-white/25">
+              <span className="mt-hero-rail relative block h-1 overflow-hidden rounded-full bg-white/25">
                 <span className="block h-full w-1/3 rounded-full bg-accent" />
                 <span className="mt-rail-sheen absolute inset-y-0 w-1/4 bg-white/40" />
               </span>
-              <span className="mt-1.5 flex justify-between text-[10px] font-medium tabular-nums text-white/80">
+              <span className="mt-hero-time mt-1.5 flex justify-between text-[10px] font-medium tabular-nums text-white/80">
                 <span>24:18</span>
                 <span>1:12:40</span>
               </span>

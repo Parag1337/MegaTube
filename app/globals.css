@@ -428,6 +428,76 @@ html[data-theme='light'] .mt-wall-shadow {
     0 32px 72px -28px rgba(24, 24, 27, 0.22);
 }
 
+/*
+ * Sign-in player mockup (LEFT panel, `/sign-in` only): in light mode the
+ * outer card AND the inner media screen are white so the mockup reads as
+ * a light media player instead of a black rectangle on a white page. Dark
+ * theme is untouched (`bg-surface` outer, `bg-black` screen). The red play
+ * button and red progress fill are identical in both themes; only the
+ * progress track turns gray in light mode so it stays visible on white.
+ * Scoped via `.mt-signin-player*` so `/sign-up`, landing, and real
+ * players are unaffected.
+ *
+ * Public auth pages follow the OS color scheme (`prefers-color-scheme`,
+ * see `.mt-public` above), not necessarily `html[data-theme]`, so the
+ * overrides are driven by the media query (placed here, after utilities,
+ * so they win over `bg-surface`/`bg-black`/`bg-white/25` in the cascade).
+ * The `data-theme` rules are kept for the explicit-light app theme.
+ */
+html[data-theme='light'] .mt-signin-player {
+  background-color: #fff;
+}
+html[data-theme='light'] .mt-signin-player-screen {
+  background-color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(24, 24, 27, 0.08);
+}
+html[data-theme='light'] .mt-signin-player-rail {
+  background-color: rgba(24, 24, 27, 0.14);
+}
+@media (prefers-color-scheme: light) {
+  .mt-signin-player {
+    background-color: #fff;
+  }
+  .mt-signin-player-screen {
+    background-color: #fff;
+    box-shadow: inset 0 0 0 1px rgba(24, 24, 27, 0.08);
+  }
+  .mt-signin-player-rail {
+    background-color: rgba(24, 24, 27, 0.14);
+  }
+}
+
+/*
+ * Landing hero mockup in light theme: the player screen, live pill,
+ * progress rail, timestamps, and thumbnail stamps are hardcoded dark
+ * (cinematic anchor) for dark theme. In light theme they become a white
+ * 3D UI: light screen on the white card, white pills, gray rail. The red
+ * play button, red progress fills, red glow wash, and floating-card
+ * shadows are untouched in both themes.
+ */
+html[data-theme='light'] .mt-hero-screen {
+  background-color: #f4f4f5;
+  box-shadow: inset 0 0 0 1px rgba(24, 24, 27, 0.08);
+}
+html[data-theme='light'] .mt-hero-live {
+  background-color: rgba(255, 255, 255, 0.92);
+  color: #3f3f46;
+  box-shadow:
+    inset 0 0 0 1px rgba(24, 24, 27, 0.08),
+    0 2px 8px rgba(24, 24, 27, 0.08);
+}
+html[data-theme='light'] .mt-hero-rail {
+  background-color: rgba(24, 24, 27, 0.14);
+}
+html[data-theme='light'] .mt-hero-time {
+  color: rgba(24, 24, 27, 0.6);
+}
+html[data-theme='light'] .mt-hero-stamp {
+  background-color: rgba(255, 255, 255, 0.94);
+  color: #3f3f46;
+  box-shadow: inset 0 0 0 1px rgba(24, 24, 27, 0.1);
+}
+
 /* Orchestrated hero entrance: layers rise + settle with stagger via
  * inline --enter-delay. Runs once on mount. */
 @keyframes mt-wall-in {
