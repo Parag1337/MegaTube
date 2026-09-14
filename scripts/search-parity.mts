@@ -6,8 +6,11 @@ import { PrismaPg } from '@prisma/adapter-pg';
 const { PrismaClient } = await import('../generated/client');
 const { parseSearchQuery, buildSearchFilterSql, buildSearchRankSql } = await import('../lib/search');
 
+// Target DB: TARGET_DATABASE_URL, else the local dev database.
 const adapter = new PrismaPg({
-  connectionString: 'postgresql://megatube:megatube-dev-only@localhost:5433/megatube?schema=public',
+  connectionString:
+    process.env.TARGET_DATABASE_URL ??
+    'postgresql://megatube:megatube-dev-only@localhost:5433/megatube?schema=public',
 });
 const prisma = new PrismaClient({ adapter });
 
