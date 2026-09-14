@@ -11,7 +11,7 @@ export const metadata = { title: 'Sign in' };
  */
 export default function SignInPage() {
   return (
-    <div className="mx-auto grid w-full max-w-6xl flex-1 lg:grid-cols-2">
+    <div className="mx-auto grid w-full max-w-6xl flex-1 lg:min-h-[calc(100vh-3.5rem-1px)] lg:grid-cols-2 lg:content-center">
       <aside className="relative hidden flex-col justify-center overflow-hidden border-r border-border px-10 lg:flex xl:px-16">
         <div aria-hidden className="mt-projector-glow pointer-events-none absolute inset-0" />
         <div className="mt-enter relative">
@@ -40,8 +40,8 @@ export default function SignInPage() {
             ))}
           </ul>
           {/* Mini marquee card: the library, waiting. */}
-          <div aria-hidden className="mt-wall-shadow mt-10 max-w-sm rounded-2xl border border-border bg-surface p-3">
-            <div className="relative flex aspect-video items-center justify-center overflow-hidden rounded-xl bg-black">
+          <div aria-hidden className="mt-signin-player mt-wall-shadow mt-10 max-w-sm rounded-2xl border border-border bg-surface p-3">
+            <div className="mt-signin-player-screen relative flex aspect-video items-center justify-center overflow-hidden rounded-xl bg-black">
               <span
                 className="absolute inset-0"
                 style={{
@@ -52,7 +52,7 @@ export default function SignInPage() {
               <span className="relative flex h-11 w-11 items-center justify-center rounded-full bg-accent">
                 <PlayIcon className="h-5 w-5 text-white" />
               </span>
-              <span className="absolute inset-x-3 bottom-3 block h-1 overflow-hidden rounded-full bg-white/25">
+              <span className="mt-signin-player-rail absolute inset-x-3 bottom-3 block h-1 overflow-hidden rounded-full bg-white/25">
                 <span className="block h-full w-1/3 rounded-full bg-accent" />
               </span>
             </div>

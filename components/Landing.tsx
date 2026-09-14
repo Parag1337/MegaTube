@@ -24,9 +24,9 @@ export function Landing() {
   return (
     <div>
       {/* ------------------------------------------------ Hero ------- */}
-      <section className="relative overflow-hidden border-b border-border">
+      <section className="relative overflow-hidden border-b border-border lg:flex lg:min-h-[calc(100vh-3.5rem)] lg:flex-col lg:justify-center">
         <div aria-hidden className="mt-projector-glow pointer-events-none absolute inset-0" />
-        <div className="relative mx-auto grid max-w-6xl items-center gap-12 px-4 pb-20 pt-12 sm:pt-16 lg:grid-cols-[1fr_1.1fr] lg:gap-8 lg:px-6 lg:pb-24 lg:pt-20">
+        <div className="relative mx-auto grid w-full max-w-6xl items-center gap-12 px-4 pb-20 pt-12 sm:pt-16 lg:grid-cols-[1fr_1.1fr] lg:gap-8 lg:px-6 lg:pb-24 lg:pt-20">
           <div className="mt-enter" style={{ '--enter-delay': '0ms' } as React.CSSProperties}>
             <p className="flex w-fit items-center gap-2 rounded-full border border-border bg-surface py-1 pl-3 pr-4 text-xs font-medium text-muted">
               <span aria-hidden className="mt-rec h-1.5 w-1.5 rounded-full bg-accent" />
