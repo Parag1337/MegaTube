@@ -39,6 +39,9 @@ yarn-error.log*
 # remuxed-MP4 playback cache (regenerable; can be large)
 /data/cache-media/*
 
+# video thumbnail cache (regenerable per video from MEGA; host-local only)
+/data/thumbs/*
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
