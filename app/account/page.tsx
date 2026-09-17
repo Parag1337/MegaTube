@@ -4,10 +4,9 @@ import Link from 'next/link';
 import { getCurrentUser } from '@/lib/auth';
 import { LogoutButton } from './logout-button';
 import { ManageAccountButton } from '@/components/ManageAccountButton';
-import { RepairThumbsButton } from './RepairThumbsButton';
 import { MegaAccountsPanel } from '@/components/MegaAccountsPanel';
 import { Avatar } from '@/components/ui';
-import { BookmarkIcon, ChevronRightIcon, HistoryIcon } from '@/components/icons';
+import { BookmarkIcon, ChevronRightIcon, FilmIcon, HistoryIcon, RefreshIcon } from '@/components/icons';
 
 export const metadata: Metadata = { title: 'Account' };
 
@@ -70,19 +69,27 @@ export default async function AccountPage() {
           </nav>
         </section>
 
-        <MegaAccountsPanel />
-
-        <section aria-labelledby="maintenance-heading" className="mt-6 rounded-2xl border border-border bg-surface p-5 sm:p-6">
-          <h2 id="maintenance-heading" className="text-[15px] font-semibold">
-            Maintenance
+        <section aria-labelledby="tools-heading" className="mb-6 rounded-2xl border border-border bg-surface p-2 sm:p-3">
+          <h2 id="tools-heading" className="px-3 pb-1 pt-2 text-xs font-medium text-muted">
+            Tools
           </h2>
-          <p className="mt-1 text-[13px] text-muted">
-            Replace missing or black thumbnails with real frames from your videos. Good thumbnails are left alone.
-          </p>
-          <div className="mt-3">
-            <RepairThumbsButton />
-          </div>
+          <nav aria-label="Library tools">
+            <LibraryRow
+              href="/account/tools/repair-thumbnails"
+              icon={<RefreshIcon className="h-[20px] w-[20px]" />}
+              title="Repair thumbnails"
+              body="Replace missing or black thumbnails with real video frames"
+            />
+            <LibraryRow
+              href="/account/duplicates"
+              icon={<FilmIcon className="h-[20px] w-[20px]" />}
+              title="Find duplicates"
+              body="Free up MEGA storage by removing duplicate videos"
+            />
+          </nav>
         </section>
+
+        <MegaAccountsPanel />
       </div>
     </div>
   );

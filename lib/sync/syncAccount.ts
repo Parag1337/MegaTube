@@ -604,6 +604,14 @@ export async function syncMegaAccount(
 
   if (result) {
     await markSyncCompleted(accountId, result.total);
+    // Phase 2 perf: the library changed - drop the user's cached Home feed
+    // so new/removed videos surface. Best-effort: never fail a sync on cache.
+    try {
+      const { invalidateHomeFeed } = await import('../feedCache');
+      invalidateHomeFeed(account.userId);
+    } catch {
+      // ignore - caching is advisory
+    }
     // Durable final result for the UI (survives restarts).
     const p = getSyncProgress(accountId);
     await setLastSyncMeta(accountId, {

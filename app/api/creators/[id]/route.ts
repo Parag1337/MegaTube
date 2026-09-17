@@ -116,6 +116,10 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
       },
     });
 
+    // Phase 2 perf: displayed creator names feed the Home page.
+    const { invalidateHomeFeed } = await import('@/lib/feedCache');
+    invalidateHomeFeed(user.id);
+
     return NextResponse.json({
       creator: {
         id: creator.id,
@@ -172,6 +176,10 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
     await prisma.creator.delete({
       where: { id: creatorId },
     });
+
+    // Phase 2 perf: creator pools feed the Home page - drop cached pages.
+    const { invalidateHomeFeed } = await import('@/lib/feedCache');
+    invalidateHomeFeed(user.id);
 
     return NextResponse.json({ success: true });
   } catch {

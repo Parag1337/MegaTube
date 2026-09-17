@@ -19,6 +19,7 @@ import { prisma } from './db';
 import { MEGA_ACCOUNT_STATUSES } from './megaAccounts';
 import { listRandomVideos, searchVideosLiteral, serializeVideo } from './videos';
 import { listRecentHistoryRefs } from './personal';
+import { getCached, setCached, videoPoolsCacheKey } from './feedCache';
 
 type SerializedVideo = ReturnType<typeof serializeVideo>;
 
@@ -70,22 +71,35 @@ function clampLimit(limit: number): number {
  * Videos from the same creator as the given video, newest first, excluding
  * the video itself. Returns [] when the video is not visible to the user or
  * has no creator assigned.
+ *
+ * Phase 1 perf: callers that already hold the video's creator id (e.g. the
+ * video page, which just fetched the video and enforced visibility) may pass
+ * it as `knownCreatorId` to skip the video-lookup query. Passing null is an
+ * explicit "no creator" (returns []); omitting it keeps the lookup.
  */
 export async function getSameCreatorVideos(
   userId: string,
   videoId: number,
   limit = 12,
+  knownCreatorId?: number | null,
 ): Promise<SerializedVideo[]> {
   const take = clampLimit(limit);
-  const current = await prisma.video.findFirst({
-    where: { AND: [userLibraryScope(userId), { id: videoId }] },
-    select: { id: true, creatorId: true },
-  });
-  if (!current || current.creatorId === null) return [];
+  let creatorId: number | null;
+  if (knownCreatorId !== undefined) {
+    creatorId = knownCreatorId;
+  } else {
+    const current = await prisma.video.findFirst({
+      where: { AND: [userLibraryScope(userId), { id: videoId }] },
+      select: { id: true, creatorId: true },
+    });
+    if (!current) return [];
+    creatorId = current.creatorId;
+  }
+  if (creatorId === null) return [];
 
   const rows = await prisma.video.findMany({
     where: {
-      AND: [userLibraryScope(userId), { creatorId: current.creatorId }, { id: { not: videoId } }],
+      AND: [userLibraryScope(userId), { creatorId }, { id: { not: videoId } }],
     },
     select: videoSelect,
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -210,6 +224,56 @@ export async function getRandomDiscovery(
   const take = clampLimit(limit);
   const result = await listRandomVideos(userId, 1, seed);
   return result.items.slice(0, take);
+}
+
+// ---------------------------------------------------------------------------
+// E. Video-page pools, cached (Phase 2 perf)
+// ---------------------------------------------------------------------------
+
+export interface VideoPools {
+  title: SerializedVideo[];
+  creator: SerializedVideo[];
+  random: SerializedVideo[];
+}
+
+/**
+ * The three recommendation pools for one video page, resolved concurrently.
+ *
+ * Results are cached per (user, video) for 30s: revisits (back-navigation,
+ * tab switches) skip ~7 queries. Safe: pools are deterministic functions of
+ * (user library, video) - history plays no role here - and the key is
+ * user-scoped. Invalidated by sync completion, creator assignment changes,
+ * and creator renames/deletes (see lib/feedCache.ts).
+ */
+export async function getVideoPools(
+  userId: string,
+  video: { id: number; title: string; creatorId: number | null },
+): Promise<VideoPools> {
+  const key = videoPoolsCacheKey(userId, video.id);
+  const cached = getCached<VideoPools>(key);
+  if (cached) return cached;
+
+  const [title, creator, randomPages] = await Promise.all([
+    getTitleRelatedVideos(userId, video.title, {
+      excludeVideoIds: [video.id],
+      limit: 24,
+    }),
+    getSameCreatorVideos(userId, video.id, 24, video.creatorId),
+    // Two pages of the deterministic shuffle: the creator section and
+    // Discover together can claim up to ~48 videos, so one 24-page pool
+    // would starve Discover on larger libraries.
+    Promise.all([
+      listRandomVideos(userId, 1, `related-${video.id}`),
+      listRandomVideos(userId, 2, `related-${video.id}`),
+    ]),
+  ]);
+  const pools: VideoPools = {
+    title,
+    creator,
+    random: randomPages.flatMap((r) => r.items),
+  };
+  setCached(key, pools);
+  return pools;
 }
 
 // ---------------------------------------------------------------------------

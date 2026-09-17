@@ -16,6 +16,7 @@ import { prisma } from './db';
 import { videosPerPage } from './config';
 import { MEGA_ACCOUNT_STATUSES } from './megaAccounts';
 import { serializeVideo, type PageResult } from './videos';
+import { invalidateHomeFeed } from './feedCache';
 
 /** Columns needed by serializeVideo(), shared by every query below. */
 const videoSelect = {
@@ -255,6 +256,8 @@ export async function recordWatch(
     create: { userId, videoId, lastWatchedAt: now },
     select: { videoId: true, lastWatchedAt: true },
   });
+  // History feeds home recommendations - drop the user's cached feed pages.
+  invalidateHomeFeed(userId);
   return row;
 }
 
@@ -306,12 +309,14 @@ export async function listRecentHistoryRefs(
 /** Remove one history entry. True when a row was removed. */
 export async function removeHistoryItem(userId: string, videoId: number): Promise<boolean> {
   const removed = await prisma.watchHistory.deleteMany({ where: { userId, videoId } });
+  if (removed.count > 0) invalidateHomeFeed(userId);
   return removed.count > 0;
 }
 
 /** Clear the user's whole history. Returns the number of removed rows. */
 export async function clearHistory(userId: string): Promise<number> {
   const removed = await prisma.watchHistory.deleteMany({ where: { userId } });
+  if (removed.count > 0) invalidateHomeFeed(userId);
   return removed.count;
 }
 

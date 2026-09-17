@@ -1,10 +1,8 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { getVideoBySlug, getRecommendations, listRandomVideos } from '@/lib/videos';
-import {
-  getSameCreatorVideos,
-  getTitleRelatedVideos,
-} from '@/lib/recommendations';
+import { getVideoBySlug, getRecommendations } from '@/lib/videos';
+import { getVideoPools } from '@/lib/recommendations';
+import { selectUpNext } from '@/lib/upNext';
 import { getCurrentUser } from '@/lib/auth';
 import { MegaPlayer } from '@/components/MegaPlayer';
 import { PrivatePlayer } from '@/components/PrivatePlayer';
@@ -26,10 +24,10 @@ interface VideoPageProps {
 
 export default async function VideoPage({ params }: VideoPageProps) {
   const { slug } = await params;
-  const video = await getVideoBySlug(slug);
+  // Phase 1 perf: the video lookup and the auth lookup are independent -
+  // one Neon round trip instead of two sequential ones.
+  const [video, user] = await Promise.all([getVideoBySlug(slug), getCurrentUser()]);
   if (!video) notFound();
-
-  const user = await getCurrentUser();
   if (video.isPrivate) {
     if (!user || !video.account || video.account.userId !== user.id) {
       notFound();
@@ -94,34 +92,34 @@ export default async function VideoPage({ params }: VideoPageProps) {
     return { items, counts };
   }
 
-  const titlePool = user
-    ? await getTitleRelatedVideos(user.id, video.title, {
-        excludeVideoIds: [video.id],
-        limit: 24,
+  // Phase 1+2 perf: title, creator and random pools depend only on
+  // (video, userId) - not on each other - so they resolve concurrently
+  // instead of in three sequential Neon chains. Phase 2 caches the triple
+  // per (user, video): revisits skip the queries entirely. Visibility was
+  // enforced above, so the cached creator id needs no re-lookup.
+  type PoolVideo = Awaited<ReturnType<typeof getVideoPools>>;
+  const pools: PoolVideo = user
+    ? await getVideoPools(user.id, {
+        id: video.id,
+        title: video.title,
+        creatorId: video.creator?.id ?? null,
       })
-    : [];
-  const creatorPool = user ? await getSameCreatorVideos(user.id, video.id, 24) : [];
-  // Two pages of the deterministic shuffle: the creator section and
-  // Discover together can claim up to ~48 videos, so one 24-page pool
-  // would starve Discover on larger libraries.
-  const randomPool = user
-    ? (
-        await Promise.all([
-          listRandomVideos(user.id, 1, `related-${video.id}`),
-          listRandomVideos(user.id, 2, `related-${video.id}`),
-        ])
-      ).flatMap((r) => r.items)
-    : [];
+    : { title: [], creator: [], random: [] };
+  const titlePool = pools.title;
+  const creatorPool = pools.creator;
+  const randomPool = pools.random;
 
-  // Up Next: title matches lead, same creator fills, random only as fallback.
-  const upNextTaken = new Set([video.id]);
-  const upNext: typeof titlePool = [];
-  for (const v of [...titlePool, ...creatorPool, ...randomPool]) {
-    if (upNext.length >= UP_NEXT_MAX) break;
-    if (upNextTaken.has(v.id)) continue;
-    upNextTaken.add(v.id);
-    upNext.push(v);
-  }
+  // Up Next: 2 same-creator + 2 closest title matches (max 4), selected
+  // from the already-fetched pools - no extra queries. Creator shortfall is
+  // filled with title matches, title shortfall with extra same-creator
+  // candidates, then the random/discovery fallback. Current video excluded,
+  // no duplicates (see lib/upNext.ts).
+  const upNext = selectUpNext(video.id, {
+    creator: creatorPool,
+    title: titlePool,
+    random: randomPool,
+  });
+  const upNextTaken = new Set([video.id, ...upNext.map((v) => v.id)]);
 
   // "From this Creator": mixed ~40/40/20 creator/title/random interleave.
   const creatorSection = interleavePools(
@@ -241,7 +239,14 @@ export default async function VideoPage({ params }: VideoPageProps) {
               <p className="mt-3 text-[13px] text-muted">{metaBits.join('  ·  ')}</p>
             )}
 
-            {user && !needsReconnect && <VideoActions videoId={video.id} />}
+            {user && !needsReconnect && (
+              <VideoActions
+                videoId={video.id}
+                megaFilename={video.megaFilename}
+                title={video.title}
+                canManage={Boolean(canManageCreator)}
+              />
+            )}
 
             {canManageCreator && (
               <div className="mt-4 rounded-2xl border border-border bg-surface p-4">

@@ -76,6 +76,10 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ v
       },
     });
 
+    // Phase 2 perf: creator pools feed the Home page - drop cached pages.
+    const { invalidateHomeFeed } = await import('@/lib/feedCache');
+    invalidateHomeFeed(user.id);
+
     return NextResponse.json({
       video: {
         id: updatedVideo.id,

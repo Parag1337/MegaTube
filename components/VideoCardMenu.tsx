@@ -2,9 +2,10 @@
 
 /**
  * One YouTube-style ⋮ action menu per video card: Add/Remove Watchlist,
- * Save/Unsave, and Change Creator (private/owned videos only - the API
- * enforces ownership regardless). A single permanent-looking button opens
- * the menu; nothing else sits over the thumbnail.
+ * Save/Unsave, Download, Rename and Delete (the last two for private/owned
+ * videos only - the API enforces ownership regardless). A single
+ * permanent-looking button opens the menu; nothing else sits over the
+ * thumbnail.
  *
  * Menu clicks never open the video: every pointer/click event inside the
  * menu is stopped, and the parent card ignores events from [data-card-menu]
@@ -14,16 +15,21 @@
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import VideoCreatorControl from '@/app/video/[slug]/VideoCreatorControl';
 import { DotsIcon } from '@/components/icons';
 import { startDownload } from '@/components/downloadClient';
-import { useSession } from '@/components/useSession';
+import { useSessionState } from '@/components/useSession';
+import { VideoRenameDialog } from '@/components/VideoRenameDialog';
+import { VideoDeleteDialog } from '@/components/VideoDeleteDialog';
 
 interface VideoCardMenuProps {
   videoId: number;
   creator: { slug: string; name: string } | null;
-  /** True for owned private videos - gates the Change Creator option. */
+  /** True for owned private videos - gates the Rename/Delete options. */
   isPrivate?: boolean;
+  /** Current MEGA filename (rename dialog initial value). */
+  megaFilename?: string;
+  /** Display title (delete confirmation + fallback filename). */
+  title?: string;
 }
 
 /**
@@ -59,8 +65,14 @@ function isOnShufflePage(): boolean {
   }
 }
 
-export function VideoCardMenu({ videoId, creator, isPrivate = false }: VideoCardMenuProps) {
-  const { user, loading } = useSession();
+export function VideoCardMenu({
+  videoId,
+  isPrivate = false,
+  megaFilename = '',
+  title = '',
+}: VideoCardMenuProps) {
+  // Shared shell session (one fetch per route) instead of a per-card fetch.
+  const { user, loading } = useSessionState();
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -70,6 +82,8 @@ export function VideoCardMenu({ videoId, creator, isPrivate = false }: VideoCard
   const [busy, setBusy] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState('');
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   // Close on outside tap/click or Escape (same pattern as the shell menus).
@@ -249,24 +263,30 @@ export function VideoCardMenu({ videoId, creator, isPrivate = false }: VideoCard
                 {downloading ? 'Preparing download…' : 'Download'}
               </button>
               {isPrivate && (
-                <VideoCreatorControl
-                  videoId={videoId}
-                  currentCreator={
-                    creator ? { id: 0, name: creator.name, slug: creator.slug, avatar: null } : null
-                  }
-                  trigger={(openDialog) => (
-                    <button
-                      type="button"
-                      role="menuitem"
-                      // NOTE: the menu stays open underneath the dialog - closing
-                      // it first would unmount this control and its dialog.
-                      onClick={() => openDialog()}
-                      className={itemCls}
-                    >
-                      Change creator
-                    </button>
-                  )}
-                />
+                <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setOpen(false);
+                      setRenameOpen(true);
+                    }}
+                    className={itemCls}
+                  >
+                    Rename
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setOpen(false);
+                      setDeleteOpen(true);
+                    }}
+                    className={`${itemCls} text-destructive`}
+                  >
+                    Delete video
+                  </button>
+                </>
               )}
               {error && (
                 <p role="alert" className="px-4 py-2 text-xs leading-relaxed text-destructive">
@@ -276,6 +296,34 @@ export function VideoCardMenu({ videoId, creator, isPrivate = false }: VideoCard
             </>
           )}
         </div>
+      )}
+
+      {isPrivate && renameOpen && (
+        <VideoRenameDialog
+          videoId={videoId}
+          currentFilename={megaFilename}
+          open={renameOpen}
+          onClose={() => setRenameOpen(false)}
+          onRenamed={() => {
+            // Server-rendered grids pick up the new title/creator.
+            if (!isOnShufflePage()) {
+              router.refresh();
+            }
+          }}
+        />
+      )}
+      {isPrivate && deleteOpen && (
+        <VideoDeleteDialog
+          videoId={videoId}
+          videoTitle={title || megaFilename.replace(/\.[^.]+$/, '') || 'This video'}
+          open={deleteOpen}
+          onClose={() => setDeleteOpen(false)}
+          onDeleted={() => {
+            if (!isOnShufflePage()) {
+              router.refresh();
+            }
+          }}
+        />
       )}
     </div>
   );

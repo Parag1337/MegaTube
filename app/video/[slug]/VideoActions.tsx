@@ -1,24 +1,45 @@
 'use client';
 
 /**
- * Action row below the player: Watchlist toggle, Save toggle, Download.
+ * Action row below the player: Watchlist toggle, Save toggle, Download,
+ * plus owner-only Rename and Delete video (same dialogs/endpoints as the
+ * card menu: POST /api/videos/[videoId]/rename, DELETE /api/videos/[id]).
  * Watchlist/Save reuse the existing /api/watchlist|saved/[videoId] contracts
  * (same as the card menu); Download calls the single shared startDownload
  * helper, i.e. the same GET /api/download/[videoId] endpoint as the menu.
  */
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui';
 import { BookmarkIcon, DownloadIcon } from '@/components/icons';
 import { startDownload } from '@/components/downloadClient';
+import { VideoRenameDialog } from '@/components/VideoRenameDialog';
+import { VideoDeleteDialog } from '@/components/VideoDeleteDialog';
 
-export function VideoActions({ videoId }: { videoId: number }) {
+export function VideoActions({
+  videoId,
+  megaFilename = '',
+  title = '',
+  canManage = false,
+}: {
+  videoId: number;
+  /** Current MEGA filename (rename dialog initial value). */
+  megaFilename?: string;
+  /** Display title (delete confirmation). */
+  title?: string;
+  /** Owner-only Rename/Delete actions (API enforces ownership regardless). */
+  canManage?: boolean;
+}) {
+  const router = useRouter();
   const [watchlisted, setWatchlisted] = useState(false);
   const [saved, setSaved] = useState(false);
   const [signedIn, setSignedIn] = useState(true);
   const [busy, setBusy] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState('');
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   // Membership is loaded once on mount (same lazy pattern as the card menu).
   useEffect(() => {
@@ -118,11 +139,51 @@ export function VideoActions({ videoId }: { videoId: number }) {
           <DownloadIcon className="h-4 w-4" />
           {downloading ? 'Preparing…' : 'Download'}
         </Button>
+        {canManage && (
+          <>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={busy}
+              onClick={() => setRenameOpen(true)}
+              ariaLabel="Rename video"
+            >
+              Rename
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              disabled={busy}
+              onClick={() => setDeleteOpen(true)}
+              ariaLabel="Delete video"
+            >
+              Delete video
+            </Button>
+          </>
+        )}
       </div>
       {error && (
         <p role="alert" className="mt-2 text-[13px] text-destructive">
           {error}
         </p>
+      )}
+      {canManage && renameOpen && (
+        <VideoRenameDialog
+          videoId={videoId}
+          currentFilename={megaFilename}
+          open={renameOpen}
+          onClose={() => setRenameOpen(false)}
+          onRenamed={() => router.refresh()}
+        />
+      )}
+      {canManage && deleteOpen && (
+        <VideoDeleteDialog
+          videoId={videoId}
+          videoTitle={title || megaFilename.replace(/\.[^.]+$/, '') || 'This video'}
+          open={deleteOpen}
+          onClose={() => setDeleteOpen(false)}
+          onDeleted={() => router.push('/library')}
+        />
       )}
     </div>
   );

@@ -21,38 +21,72 @@ const THUMBS_DIR = path.resolve(process.cwd(), 'data/thumbs');
  * expose them to anonymous visitors.
  */
 export async function GET(request: NextRequest, { params }: { params: Promise<{ videoId: string }> }) {
-  const user = await getCurrentUser();
-  if (!user) {
-    return new NextResponse(null, { status: 401 });
-  }
-
+  // Phase 2K: minimal Server-Timing (durations only, no sensitive data) so
+  // thumbnail latency can be attributed to auth vs DB vs filesystem.
+  const mark = (label: string, t0: number) => `${label};dur=${Math.round(performance.now() - t0)}`;
+  const tAll = performance.now();
   const videoId = Number((await params).videoId);
-  if (!Number.isInteger(videoId) || videoId <= 0) {
-    return new NextResponse(null, { status: 400 });
+  const validId = Number.isInteger(videoId) && videoId > 0;
+  // Phase 1 perf: auth and the video lookup are independent - resolve them
+  // concurrently instead of paying two sequential Neon round trips before
+  // the first byte. Status precedence is unchanged (401, then 400, then 404).
+  const tAuth = performance.now();
+  const authPromise = getCurrentUser().then((user) => ({ user, authMs: performance.now() - tAuth }));
+  const tDb = performance.now();
+  const videoPromise = (validId
+    ? prisma.video.findFirst({
+        where: { id: videoId, megaAccountId: { not: null } },
+        select: {
+          id: true,
+          thumbnail: true,
+          thumbnailAvailable: true,
+          megaFa: true,
+          fileKeyEncrypted: true,
+          megaAccount: { select: { id: true, userId: true, status: true, encryptedSession: true } },
+        },
+      })
+    : Promise.resolve(null)
+  ).then((video) => ({ video, dbMs: performance.now() - tDb }));
+  const [{ user, authMs }, { video, dbMs }] = await Promise.all([authPromise, videoPromise]);
+  const timing = [`auth;dur=${Math.round(authMs)}`, `videodb;dur=${Math.round(dbMs)}`];
+  if (!user) {
+    return new NextResponse(null, {
+      status: 401,
+      headers: { 'Server-Timing': [...timing, mark('total', tAll)].join(', ') },
+    });
   }
 
-  const video = await prisma.video.findFirst({
-    where: { id: videoId, megaAccountId: { not: null } },
-    select: {
-      id: true,
-      thumbnail: true,
-      thumbnailAvailable: true,
-      megaFa: true,
-      fileKeyEncrypted: true,
-      megaAccount: { select: { id: true, userId: true, status: true, encryptedSession: true } },
-    },
-  });
+  if (!validId) {
+    return new NextResponse(null, {
+      status: 400,
+      headers: { 'Server-Timing': [...timing, mark('total', tAll)].join(', ') },
+    });
+  }
 
   if (!video || !video.megaAccount || video.megaAccount.userId !== user.id) {
-    return new NextResponse(null, { status: 404 });
+    return new NextResponse(null, {
+      status: 404,
+      headers: { 'Server-Timing': [...timing, mark('total', tAll)].join(', ') },
+    });
   }
   if (video.megaAccount.status === MEGA_ACCOUNT_STATUSES.DISCONNECTED) {
-    return new NextResponse(null, { status: 410 });
+    return new NextResponse(null, {
+      status: 410,
+      headers: { 'Server-Timing': [...timing, mark('total', tAll)].join(', ') },
+    });
   }
-  for (const ext of ['png', 'jpg']) {
-    if (await readableFile(path.join(THUMBS_DIR, `${videoId}.${ext}`))) {
-      return serveThumbFile(videoId, ext);
-    }
+  // Phase 1 perf: the two local file probes are independent.
+  const tFs = performance.now();
+  const [hasPng, hasJpg] = await Promise.all([
+    readableFile(path.join(THUMBS_DIR, `${videoId}.png`)),
+    readableFile(path.join(THUMBS_DIR, `${videoId}.jpg`)),
+  ]);
+  timing.push(mark('fs', tFs));
+  if (hasPng) {
+    return withTiming(serveThumbFile(videoId, 'png'), timing, tAll);
+  }
+  if (hasJpg) {
+    return withTiming(serveThumbFile(videoId, 'jpg'), timing, tAll);
   }
 
   // No file on disk (missing, or removed as broken): without a MEGA-side
@@ -68,12 +102,15 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   // sync), so fetch, store, and serve it now instead of 404ing forever.
   const healed = await healThumbnail(video);
   if (healed) {
-    return serveThumbFile(videoId, healed);
+    return withTiming(serveThumbFile(videoId, healed), [...timing, mark('heal', tFs)], tAll);
   }
 
   // thumbnailAvailable but the file is missing (e.g. fetch failed during
   // sync) - the next sync will retry.
-  return new NextResponse(null, { status: 404 });
+  return new NextResponse(null, {
+    status: 404,
+    headers: { 'Server-Timing': [...timing, mark('total', tAll)].join(', ') },
+  });
 }
 
 async function readableFile(absPath: string): Promise<boolean> {
@@ -85,6 +122,12 @@ async function readableFile(absPath: string): Promise<boolean> {
   }
 }
 
+function withTiming(res: Response, timing: string[], tAll: number): Response {
+  const headers = new Headers(res.headers);
+  headers.set('Server-Timing', [...timing, `total;dur=${Math.round(performance.now() - tAll)}`].join(', '));
+  return new Response(res.body, { status: res.status, headers });
+}
+
 function serveThumbFile(videoId: number, ext: string): Response {
   const stream = createReadStream(path.join(THUMBS_DIR, `${videoId}.${ext}`));
   const webStream = Readable.toWeb(stream) as unknown as ReadableStream<Uint8Array>;
@@ -92,7 +135,12 @@ function serveThumbFile(videoId: number, ext: string): Response {
     status: 200,
     headers: {
       'Content-Type': ext === 'png' ? 'image/png' : 'image/jpeg',
-      'Cache-Control': 'private, max-age=3600',
+      // Phase 1 perf: repeat views (back-navigation, revisits) serve thumbnails
+      // instantly from the browser cache, with background revalidation after
+      // an hour so repaired thumbnails still refresh. No UX change: the same
+      // 24 eager images load the same way on first view. `immutable` was
+      // rejected: repairs rewrite the same path with new bytes.
+      'Cache-Control': 'private, max-age=3600, stale-while-revalidate=86400',
     },
   });
 }

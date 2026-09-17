@@ -11,7 +11,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { UserButton, useClerk, useUser } from '@clerk/nextjs';
 import { SearchBar } from '@/components/SearchBar';
-import { useSession } from '@/components/useSession';
+import { useSessionState, SessionProvider } from '@/components/useSession';
 import { Avatar } from '@/components/ui';
 import { SITE_NAME } from '@/lib/config';
 import {
@@ -32,18 +32,26 @@ import {
 const COLLAPSE_KEY = 'megatube.sidebarCollapsed';
 
 /*
- * Sidebar collapse state, SSR-safe: the server snapshot is always expanded
- * (matching SSR HTML), and the client hydrates from localStorage without a
- * render-time read (which would mismatch hydration) or an effect setState.
+ * Sidebar collapse state, SSR-safe: the server snapshot is always collapsed
+ * (matching SSR HTML - the sidebar starts as an icon rail), and the client
+ * hydrates from localStorage via useSyncExternalStore: no render-time read
+ * (which would mismatch hydration), no effect setState, no remount. When a
+ * stored expanded preference exists, hydration patches the width class
+ * in place (CSS transition only) - page content is never remounted and
+ * nothing is re-fetched. With no stored preference the rail stays collapsed.
  */
 type CollapseListener = () => void;
 const collapseListeners = new Set<CollapseListener>();
 
 function readCollapsed(): boolean {
   try {
-    return window.localStorage.getItem(COLLAPSE_KEY) === '1';
+    // No stored preference yet -> start collapsed (sidebar is an icon rail
+    // by default; the user can expand it and that choice persists).
+    const stored = window.localStorage.getItem(COLLAPSE_KEY);
+    if (stored === null) return true;
+    return stored === '1';
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -64,7 +72,7 @@ function setCollapsedValue(next: boolean): void {
 }
 
 function useSidebarCollapsed(): [boolean, () => void] {
-  const collapsed = useSyncExternalStore(subscribeCollapse, readCollapsed, () => false);
+  const collapsed = useSyncExternalStore(subscribeCollapse, readCollapsed, () => true);
   const toggle = () => setCollapsedValue(!readCollapsed());
   return [collapsed, toggle];
 }
@@ -335,6 +343,18 @@ function ClerkAccountButton() {
 }
 
 function ShellInner({ children }: { children: React.ReactNode }) {
+  // Phase 2 perf: one session fetch for the header AND every card menu
+  // below (see SessionProvider) instead of ~24 duplicate round trips.
+  // The provider never remounts page content - it only re-runs its fetch
+  // effect on route change, exactly like the old per-component hook.
+  return (
+    <SessionProvider>
+      <ShellContent>{children}</ShellContent>
+    </SessionProvider>
+  );
+}
+
+function ShellContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const search = searchParams?.toString() ?? '';
@@ -342,7 +362,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   // Hooks must run unconditionally on every render (Rules of Hooks).
   // They are hoisted above the auth-route early return so navigating
   // between auth and app routes doesn't change the hook order.
-  const { user, loading } = useSession();
+  const { user, loading } = useSessionState();
   const { isSignedIn: clerkSignedIn } = useUser();
   const [collapsed, toggleCollapsed] = useSidebarCollapsed();
 
@@ -392,11 +412,18 @@ function ShellInner({ children }: { children: React.ReactNode }) {
 
   /*
    * Public marketing/media routes for signed-out visitors use the dedicated
-   * public header (no sidebar, search, or bottom nav). The check runs on the
-   * client session: while it is loading `user` is null, so visitors never
-   * see the application sidebar flash - at the cost of a brief public
-   * header for logged-in users on these routes before their session
-   * resolves and the app shell below takes over.
+   * public header (no sidebar, search, or bottom nav).
+   *
+   * The signed-out check waits for the session to resolve (`!loading`):
+   * while the session is loading the auth state is UNKNOWN, so these routes
+   * render the stable application shell (sidebar included) instead of the
+   * public header. That keeps Sidebar + Main content structurally present
+   * from the initial render: when the session resolves signed-in, only the
+   * user-dependent leaves update (nav items, avatar) and page content is
+   * never unmounted - no reload, no re-fetch, no layout swap. A signed-out
+   * visitor briefly sees the app shell (public nav items + avatar skeleton)
+   * before the public header takes over; that single swap is the price of
+   * never moving signed-in page content between shell trees.
    */
   const isPublicRoute =
     pathname === '/' ||
@@ -405,7 +432,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
     pathname === '/creators' ||
     pathname?.startsWith('/creators/');
 
-  if (isPublicRoute && !user) {
+  if (isPublicRoute && !user && !loading) {
     return (
       <div className="flex min-h-full flex-col">
         <PublicHeader />

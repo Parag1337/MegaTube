@@ -29,6 +29,7 @@ import {
   getSameCreatorVideos,
   getTitleRelatedVideos,
 } from './recommendations';
+import { getCached, homeFeedCacheKey, homeTakenCacheKey, setCached } from './feedCache';
 
 export type FeedSource = 'recent' | 'history' | 'related' | 'random' | 'variety';
 
@@ -158,20 +159,28 @@ export function interleaveBuckets<T>(buckets: T[][]): T[] {
  * seed videos themselves - they belong to Recent.
  */
 async function fetchRelatedPool(userId: string, seeds: FeedVideo[], cap = 24): Promise<FeedVideo[]> {
+  const seedList = seeds.slice(0, 2);
+  // Phase 1 perf: the two seeds are independent - resolve their
+  // same-creator/title pairs concurrently, then merge in seed order exactly
+  // as the old sequential loop did (identical output, fewer round trips).
+  const perSeed = await Promise.all(
+    seedList.map((seed) =>
+      Promise.all([
+        getSameCreatorVideos(userId, seed.id, 12),
+        getTitleRelatedVideos(userId, seed.title, { excludeVideoIds: [seed.id], limit: 12 }),
+      ]),
+    ),
+  );
   const out: FeedVideo[] = [];
   const seen = new Set(seeds.map((s) => s.id));
-  for (const seed of seeds.slice(0, 2)) {
-    if (out.length >= cap) break;
-    const [same, titled] = await Promise.all([
-      getSameCreatorVideos(userId, seed.id, 12),
-      getTitleRelatedVideos(userId, seed.title, { excludeVideoIds: [seed.id], limit: 12 }),
-    ]);
+  for (const [same, titled] of perSeed) {
     for (const v of [...same, ...titled]) {
       if (out.length >= cap) break;
       if (seen.has(v.id)) continue;
       seen.add(v.id);
       out.push(v);
     }
+    if (out.length >= cap) break;
   }
   return out;
 }
@@ -197,6 +206,14 @@ export async function buildHomeFeedPage(
   const perPage = videosPerPage();
   const safePage = Math.max(1, Math.floor(page) || 1);
 
+  // Phase 2 perf: repeat visits (back-navigation, tab switches, client
+  // navs) reuse the fully-built page instead of recomputing ~19 queries.
+  // User-scoped key + 30s TTL + precise invalidation on history/creator/
+  // sync writes (see lib/feedCache.ts for the safety argument).
+  const cacheKey = homeFeedCacheKey(userId, safePage, seed);
+  const cached = getCached<HomeFeedPage>(cacheKey);
+  if (cached) return cached;
+
   const probe = await listNewVideosForUser(userId, 1);
   const total = probe.total;
   // A user with no private videos gets an empty Home feed. Without this,
@@ -204,22 +221,43 @@ export async function buildHomeFeedPage(
   // catalog videos into the private Home view of a fresh user whose library
   // is empty - the page instead renders its connect-a-MEGA-account state.
   if (total === 0) {
-    return { items: [], page: 1, perPage, total: 0, totalPages: 1 };
+    const empty: HomeFeedPage = { items: [], page: 1, perPage, total: 0, totalPages: 1 };
+    setCached(cacheKey, empty);
+    return empty;
   }
   const totalPages = Math.max(1, Math.ceil(total / perPage));
-  const historyAll = await getHistoryRelatedVideos(userId, perPage);
-  const quotas = calculateQuotas(perPage, historyAll.length > 0);
+  // Phase 1 perf: start the history query immediately so its Neon round
+  // trips overlap the page batch fetches below instead of preceding them.
+  // The promise is created once (single fetch, as before) and awaited where
+  // its result is first needed. Empty libraries still return above, before
+  // any history work starts.
+  const historyPromise = getHistoryRelatedVideos(userId, perPage);
+  let quotas: Record<FeedSource, number> | null = null;
 
   const taken = new Set<number>();
   let pagePicks: Array<{ video: FeedVideo; source: FeedSource }> = [];
 
   for (let p = 1; p <= safePage; p++) {
+    // Phase 3A: page p only needs previous pages' TAKEN id sets, not their
+    // pools. Reuse cached taken sets so a first visit to page N fetches
+    // only page N's pools (~page-1 cost) instead of rebuilding pages
+    // 1..N-1 (~N x page-1 cost). Output is identical: taken sets are exactly
+    // what the skipped iterations would have contributed.
+    if (p < safePage) {
+      const cachedTaken = getCached<number[]>(homeTakenCacheKey(userId, p, seed));
+      if (cachedTaken) {
+        for (const id of cachedTaken) taken.add(id);
+        continue;
+      }
+    }
     const [newP, randP, varP] = await Promise.all([
       p === 1 && probe.page === 1 ? probe : listNewVideosForUser(userId, p),
       listRandomVideos(userId, p, seed),
       listLibraryVideosForUser(userId, Math.max(1, totalPages - p + 1)),
     ]);
     const relatedP = await fetchRelatedPool(userId, newP.items.slice(0, 2));
+    const historyAll = await historyPromise;
+    quotas ??= calculateQuotas(perPage, historyAll.length > 0);
     const assigned = assignQuotas(
       [
         { source: 'recent', videos: newP.items },
@@ -233,6 +271,10 @@ export async function buildHomeFeedPage(
       taken,
     );
     for (const a of assigned) taken.add(a.video.id);
+    setCached(
+      homeTakenCacheKey(userId, p, seed),
+      assigned.map((a) => a.video.id),
+    );
     if (p === safePage) {
       const bySource = new Map<FeedSource, FeedPick[]>();
       for (const s of SOURCE_ORDER) bySource.set(s, []);
@@ -241,5 +283,7 @@ export async function buildHomeFeedPage(
     }
   }
 
-  return { items: pagePicks, page: safePage, perPage, total, totalPages };
+  const result = { items: pagePicks, page: safePage, perPage, total, totalPages };
+  setCached(cacheKey, result);
+  return result;
 }

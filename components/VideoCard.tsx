@@ -169,7 +169,13 @@ export function VideoCard({
       data-previewable={previewSrc ? undefined : 'false'}
       {...(feedSource ? { 'data-feed-source': feedSource } : {})}
     >
-      <VideoCardMenu videoId={id} creator={creator} isPrivate={isPrivate} />
+      <VideoCardMenu
+        videoId={id}
+        creator={creator}
+        isPrivate={isPrivate}
+        megaFilename={megaFilename}
+        title={title}
+      />
       <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-surface transition-[transform,box-shadow] duration-200 group-hover:-translate-y-0.5 group-hover:shadow-[0_16px_40px_-16px_var(--shadow-color)]">
         {thumbnail ? (
           <ThumbImage

@@ -123,17 +123,23 @@ export function shuffleWithSeed<T>(items: readonly T[], seed: string): T[] {
 }
 
 /**
- * The #random command: all videos visible to the user, shuffled by `seed`.
+ * The #random command: all videos visible to the user, in a deterministic
+ * per-seed ordering.
  *
- * Pagination is applied AFTER shuffling, so page 1..N partition one stable
- * random ordering (no duplicates, no gaps) for a given seed.
+ * Pagination is applied AFTER ordering, so page 1..N partition one stable
+ * pseudo-random ordering (no duplicates, no gaps) for a given seed.
  *
- * Scalability (P1.2): only the eligible video IDs (integers) are read and
- * shuffled - never the full rows. The page's rows are then fetched by
- * primary key and restored to shuffled order. Shuffling the complete ID set
- * with Fisher-Yates keeps the ordering uniform (unbiased) and stable per
- * seed, which a per-page `ORDER BY RANDOM()` could not provide (it would
- * reshuffle every page and return duplicates/gaps).
+ * Implementation (Phase 1 perf): the ordering is computed DATABASE-side as
+ * `ORDER BY MD5(seed || id)` - a deterministic hash of the seed and the
+ * primary key, so the same seed always yields the same page partition.
+ * Only the requested page of IDs crosses the connection (plus a COUNT in
+ * the same round trip); the previous implementation transferred EVERY
+ * eligible Video.id to Node and Fisher-Yates shuffled them in memory, which
+ * is prohibitive over Neon round trips. A per-page `ORDER BY RANDOM()` was
+ * rejected instead: it reshuffles every page (duplicates/gaps) and is not
+ * stable. The MD5 hash has no such problem, and a full-table ORDER BY over
+ * a hash is server-side work with no row transfer, unlike the old
+ * fetch-all-ids pattern.
  */
 export async function listRandomVideos(
   userId?: string,
@@ -142,21 +148,32 @@ export async function listRandomVideos(
 ): Promise<PageResult<ReturnType<typeof serializeVideo>>> {
   const perPage = videosPerPage();
   const safePage = Math.max(1, page);
+  const take = perPage;
+  const skip = (safePage - 1) * perPage;
 
-  const idRows = await prisma.video.findMany({
-    where: libraryScope(userId),
-    select: { id: true },
-    orderBy: { id: 'asc' },
-  });
+  // Same visibility rule as libraryScope(): the user's own non-disconnected
+  // accounts plus the public catalog. Truthiness mirrors libraryScope -
+  // an empty userId sees exactly the public catalog.
+  const scope = userId
+    ? Prisma.sql`(v."megaAccountId" IS NULL OR v."megaAccountId" IN (SELECT "id" FROM "MegaAccount" WHERE "userId" = ${userId} AND "status" <> ${MEGA_ACCOUNT_STATUSES.DISCONNECTED}))`
+    : Prisma.sql`v."megaAccountId" IS NULL`;
 
-  const shuffledIds = shuffleWithSeed(
-    idRows.map((r) => r.id),
-    seed,
-  );
-  const total = shuffledIds.length;
-  const pageIds = shuffledIds.slice((safePage - 1) * perPage, safePage * perPage);
+  // COUNT and the ID page resolve in a single query via COUNT(*) OVER():
+  // one Neon round trip for both the total and the page's IDs.
+  const idRows = await prisma.$queryRaw<Array<{ id: number; total: bigint }>>`
+    SELECT v."id" AS id, COUNT(*) OVER() AS total FROM "Video" AS v
+    WHERE ${scope}
+    ORDER BY MD5(${seed} || v."id"::text)
+    LIMIT ${take} OFFSET ${skip}`;
 
-  if (pageIds.length === 0) {
+  if (idRows.length === 0) {
+    // Empty page: either an empty library or an out-of-range page. The
+    // window total is unavailable with zero rows, so count separately -
+    // this path is rare (manual page URLs), the hot path stays at 2 queries.
+    const countRows = await prisma.$queryRaw<Array<{ total: bigint }>>`
+      SELECT COUNT(*) AS total FROM "Video" AS v
+      WHERE ${scope}`;
+    const total = Number(countRows[0]?.total ?? 0);
     return {
       items: [],
       total,
@@ -165,45 +182,20 @@ export async function listRandomVideos(
       totalPages: Math.max(1, Math.ceil(total / perPage)),
     };
   }
+  const total = Number(idRows[0].total);
 
+  // LIMIT/OFFSET over a deterministic order keeps pages full under
+  // concurrent deletes (rows shift in), so no refill pass is needed.
+  const pageIds = idRows.map((r) => r.id);
   const rows = await prisma.video.findMany({
     where: { id: { in: pageIds } },
     select: videoSelect,
   });
   const byId = new Map(rows.map((r) => [r.id, r]));
   const items: NonNullable<ReturnType<typeof serializeVideo>>[] = [];
-  const missingIds: number[] = [];
-
   for (const id of pageIds) {
     const row = byId.get(id);
-    if (row) {
-      items.push(serializeVideo(row));
-    } else {
-      missingIds.push(id);
-    }
-  }
-
-  if (missingIds.length > 0) {
-    const used = new Set(pageIds);
-    const refillIds: number[] = [];
-    for (const id of shuffledIds) {
-      if (refillIds.length >= missingIds.length) break;
-      if (!used.has(id)) {
-        used.add(id);
-        refillIds.push(id);
-      }
-    }
-    if (refillIds.length > 0) {
-      const refillRows = await prisma.video.findMany({
-        where: { id: { in: refillIds } },
-        select: videoSelect,
-      });
-      const refillById = new Map(refillRows.map((r) => [r.id, r]));
-      for (const id of refillIds) {
-        const row = refillById.get(id);
-        if (row) items.push(serializeVideo(row));
-      }
-    }
+    if (row) items.push(serializeVideo(row));
   }
 
   return {
