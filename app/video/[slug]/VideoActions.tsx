@@ -14,6 +14,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui';
 import { BookmarkIcon, DownloadIcon } from '@/components/icons';
 import { startDownload } from '@/components/downloadClient';
+import { useSessionState } from '@/components/useSession';
 import { VideoRenameDialog } from '@/components/VideoRenameDialog';
 import { VideoDeleteDialog } from '@/components/VideoDeleteDialog';
 
@@ -32,9 +33,13 @@ export function VideoActions({
   canManage?: boolean;
 }) {
   const router = useRouter();
+  // Phase 3C: reuse the shell session instead of probing membership for
+  // visitors who cannot have any (saves 2x401 round trips on every
+  // signed-out video view; signed-in behavior unchanged).
+  const { user } = useSessionState();
   const [watchlisted, setWatchlisted] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [signedIn, setSignedIn] = useState(true);
+  const [denied, setDenied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState('');
@@ -42,7 +47,11 @@ export function VideoActions({
   const [deleteOpen, setDeleteOpen] = useState(false);
 
   // Membership is loaded once on mount (same lazy pattern as the card menu).
+  // Signed-out visitors have no membership: skip the probes entirely.
   useEffect(() => {
+    // Signed-out visitors have no membership: skip the probes entirely
+    // (user comes from the shared shell session, no extra fetch).
+    if (!user) return;
     let cancelled = false;
     (async () => {
       try {
@@ -51,7 +60,7 @@ export function VideoActions({
           fetch(`/api/saved/${videoId}`),
         ]);
         if (w.status === 401 || s.status === 401) {
-          if (!cancelled) setSignedIn(false);
+          if (!cancelled) setDenied(true);
           return;
         }
         if (!w.ok || !s.ok) return;
@@ -67,7 +76,7 @@ export function VideoActions({
     return () => {
       cancelled = true;
     };
-  }, [videoId]);
+  }, [videoId, user]);
 
   async function toggle(kind: 'watchlist' | 'saved') {
     const active = kind === 'watchlist' ? watchlisted : saved;
@@ -76,7 +85,7 @@ export function VideoActions({
     try {
       const res = await fetch(`/api/${kind}/${videoId}`, { method: active ? 'DELETE' : 'POST' });
       if (res.status === 401) {
-        setSignedIn(false);
+        setDenied(true);
         return;
       }
       if (!res.ok) {
@@ -105,7 +114,9 @@ export function VideoActions({
     }
   }
 
-  if (!signedIn) return null;
+  // Signed-out visitors and 401s render nothing (same as before, but
+  // without firing membership probes that can only 401).
+  if (!user || denied) return null;
 
   return (
     <div className="mt-4">

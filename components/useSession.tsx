@@ -21,23 +21,41 @@ export function useSession(): SessionState {
   return useSessionFetcher(pathname);
 }
 
-function useSessionFetcher(pathname: string | null): SessionState {
-  const [state, setState] = useState<SessionState>({ user: null, loading: true });
+function useSessionFetcher(pathname: string | null, initialUser: SessionUser | null = null): SessionState {
+  // Phase 3C: the server seed IS the initial state (loading:false) - the
+  // layout just resolved this exact query, so "unknown" never paints:
+  // signed-in users get their sidebar/avatar, signed-out visitors get the
+  // public header, both on first paint with no skeletal flash. The per-route
+  // revalidation below is unchanged: fresh navigations, sign-outs and
+  // cross-tab changes all correct the state exactly as before.
+  const [state, setState] = useState<SessionState>({ user: initialUser, loading: false });
 
   useEffect(() => {
     let cancelled = false;
-    // Phase 2 perf: no synchronous loading:true reset here. The previous
-    // user stays rendered across navigations (stale-while-revalidate) until
-    // the fresh result lands - this also removes the header-avatar skeleton
-    // flash on every route change. Initial mount still starts loading:true.
+    // Phase 3C: only publish when the identity actually changed. The
+    // revalidation fetch runs per route, but its result is almost always
+    // identical ({id, email} equal) - publishing a fresh object every time
+    // would re-render the whole shell and re-fire user-dependent effects
+    // (e.g. VideoActions membership probes) for no visible change.
+    // Stale-while-revalidate is preserved: the previous user stays rendered
+    // until a genuinely different result lands.
+    const publish = (nextUser: SessionUser | null) => {
+      if (cancelled) return;
+      setState((prev) => {
+        if (
+          !prev.loading &&
+          (prev.user?.id ?? null) === (nextUser?.id ?? null) &&
+          (prev.user?.email ?? null) === (nextUser?.email ?? null)
+        ) {
+          return prev;
+        }
+        return { user: nextUser, loading: false };
+      });
+    };
     fetch('/api/auth/session')
       .then((r) => r.json())
-      .then((data) => {
-        if (!cancelled) setState({ user: data.user ?? null, loading: false });
-      })
-      .catch(() => {
-        if (!cancelled) setState({ user: null, loading: false });
-      });
+      .then((data) => publish(data.user ?? null))
+      .catch(() => publish(null));
     return () => {
       cancelled = true;
     };
@@ -57,9 +75,16 @@ function useSessionFetcher(pathname: string | null): SessionState {
  */
 const SessionContext = createContext<SessionState | null>(null);
 
-export function SessionProvider({ children }: { children: ReactNode }) {
+export function SessionProvider({
+  children,
+  initialUser = null,
+}: {
+  children: ReactNode;
+  /** Server-seeded session (first paint); revalidated per route below. */
+  initialUser?: SessionUser | null;
+}) {
   const pathname = usePathname();
-  const state = useSessionFetcher(pathname);
+  const state = useSessionFetcher(pathname, initialUser);
   return <SessionContext.Provider value={state}>{children}</SessionContext.Provider>;
 }
 

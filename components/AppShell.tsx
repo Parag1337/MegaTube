@@ -342,13 +342,20 @@ function ClerkAccountButton() {
   );
 }
 
-function ShellInner({ children }: { children: React.ReactNode }) {
+function ShellInner({
+  children,
+  initialUser = null,
+}: {
+  children: React.ReactNode;
+  initialUser?: { id: string; email: string; createdAt: string } | null;
+}) {
   // Phase 2 perf: one session fetch for the header AND every card menu
   // below (see SessionProvider) instead of ~24 duplicate round trips.
   // The provider never remounts page content - it only re-runs its fetch
   // effect on route change, exactly like the old per-component hook.
+  // Phase 3C: initialUser seeds first paint (no sidebar/avatar pop-in).
   return (
-    <SessionProvider>
+    <SessionProvider initialUser={initialUser}>
       <ShellContent>{children}</ShellContent>
     </SessionProvider>
   );
@@ -644,10 +651,16 @@ function MobileTab({
   );
 }
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({
+  children,
+  initialUser = null,
+}: {
+  children: React.ReactNode;
+  initialUser?: { id: string; email: string; createdAt: string } | null;
+}) {
   return (
     <Suspense>
-      <ShellInner>{children}</ShellInner>
+      <ShellInner initialUser={initialUser}>{children}</ShellInner>
     </Suspense>
   );
 }

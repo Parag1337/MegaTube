@@ -4,6 +4,7 @@ import { Geist, Geist_Mono } from 'next/font/google';
 import { AppShell } from '@/components/AppShell';
 import { ThemeProvider, themeInitScript } from '@/components/ThemeProvider';
 import { SITE_NAME } from '@/lib/config';
+import { getCurrentUser } from '@/lib/auth';
 import './globals.css';
 
 const geistSans = Geist({ variable: '--font-geist-sans', subsets: ['latin'] });
@@ -17,7 +18,21 @@ export const metadata: Metadata = {
   description: 'Browse, search, and watch your private MEGA video library.',
 };
 
-export default function RootLayout({ children }: LayoutProps<'/'>) {
+export default async function RootLayout({ children }: LayoutProps<'/'>) {
+  // Phase 3C: seed the shell's session state on the server so the FIRST
+  // paint already shows the correct sidebar/header (no pop-in when the
+  // client session resolves seconds later). Same getCurrentUser() the
+  // client fetches; the provider still revalidates per route, so sign-outs
+  // and cross-tab changes correct themselves exactly as before. Serialized
+  // (client components require JSON-safe props).
+  const sessionUser = await getCurrentUser().catch(() => null);
+  const initialUser = sessionUser
+    ? {
+        id: sessionUser.id,
+        email: sessionUser.email,
+        createdAt: sessionUser.createdAt.toISOString(),
+      }
+    : null;
   return (
     <html
       lang="en"
@@ -33,7 +48,7 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
             clears any legacy website session before redirecting on. */}
         <ClerkProvider afterSignOutUrl="/sign-out">
           <ThemeProvider>
-            <AppShell>{children}</AppShell>
+            <AppShell initialUser={initialUser}>{children}</AppShell>
           </ThemeProvider>
         </ClerkProvider>
       </body>
