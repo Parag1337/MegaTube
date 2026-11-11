@@ -42,6 +42,10 @@ yarn-error.log*
 # video thumbnail cache (regenerable per video from MEGA; host-local only)
 /data/thumbs/*
 
+# production database backups (pg_dump of the live DB; contains secrets -
+# NEVER commit; the *.dump/.sql/.gz forms are all covered)
+/data/backups/*
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

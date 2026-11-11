@@ -2,9 +2,9 @@
  * Shared Prisma client.
  *
  * Uses the PostgreSQL driver adapter (Prisma 7 standard SQL workflow).
- * DATABASE_URL points at local PostgreSQL for development/tests and at
- * Neon (pooled URL) in production. A single instance is reused across
- * the app.
+ * DATABASE_URL points at local PostgreSQL for development/tests and at the
+ * Render Managed PostgreSQL (Internal Database URL) in production. A single
+ * instance is reused across the app.
  */
 
 import { PrismaClient } from '../generated/client';
@@ -86,14 +86,16 @@ function createClient(): PrismaClient {
   // Phase 2 perf: a page load fans out to ~50 concurrent queries (24 thumb
   // requests x auth+video lookups plus the page's own queries). The pg
   // default pool (max 10) queues them in ~5 waves; 25 lets a full page run
-  // in ~2 waves. Safe: DATABASE_URL is the Neon pooled (PgBouncer)
-  // endpoint, which multiplexes client connections. Overridable for
+  // in ~2 waves. 25 lets a full page run in ~2 waves; safe on the Render
+  // Managed PostgreSQL limit (max_connections=100). Overridable for
   // diagnosis via PG_POOL_MAX. Measured, not blind: burst-thumb timings
   // (see Phase 2 report).
   const poolMax = Number(process.env.PG_POOL_MAX) || 25;
-  // Remote endpoints make each connection expensive (4-5s measured on the
-  // deployed Neon URL), but pg's default idleTimeoutMillis (10s) evicts idle
-  // connections long before the keepalive's next ping - the warm-connection
+  // Remote endpoints make each connection expensive (4-5s measured against
+  // the previous remote provider; Render internal-network connections are
+  // cheap but the hold is harmless there), but pg's default
+  // idleTimeoutMillis (10s) evicts idle connections long before the
+  // keepalive's next ping - the warm-connection
   // goal would be defeated. For remote DATABASE_URLs, hold connections a
   // little longer than the keepalive interval so the warmed ones persist
   // (bounded staleness, not forever-idle sockets). Local DBs keep pg's

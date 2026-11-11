@@ -28,7 +28,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const videoId = Number((await params).videoId);
   const validId = Number.isInteger(videoId) && videoId > 0;
   // Phase 1 perf: auth and the video lookup are independent - resolve them
-  // concurrently instead of paying two sequential Neon round trips before
+  // concurrently instead of paying two sequential round trips before
   // the first byte. Status precedence is unchanged (401, then 400, then 404).
   const tAuth = performance.now();
   const authPromise = getCurrentUser().then((user) => ({ user, authMs: performance.now() - tAuth }));

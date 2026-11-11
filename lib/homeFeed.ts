@@ -226,7 +226,7 @@ export async function buildHomeFeedPage(
     return empty;
   }
   const totalPages = Math.max(1, Math.ceil(total / perPage));
-  // Phase 1 perf: start the history query immediately so its Neon round
+  // Phase 1 perf: start the history query immediately so its round
   // trips overlap the page batch fetches below instead of preceding them.
   // The promise is created once (single fetch, as before) and awaited where
   // its result is first needed. Empty libraries still return above, before

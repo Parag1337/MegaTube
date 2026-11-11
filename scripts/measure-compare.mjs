@@ -3,7 +3,7 @@
  * investigation. Measures BOTH servers with identical requests where the
  * auth state allows it.
  *
- * Server A (:3000) = the developer's running `next dev` (Neon DB, Clerk dev
+ * Server A (:3000) = the developer's running `next dev` (remote DB, Clerk dev
  * keys). Only UNAUTHENTICATED, strictly read-only requests are sent there -
  * no fixtures, no writes, no media/thumbnail requests (those can persist
  * metadata or touch MEGA), no Clerk sign-in.
@@ -42,16 +42,16 @@ function report(name, runs) {
 }
 
 async function main() {
-  // --- Server A: dev + Neon (unauth, read-only) ---
+  // --- Server A: dev + remote DB (unauth, read-only) ---
   for (const p of ['/', '/login', '/register']) {
     const runs = [];
     for (let i = 0; i < 5; i++) runs.push(await req(A, p));
-    report(`A(dev+neon) GET ${p}`, runs);
+    report(`A(dev+remote) GET ${p}`, runs);
   }
   for (const p of ['/api/history', '/api/saved', '/api/watchlist', '/api/mega/accounts']) {
     const runs = [];
     for (let i = 0; i < 3; i++) runs.push(await req(A, p));
-    report(`A(dev+neon) GET ${p} (401 path)`, runs);
+    report(`A(dev+remote) GET ${p} (401 path)`, runs);
   }
 
   // --- Server B: prod + local (auth via legacy cookie) ---

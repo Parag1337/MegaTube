@@ -135,7 +135,7 @@ export function shuffleWithSeed<T>(items: readonly T[], seed: string): T[] {
  * Only the requested page of IDs crosses the connection (plus a COUNT in
  * the same round trip); the previous implementation transferred EVERY
  * eligible Video.id to Node and Fisher-Yates shuffled them in memory, which
- * is prohibitive over Neon round trips. A per-page `ORDER BY RANDOM()` was
+ * is prohibitive over remote round trips. A per-page `ORDER BY RANDOM()` was
  * rejected instead: it reshuffles every page (duplicates/gaps) and is not
  * stable. The MD5 hash has no such problem, and a full-table ORDER BY over
  * a hash is server-side work with no row transfer, unlike the old
@@ -159,7 +159,7 @@ export async function listRandomVideos(
     : Prisma.sql`v."megaAccountId" IS NULL`;
 
   // COUNT and the ID page resolve in a single query via COUNT(*) OVER():
-  // one Neon round trip for both the total and the page's IDs.
+  // one round trip for both the total and the page's IDs.
   const idRows = await prisma.$queryRaw<Array<{ id: number; total: bigint }>>`
     SELECT v."id" AS id, COUNT(*) OVER() AS total FROM "Video" AS v
     WHERE ${scope}

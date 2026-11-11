@@ -168,7 +168,7 @@ test('isRemoteDatabaseUrl: local vs remote classification', async () => {
   assert.equal(isRemoteDatabaseUrl('postgresql://u:p@localhost:5433/db'), false);
   assert.equal(isRemoteDatabaseUrl('postgresql://u:p@127.0.0.1:5433/db'), false);
   assert.equal(
-    isRemoteDatabaseUrl('postgresql://u:p@ep-xxx-pooler.us-east-2.aws.neon.tech/db?sslmode=require'),
+    isRemoteDatabaseUrl('postgresql://u:p@dpg-xxx-a.singapore-postgres.render.com/db?sslmode=require'),
     true,
   );
   assert.equal(isRemoteDatabaseUrl(undefined), false);

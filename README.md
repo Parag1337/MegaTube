@@ -128,7 +128,7 @@ Two things matter here conceptually:
 | Framework | **Next.js 16** | App Router, server components, API routes |
 | UI | **React 19** + **Tailwind CSS 4** | dark theme, responsive app shell |
 | Player | **@vidstack/react** | `<MediaPlayer>` UI over native `<video>` |
-| Data | **Prisma 7** + **PostgreSQL** | via the `pg` driver adapter (`@prisma/adapter-pg`) — Neon-compatible |
+| Data | **Prisma 7** + **PostgreSQL** | via the `pg` driver adapter (`@prisma/adapter-pg`) |
 | MEGA client | **megajs 1.3** | login, node tree, file attributes, decryption |
 | Auth | **Clerk** (`@clerk/nextjs`) | hosted sign-in/up; legacy PBKDF2 password sessions kept as fallback |
 | Media processing | **ffmpeg** (system binary) | stream-copy remux (no re-encode) + thumbnail frame extraction |
@@ -392,22 +392,44 @@ Add the Clerk keys to `.env` and adjust the optional knobs (see the table below)
 
 ### 3. Prepare the database
 
-Create a local PostgreSQL database (PostgreSQL 14+; Neon is used in production)
-and point `DATABASE_URL` at it:
+Create a local PostgreSQL database (PostgreSQL 14+; production uses a managed
+PostgreSQL — see docs/NEON-TO-RENDER-MIGRATION-PLAN.md) and point
+`DATABASE_URL` at it:
 
 ```bash
 # Example: local cluster on port 5433
 createuser megatube --createdb   # or: CREATE ROLE megatube LOGIN CREATEDB;
 createdb megatube -O megatube    # or: CREATE DATABASE megatube OWNER megatube;
-psql -c "ALTER ROLE megatube PASSWORD '...'"
-
+psql -c "ALTER ROLE megatube PASSWORD '...'"   # password only used locally
 npx prisma migrate deploy
+```
+
+**Local development configuration lives in `.env`** (git-ignored): its
+`DATABASE_URL` points at the local cluster, so `npm run dev` and
+`npx prisma migrate deploy` act on the local database. Production's
+`DATABASE_URL` is configured only in the Render Web Service environment
+(Internal Database URL) — never in a local env file. If the dev server
+detects a remote `DATABASE_URL` it prints a warning at startup
+(`[db] DATABASE_URL points at a remote host ...`).
+
+To initialize a **fresh** local database from scratch:
+
+```bash
+createdb megatube -O megatube
+npx prisma migrate deploy        # applies every migration in order
+```
+
+and (optional) seed deterministic performance-test data:
+
+```bash
+DATABASE_URL="postgresql://megatube:megatube-dev-only@localhost:5433/megatube?schema=public" \
+  npx tsx scripts/seed-perf.mts
 ```
 
 This applies the included migrations (schema, indexes, pg_trgm search
 structures, product tables). `CREATE EXTENSION pg_trgm` inside the search
 migration requires the PostgreSQL contrib package on self-hosted servers
-(`postgresql-contrib` on Fedora/Debian); managed providers like Neon ship it.
+(`postgresql-contrib` on Fedora/Debian); managed providers like Render ship it.
 
 ### 4. Run it
 
@@ -426,7 +448,7 @@ Your private library appears on Home / Library as soon as videos finish indexing
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `DATABASE_URL` | ✅ | PostgreSQL connection string (local dev: `postgresql://...localhost:5433/megatube`; production: Neon **pooled** URL) |
+| `DATABASE_URL` | ✅ | PostgreSQL connection string (local dev: `postgresql://...localhost:5433/megatube` via `.env`; production: Render **Internal Database URL**, dashboard-only) |
 | `MEGA_SESSION_ENCRYPTION_KEY` | ✅ for MEGA linking | 64-hex AES-256-GCM envelope key — `npm run keygen` |
 | `CLERK_SECRET_KEY`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | for Clerk sign-in/up | Clerk API + publishable keys |
 | `NEXT_PUBLIC_CLERK_SIGN_IN_URL`, `NEXT_PUBLIC_CLERK_SIGN_UP_URL`, `NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL`, `NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL` | with Clerk | Clerk route/redirect configuration |

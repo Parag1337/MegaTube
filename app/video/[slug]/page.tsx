@@ -25,7 +25,7 @@ interface VideoPageProps {
 export default async function VideoPage({ params }: VideoPageProps) {
   const { slug } = await params;
   // Phase 1 perf: the video lookup and the auth lookup are independent -
-  // one Neon round trip instead of two sequential ones.
+  // one remote round trip instead of two sequential ones.
   const [video, user] = await Promise.all([getVideoBySlug(slug), getCurrentUser()]);
   if (!video) notFound();
   if (video.isPrivate) {
@@ -94,7 +94,7 @@ export default async function VideoPage({ params }: VideoPageProps) {
 
   // Phase 1+2 perf: title, creator and random pools depend only on
   // (video, userId) - not on each other - so they resolve concurrently
-  // instead of in three sequential Neon chains. Phase 2 caches the triple
+  // instead of in three sequential chains. Phase 2 caches the triple
   // per (user, video): revisits skip the queries entirely. Visibility was
   // enforced above, so the cached creator id needs no re-lookup.
   type PoolVideo = Awaited<ReturnType<typeof getVideoPools>>;

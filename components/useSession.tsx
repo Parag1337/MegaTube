@@ -68,7 +68,7 @@ function useSessionFetcher(pathname: string | null, initialUser: SessionUser | n
  * Phase 2 perf: one session fetch shared by the whole shell.
  *
  * Every card menu used to run its own useSession() - ~24 duplicate
- * /api/auth/session round trips per grid page, each hitting Clerk + Neon.
+ * /api/auth/session round trips per grid page, each hitting Clerk + the DB.
  * The provider fetches once per route (same timing/semantics as before) and
  * every consumer below it reuses the result. Tree-scoped React state, not a
  * global cache: sign-out/navigation behavior is unchanged.

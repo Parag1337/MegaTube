@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Env-gated alternate build dir used by the performance harness
+    // (NEXT_DIST_DIR, see docs/LOCALHOST-PERFORMANCE-INVESTIGATION.md).
+    ".next-perf/**",
+    // Prisma client output (schema: generator client output = "../generated").
+    "generated/**",
   ]),
 ]);
 

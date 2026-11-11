@@ -3,7 +3,7 @@
  *
  * Forwards :PORT -> :5433 (local Postgres) adding DELAY_MS to every
  * client->server data chunk. With DELAY_MS=200 this approximates a ~400ms
- * round-trip remote database (documented as a simulation - the real Neon
+ * round-trip remote database (documented as a simulation - the real remote
  * leg was measured directly at ~390-520ms/query, 4-5s connect).
  *
  * Usage: node scripts/latency-proxy.mjs [--port 5434] [--delay 200]
