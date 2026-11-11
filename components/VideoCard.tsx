@@ -5,8 +5,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { tryMegaFileUrlToPreviewUrl } from '@/lib/mega/embed';
 import { acquirePreview, releasePreview } from '@/lib/preview-manager';
 import { previewDelayMs } from '@/lib/config';
+import { cachedCardPreviewMeta, repollCardHoverPreview, resolveCardHoverPreview } from '@/lib/preview-meta-client';
 import { formatDuration } from '@/components/format';
 import { FilmIcon } from '@/components/icons';
+import { PreviewVideo } from '@/components/PreviewVideo';
 import { ThumbImage } from '@/components/ThumbImage';
 import { VideoCardMenu } from '@/components/VideoCardMenu';
 
@@ -31,6 +33,9 @@ interface VideoCardProps {
 
 type PreviewState = 'idle' | 'pending' | 'active';
 
+/** What the active preview renders: the local clip, or the iframe fallback. */
+type PreviewView = { kind: 'local'; url: string } | { kind: 'iframe' } | null;
+
 export function VideoCard({
   id,
   slug,
@@ -45,11 +50,13 @@ export function VideoCard({
   priority = false,
 }: VideoCardProps) {
   const [preview, setPreview] = useState<PreviewState>('idle');
+  const [previewView, setPreviewView] = useState<PreviewView>(null);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const touchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeRef = useRef(false);
   const suppressClickRef = useRef(false);
   const touchGuardUntilRef = useRef(0);
+  const metaInFlightRef = useRef(false);
 
   const previewSrc = megaUrl ? tryMegaFileUrlToPreviewUrl(megaUrl) : null;
 
@@ -63,6 +70,8 @@ export function VideoCard({
       touchTimerRef.current = null;
     }
     activeRef.current = false;
+    metaInFlightRef.current = false;
+    setPreviewView(null);
     setPreview('idle');
   }, []);
 
@@ -78,21 +87,67 @@ export function VideoCard({
     };
   }, [stopSelf]);
 
-  const startPreview = useCallback(() => {
+  const beginLocalPreview = useCallback((url: string) => {
     activeRef.current = true;
     acquirePreview(stopSelf);
+    setPreviewView({ kind: 'local', url });
     setPreview('active');
   }, [stopSelf]);
 
+  const beginIframePreview = useCallback(() => {
+    if (!previewSrc) {
+      // Neither a local clip nor the MEGA embed is available: no preview.
+      stopSelf();
+      return;
+    }
+    activeRef.current = true;
+    acquirePreview(stopSelf);
+    setPreviewView({ kind: 'iframe' });
+    setPreview('active');
+  }, [previewSrc, stopSelf]);
+
+  /**
+   * Activate the preview: the local hover clip wins whenever meta says it is
+   * ready (cached per page); otherwise ONE bounded meta resolution with a
+   * single re-poll for `generating`, then the MEGA-iframe fallback — the
+   * pre-Phase-5 behavior, fully preserved.
+   */
+  const startPreview = useCallback(() => {
+    activeRef.current = true;
+    acquirePreview(stopSelf);
+
+    const cached = cachedCardPreviewMeta(id);
+    if (cached?.hoverUrl) {
+      beginLocalPreview(cached.hoverUrl);
+      return;
+    }
+    if (metaInFlightRef.current) return;
+    metaInFlightRef.current = true;
+    void (async () => {
+      let url = await resolveCardHoverPreview(id);
+      if (!url) {
+        // `generating` on first hover: one bounded re-poll, then fallback.
+        url = await repollCardHoverPreview(id);
+      }
+      metaInFlightRef.current = false;
+      if (!activeRef.current) return; // pointer left while meta resolved
+      if (url) beginLocalPreview(url);
+      else beginIframePreview();
+    })();
+  }, [beginIframePreview, beginLocalPreview, id, stopSelf]);
+
+  // Scheduling is unconditional now: a local preview exists for videos that
+  // have no MEGA embed URL (private sources) too. Cards without either kind
+  // of preview simply resolve meta once (cached) and show nothing.
   const scheduleHoverPreview = useCallback(() => {
-    if (activeRef.current || !previewSrc) return;
+    if (activeRef.current) return;
     hoverTimerRef.current = setTimeout(startPreview, previewDelayMs());
-  }, [startPreview, previewSrc]);
+  }, [startPreview]);
 
   const scheduleTouchPreview = useCallback(() => {
-    if (activeRef.current || !previewSrc) return;
+    if (activeRef.current) return;
     touchTimerRef.current = setTimeout(startPreview, previewDelayMs());
-  }, [startPreview, previewSrc]);
+  }, [startPreview]);
 
   function handleMouseEnter() {
     if (Date.now() < touchGuardUntilRef.current) return;
@@ -191,7 +246,24 @@ export function VideoCard({
           </div>
         )}
 
-        {showPreview && previewSrc && (
+        {showPreview && previewView?.kind === 'local' && (
+          <>
+            <PreviewVideo
+              src={previewView.url}
+              className="absolute inset-0 h-full w-full bg-black object-contain"
+            />
+            <div
+              className="absolute inset-0 z-10"
+              aria-hidden
+              onClick={(e) => {
+                e.stopPropagation();
+                openVideo();
+              }}
+            />
+          </>
+        )}
+
+        {showPreview && previewView?.kind === 'iframe' && previewSrc && (
           <>
             <iframe
               key={id}

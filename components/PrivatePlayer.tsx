@@ -125,6 +125,23 @@ function PlayerBody({ videoId, title }: PrivatePlayerProps) {
     };
   }, []);
 
+  // Phase 5 (additive): timeline thumbnails. One meta fetch per mount; when
+  // the spritesheet is ready the VTT goes straight to Vidstack's
+  // DefaultVideoLayout `thumbnails` (native timeline preview UI). Cold
+  // videos simply keep the plain timeline — no polling, no extra work.
+  const [thumbnails, setThumbnails] = useState<string | null>(null);
+  useEffect(() => {
+    const timeout = AbortSignal.timeout(8000);
+    fetch(`/api/preview/${videoId}/meta?want=timeline`, { signal: timeout })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((meta: { timeline?: { status?: string; vtt?: string | null } } | null) => {
+        if (meta?.timeline?.status === 'ready' && meta.timeline.vtt) setThumbnails(meta.timeline.vtt);
+      })
+      .catch(() => {
+        // Preview meta is optional decoration; never disturb playback.
+      });
+  }, [videoId]);
+
   // Missed-event backstop (P1.3): the error event is the fast path, but a
   // load can also die without any element event reaching us (provider setup
   // quirks, swallowed setup-phase failures). Poll cheap element state:
@@ -335,7 +352,7 @@ function PlayerBody({ videoId, title }: PrivatePlayerProps) {
             <Gesture className="vds-gesture" event="dblpointerup" action="seek:-10" />
             <Gesture className="vds-gesture" event="dblpointerup" action="seek:10" />
           </div>
-          <DefaultVideoLayout icons={defaultLayoutIcons} />
+          <DefaultVideoLayout icons={defaultLayoutIcons} thumbnails={thumbnails ?? undefined} />
         </MediaPlayer>
       )}
       <span className="sr-only">{title}</span>

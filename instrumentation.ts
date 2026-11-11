@@ -31,5 +31,12 @@ export async function register() {
     // and deferred past startup - never in the playback startup path.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     require('./lib/media/cache').startMediaCacheMaintenance();
+    // Phase 5 (additive): preview-store LRU eviction + orphan temp-dir sweep
+    // (`<id>.tmp-*/` from crashed generation jobs). Same deferred pattern;
+    // never touches the media cache directory.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('./lib/preview/cache').startPreviewMaintenance();
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('./lib/preview/source').sweepOrphanWorkDirs().catch(() => {});
   }
 }

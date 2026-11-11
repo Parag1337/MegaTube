@@ -52,3 +52,6 @@ next-env.d.ts
 
 # local agent state
 .ob1/
+
+# Phase 5 hover/timeline preview store (regenerable; LRU-bounded)
+/data/previews/*
