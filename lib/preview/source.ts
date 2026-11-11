@@ -29,10 +29,18 @@ import { decrypt } from 'megajs';
 import { needsRemuxForContainer } from '../media/container';
 import { loadSourceFrontier, tsPartPath } from '../media/source-acquisition';
 import type { OwnedVideo } from './types';
-import { byteWindowFor, alignDown } from './segment';
+import {
+  alignDown,
+  byteOffsetToSeconds,
+  byteWindowFor,
+  mergeByteWindows,
+} from './segment';
 import { findMoovInChunk } from './mp4-index';
 import {
   previewMoovMaxBytes,
+  previewMontageMaxRanges,
+  previewMontageSourceBudgetBytes,
+  previewMontageWindowMaxBytes,
   previewSourceMaxBytes,
 } from './config';
 
@@ -336,6 +344,264 @@ export async function resolvePreviewSource(
     transferBytes: headLen + byteLen,
     cleanup,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5.1: multi-scene source plan (one bounded acquisition for N scenes)
+// ---------------------------------------------------------------------------
+
+export interface MontageSceneRequest {
+  index: number;
+  /** Scene start on the source timeline. */
+  startSec: number;
+  durationSec: number;
+}
+
+export interface MontageSceneSource {
+  index: number;
+  path: string;
+  /** Input-side seek for ffmpeg (0 for TS windows, absolute for MP4). */
+  seekSec: number;
+  durationSec: number;
+  startSec: number;
+}
+
+export interface MontageSourcePlan {
+  kind: SourceKind;
+  segments: MontageSceneSource[];
+  transferBytes: number;
+  /** Scenes dropped because no bounded window could cover them. */
+  omittedScenes: number[];
+  cleanup: () => Promise<void>;
+}
+
+/**
+ * Acquire the media windows for every montage scene in ONE bounded pass.
+ *
+ * The important difference from calling `resolvePreviewSource` per scene:
+ * the MP4 moov/head/tail bytes are fetched once, and media windows are merged
+ * before hitting MEGA (nearby scenes become one aligned range request).
+ * Total bytes are clamped to PREVIEW_MONTAGE_SOURCE_BUDGET_BYTES and the
+ * number of requests to PREVIEW_MONTAGE_MAX_RANGES.
+ */
+export async function resolveMontageSources(
+  video: OwnedVideo,
+  scenes: MontageSceneRequest[],
+  workDir: string,
+  fileKey: Buffer,
+  deps: PreviewSourceDeps,
+): Promise<MontageSourcePlan> {
+  const size = video.fileSize !== null ? Number(video.fileSize) : 0;
+  if (size <= 0) throw new SourceUnavailableError('source size unknown');
+  const maxRanges = previewMontageMaxRanges();
+  if (scenes.length === 0) throw new SourceUnavailableError('no montage scenes');
+  const tmpFiles: string[] = [];
+  const cleanup = async (): Promise<void> => {
+    await Promise.all(tmpFiles.map((f) => fs.promises.rm(f, { force: true })));
+  };
+  const coverageSeconds = Math.max(8, ...scenes.map((s) => s.durationSec + 8));
+  const perWindowMax = Math.max(
+    2 * 1024 * 1024,
+    Math.min(previewMontageWindowMaxBytes(), Math.floor(previewMontageSourceBudgetBytes() / scenes.length)),
+  );
+
+  // 1. Warm media cache: one local MP4 serves every scene (0 MEGA bytes).
+  if (size > 0) {
+    const warm = await deps.readWarmCache(video.id, video.megaNodeId, size);
+    if (warm) {
+      return {
+        kind: 'local-mp4',
+        segments: scenes.map((s) => ({
+          index: s.index,
+          path: warm.path,
+          seekSec: s.startSec,
+          durationSec: s.durationSec,
+          startSec: s.startSec,
+        })),
+        transferBytes: 0,
+        omittedScenes: [],
+        cleanup,
+      };
+    }
+  }
+
+  const isTs = needsRemuxForContainer(video.mimeType);
+  const duration = video.duration;
+
+  // 2. Local TS acquisition prefix: cut all merged windows from disk.
+  if (isTs) {
+    const windows = scenes.map((s) => ({
+      scene: s,
+      window: byteWindowFor(s.startSec, duration, size, perWindowMax, 752, coverageSeconds, 1.6),
+    }));
+    const ranges = mergeByteWindows(
+      windows.map((w) => ({ byteStart: w.window.byteStart, byteLen: w.window.byteLen })),
+      perWindowMax,
+      1024 * 1024,
+    ).slice(0, maxRanges);
+    const frontier = await loadSourceFrontier(video.id).catch(() => null);
+    const part = tsPartPath(video.id);
+    const partStat = await fs.promises.stat(part).catch(() => null);
+    const coveredAll = ranges.length > 0 && ranges.every((r) => frontier && partStat?.isFile() && frontier.frontier >= r.byteStart + r.byteLen);
+    if (coveredAll && ranges.length > 0) {
+      const files: string[] = [];
+      for (let i = 0; i < ranges.length; i++) {
+        const f = path.join(workDir, `local-${i}.ts`);
+        await copySlice(part, ranges[i].byteStart, ranges[i].byteLen, f);
+        files.push(f);
+        tmpFiles.push(f);
+      }
+      const segments: MontageSceneSource[] = [];
+      const omitted: number[] = [];
+      for (const { scene, window } of windows) {
+        const r = ranges.find((r) => window.byteStart >= r.byteStart && window.byteStart < r.byteStart + r.byteLen);
+        if (!r) { omitted.push(scene.index); continue; }
+        const relStart = Math.max(0, scene.startSec - byteOffsetToSeconds(r.byteStart, size, duration));
+        segments.push({
+          index: scene.index,
+          path: files[ranges.indexOf(r)],
+          seekSec: relStart,
+          durationSec: scene.durationSec,
+          startSec: scene.startSec,
+        });
+      }
+      return { kind: 'ts-window', segments, transferBytes: 0, omittedScenes: omitted, cleanup };
+    }
+  }
+
+  // 3./4. Bounded MEGA acquisition: one download URL, one moov pass.
+  const { url, size: resolvedSize } = await resolveDownloadUrl(video, deps);
+  const totalSize = resolvedSize || size;
+  if (isTs) {
+    const windows = scenes.map((s) => ({
+      scene: s,
+      window: byteWindowFor(s.startSec, duration, totalSize, perWindowMax, 752, coverageSeconds, 1.6),
+    }));
+    const ranges = mergeByteWindows(
+      windows.map((w) => ({ byteStart: w.window.byteStart, byteLen: w.window.byteLen })),
+      perWindowMax,
+      1024 * 1024,
+    ).slice(0, maxRanges);
+    if (ranges.length === 0) throw new SourceUnavailableError('empty TS window');
+    let transfer = 0;
+    const files: string[] = [];
+    for (let i = 0; i < ranges.length; i++) {
+      const f = path.join(workDir, `mega-${i}.ts`);
+      await decryptRangeToFile(deps, url, ranges[i].byteStart, ranges[i].byteStart + ranges[i].byteLen - 1, fileKey, f);
+      transfer += ranges[i].byteLen;
+      files.push(f);
+      tmpFiles.push(f);
+    }
+    const segments: MontageSceneSource[] = [];
+    const omitted: number[] = [];
+    for (const { scene, window } of windows) {
+      const rIndex = ranges.findIndex((r) => window.byteStart >= r.byteStart && window.byteStart < r.byteStart + r.byteLen);
+      if (rIndex < 0) { omitted.push(scene.index); continue; }
+      const r = ranges[rIndex];
+      const relStart = Math.max(0, scene.startSec - byteOffsetToSeconds(r.byteStart, totalSize, duration));
+      segments.push({
+        index: scene.index,
+        path: files[rIndex],
+        seekSec: relStart,
+        durationSec: scene.durationSec,
+        startSec: scene.startSec,
+      });
+    }
+    return { kind: 'ts-window', segments, transferBytes: transfer, omittedScenes: omitted, cleanup };
+  }
+
+  // MP4: head/tail + one sparse file, media windows merged before fetch.
+  const moovMax = previewMoovMaxBytes();
+  const headLen = Math.min(moovMax, totalSize);
+  const head = path.join(workDir, 'head.bin');
+  await decryptRangeToFile(deps, url, 0, headLen - 1, fileKey, head);
+  tmpFiles.push(head);
+  let transfer = headLen;
+  const headBuf = await fs.promises.readFile(head);
+  let moov = findMoovInChunk(headBuf, 0, totalSize);
+  let moovEnd = moov?.complete ? moov.end : null;
+  let regionStart = 0;
+  let regionLen = 0;
+  const sparse = path.join(workDir, 'source.mp4');
+  const openSparse = async (): Promise<fs.promises.FileHandle> => fs.promises.open(sparse, 'r+');
+
+  if (!moovEnd) {
+    const tailLen = Math.min(moovMax, totalSize);
+    const tailStart = Math.max(0, alignDown(totalSize - tailLen, 16));
+    const tail = path.join(workDir, 'tail.bin');
+    await decryptRangeToFile(deps, url, tailStart, totalSize - 1, fileKey, tail);
+    transfer += totalSize - tailStart;
+    tmpFiles.push(tail);
+    const tailBuf = await fs.promises.readFile(tail);
+    moov = findMoovInChunk(tailBuf, tailStart, totalSize);
+    if (!moov) throw new SourceUnavailableError('moov not found in head or tail');
+    if (!moov.complete) throw new SourceUnavailableError('moov incomplete in tail chunk');
+    moovEnd = moov.end;
+    const fh = await fs.promises.open(sparse, 'w');
+    try {
+      await fh.truncate(totalSize);
+      await fh.write(headBuf, 0, headBuf.length, 0);
+      await fh.write(tailBuf, 0, tailBuf.length, tailStart);
+    } finally {
+      await fh.close();
+    }
+    tmpFiles.push(sparse);
+    regionStart = 0;
+    regionLen = Math.max(0, moov.start);
+  } else {
+    const fh = await fs.promises.open(sparse, 'w');
+    try {
+      await fh.truncate(totalSize);
+      await fh.write(headBuf, 0, Math.min(moovEnd, headBuf.length), 0);
+    } finally {
+      await fh.close();
+    }
+    tmpFiles.push(sparse);
+    regionStart = Math.ceil(moovEnd / 16) * 16;
+    regionLen = Math.max(0, totalSize - regionStart);
+  }
+
+  if (regionLen <= 0) throw new SourceUnavailableError('empty MP4 media region');
+  const windows = scenes.map((s) => ({
+    scene: s,
+    window: byteWindowFor(s.startSec, duration, regionLen, perWindowMax, 16, coverageSeconds, 1.6),
+  }));
+  const ranges = mergeByteWindows(
+    windows.map((w) => ({ byteStart: w.window.byteStart + regionStart, byteLen: w.window.byteLen })),
+    perWindowMax,
+    1024 * 1024,
+  ).slice(0, maxRanges);
+  if (ranges.length === 0) throw new SourceUnavailableError('empty MP4 window');
+  const fh = await openSparse();
+  try {
+    for (let i = 0; i < ranges.length; i++) {
+      const r = ranges[i];
+      const f = path.join(workDir, `media-${i}.bin`);
+      await decryptRangeToFile(deps, url, r.byteStart, r.byteStart + r.byteLen - 1, fileKey, f);
+      transfer += r.byteLen;
+      tmpFiles.push(f);
+      const buf = await fs.promises.readFile(f);
+      await fh.write(buf, 0, buf.length, r.byteStart);
+    }
+  } finally {
+    await fh.close();
+  }
+
+  const segments: MontageSceneSource[] = [];
+  const omitted: number[] = [];
+  for (const { scene, window } of windows) {
+    const absStart = window.byteStart + regionStart;
+    const r = ranges.find((r) => absStart >= r.byteStart && absStart < r.byteStart + r.byteLen);
+    if (!r) { omitted.push(scene.index); continue; }
+    segments.push({
+      index: scene.index,
+      path: sparse,
+      seekSec: scene.startSec,
+      durationSec: scene.durationSec,
+      startSec: scene.startSec,
+    });
+  }
+  return { kind: 'sparse-mp4', segments, transferBytes: transfer, omittedScenes: omitted, cleanup };
 }
 
 /** Test hook: expose the work-dir root (unit tests set PREVIEW_CACHE_DIR). */

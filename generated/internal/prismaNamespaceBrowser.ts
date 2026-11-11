@@ -54,6 +54,7 @@ export const ModelName = {
   Creator: 'Creator',
   Video: 'Video',
   User: 'User',
+  PreviewGenerationJob: 'PreviewGenerationJob',
   MegaAccount: 'MegaAccount',
   Session: 'Session',
   WatchlistItem: 'WatchlistItem',
@@ -130,10 +131,41 @@ export const UserScalarFieldEnum = {
   passwordHash: 'passwordHash',
   clerkUserId: 'clerkUserId',
   createdAt: 'createdAt',
-  updatedAt: 'updatedAt'
+  updatedAt: 'updatedAt',
+  previewAutoGenerate: 'previewAutoGenerate',
+  previewPaused: 'previewPaused'
 } as const
 
 export type UserScalarFieldEnum = (typeof UserScalarFieldEnum)[keyof typeof UserScalarFieldEnum]
+
+
+export const PreviewGenerationJobScalarFieldEnum = {
+  id: 'id',
+  videoId: 'videoId',
+  kind: 'kind',
+  sourceFingerprint: 'sourceFingerprint',
+  generationVersion: 'generationVersion',
+  idempotencyKey: 'idempotencyKey',
+  status: 'status',
+  stage: 'stage',
+  priority: 'priority',
+  attempts: 'attempts',
+  maxAttempts: 'maxAttempts',
+  nextRetryAt: 'nextRetryAt',
+  lockedBy: 'lockedBy',
+  leaseExpiresAt: 'leaseExpiresAt',
+  queuedAt: 'queuedAt',
+  startedAt: 'startedAt',
+  completedAt: 'completedAt',
+  lastError: 'lastError',
+  errorCode: 'errorCode',
+  artifactBytes: 'artifactBytes',
+  metrics: 'metrics',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type PreviewGenerationJobScalarFieldEnum = (typeof PreviewGenerationJobScalarFieldEnum)[keyof typeof PreviewGenerationJobScalarFieldEnum]
 
 
 export const MegaAccountScalarFieldEnum = {

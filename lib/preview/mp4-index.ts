@@ -89,6 +89,24 @@ export function findMoov(buf: Buffer, baseOffset = 0): MoovLocation | null {
 }
 
 /**
+ * Validate the faststart property of a complete (small) MP4 file: the moov
+ * index must appear before the first mdat payload. Returns `unknown` when
+ * the box walk cannot prove either layout.
+ */
+export function faststartVerdict(buf: Buffer): 'faststart' | 'not-faststart' | 'unknown' {
+  const boxes = walkTopLevelBoxes(buf, 0);
+  let moovAt: number | null = null;
+  let mdatAt: number | null = null;
+  for (const box of boxes) {
+    if (box.type === 'moov' && moovAt === null) moovAt = box.start;
+    if (box.type === 'mdat' && mdatAt === null) mdatAt = box.start;
+  }
+  if (moovAt === null) return 'unknown';
+  if (mdatAt === null) return 'faststart';
+  return moovAt < mdatAt ? 'faststart' : 'not-faststart';
+}
+
+/**
  * Locate moov in a chunk that may begin mid-box. Tail chunks almost always
  * start inside the mdat payload, so the sequential walker cannot reach the
  * moov — scan for the `moov` type bytes instead and validate every candidate

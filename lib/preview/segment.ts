@@ -62,9 +62,222 @@ export function candidatePositions(
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Phase 5.1: multi-scene montage planning
+// ---------------------------------------------------------------------------
+
+export interface MontageScenePlan {
+  index: number;
+  /** Absolute timeline position the scene should represent. */
+  targetSec: number;
+  /** Chosen start after boundary/duplicate clamping. */
+  startSec: number;
+  /** Scene length that will be encoded into the montage. */
+  durationSec: number;
+  /** True when duration metadata was unavailable and a ladder was used. */
+  estimated: boolean;
+}
+
+export interface MontagePlan {
+  scenes: MontageScenePlan[];
+  sceneSeconds: number;
+  totalSeconds: number;
+  estimated: boolean;
+}
+
+function clamp(v: number, min: number, max: number): number {
+  return Math.min(Math.max(v, min), max);
+}
+
+/**
+ * Plan the representative scenes for one card montage.
+ *
+ * Long videos get evenly spread targets from ~10 % to ~90 % (five by
+ * default) so the montage samples the whole video rather than one section.
+ * Short videos automatically use fewer/shorter scenes and never produce a
+ * montage longer than the meaningful source content. Unknown-duration
+ * sources use the bounded 10/30/50/70/90 s ladder and are flagged
+ * `estimated`.
+ */
+export function planMontage(
+  durationSec: number | null,
+  sceneCount: number,
+  sceneSeconds: number,
+): MontagePlan {
+  const requested = Math.max(1, Math.floor(sceneCount));
+  const baseScene = Math.max(0.5, sceneSeconds);
+  const known = typeof durationSec === 'number' && Number.isFinite(durationSec) && durationSec > 0;
+  if (!known) {
+    const ladder = [10, 30, 50, 70, 90];
+    const count = Math.min(requested, ladder.length);
+    const scenes = ladder.slice(0, count).map((target, index) => ({
+      index,
+      targetSec: target,
+      startSec: target,
+      durationSec: baseScene,
+      estimated: true,
+    }));
+    return { scenes, sceneSeconds: baseScene, totalSeconds: count * baseScene, estimated: true };
+  }
+
+  const duration = durationSec as number;
+  let count = requested;
+  let perScene = baseScene;
+  if (duration <= 2.0) {
+    count = 1;
+    perScene = clamp(duration * 0.8, 0.4, baseScene);
+  } else {
+    // Leave breathing room between scenes and keep the montage bounded by
+    // the source. Very short clips reduce BOTH count and per-scene length.
+    const byDuration = Math.max(1, Math.floor(duration / (baseScene + 0.8)));
+    count = Math.min(requested, byDuration);
+    if (count < requested) {
+      perScene = clamp(duration / (count + 0.5), 0.5, baseScene);
+    }
+  }
+  count = Math.max(1, count);
+
+  const fractions =
+    count === 1 ? [0.5] : Array.from({ length: count }, (_, i) => 0.1 + (0.8 * i) / (count - 1));
+  const minStart = Math.min(duration * 0.02, 1);
+  const maxStart = Math.max(0, duration - perScene - Math.min(0.3, duration * 0.02));
+  const scenes: MontageScenePlan[] = [];
+  for (let i = 0; i < fractions.length; i++) {
+    const target = duration * fractions[i];
+    let start = clamp(target, minStart, maxStart);
+    // Never emit duplicate/near-identical scene starts.
+    for (let guard = 0; guard < 6; guard++) {
+      if (!scenes.some((s) => Math.abs(s.startSec - start) < Math.max(0.4, perScene * 0.35))) break;
+      start = clamp(start + perScene * 0.75, minStart, maxStart);
+    }
+    scenes.push({
+      index: i,
+      targetSec: target,
+      startSec: start,
+      durationSec: Math.min(perScene, Math.max(0.3, duration - start)),
+      estimated: false,
+    });
+  }
+  return {
+    scenes,
+    sceneSeconds: perScene,
+    totalSeconds: scenes.reduce((sum, s) => sum + s.durationSec, 0),
+    estimated: false,
+  };
+}
+
+/**
+ * Bounded alternatives for an unsuitable (black/duplicate) scene. Offsets
+ * stay small enough to remain inside the already-acquired source window, so
+ * trying them never triggers another MEGA range request.
+ */
+export function sceneAlternatives(
+  scene: MontageScenePlan,
+  durationSec: number | null,
+  attempts: number,
+): number[] {
+  const known = typeof durationSec === 'number' && Number.isFinite(durationSec) && durationSec > 0;
+  const maxStart = known
+    ? Math.max(0, (durationSec as number) - scene.durationSec - 0.2)
+    : Number.POSITIVE_INFINITY;
+  const offsets = [0, 1.5, -1.5, 3, -3, 4.5, -4.5];
+  const out: number[] = [];
+  for (const offset of offsets) {
+    const t = clamp(scene.startSec + offset, 0, maxStart);
+    if (out.some((x) => Math.abs(x - t) < 0.25)) continue;
+    out.push(t);
+    if (out.length >= Math.max(1, attempts + 1)) break;
+  }
+  return out;
+}
+
+export interface MontageCanvas {
+  /** Output canvas including the aspect-ratio padding. */
+  width: number;
+  height: number;
+  /** Source area after aspect-preserving downscale (never upscaled). */
+  innerWidth: number;
+  innerHeight: number;
+}
+
+/** Round to an even number (H.264 yuv420p requirement). */
+export function even(n: number): number {
+  return Math.max(2, Math.round(n / 2) * 2);
+}
+
+/**
+ * Aspect-preserving output canvas. Landscape caps at 640×360, portrait at
+ * 360×640; small sources are never upscaled. The canvas is padded (not
+ * cropped), preserving the complete frame for both orientations.
+ */
+export function montageCanvas(
+  sourceWidth: number,
+  sourceHeight: number,
+  caps: { maxWidthLandscape: number; maxHeightLandscape: number; maxWidthPortrait: number; maxHeightPortrait: number },
+): MontageCanvas {
+  const sw = Math.max(2, Math.floor(sourceWidth));
+  const sh = Math.max(2, Math.floor(sourceHeight));
+  const portrait = sh > sw;
+  const maxW = portrait ? caps.maxWidthPortrait : caps.maxWidthLandscape;
+  const maxH = portrait ? caps.maxHeightPortrait : caps.maxHeightLandscape;
+  const scale = Math.min(1, maxW / sw, maxH / sh);
+  const innerWidth = even(sw * scale);
+  const innerHeight = even(sh * scale);
+  return {
+    width: innerWidth,
+    height: innerHeight,
+    innerWidth,
+    innerHeight,
+  };
+}
+
+/** Output frame rate: cap high-fps sources, never up-convert low-fps ones. */
+export function outputFps(sourceFps: number | null, cap: number): number {
+  const fps = sourceFps && Number.isFinite(sourceFps) && sourceFps > 0 ? sourceFps : cap;
+  // Floor, not round: a 23.976 fps source must not be converted to 24 fps
+  // (that would duplicate frames for no visual benefit).
+  return Math.min(cap, Math.max(1, Math.floor(fps + 0.01)));
+}
+
+/**
+ * Merge byte windows that are close enough that one range request is
+ * cheaper, subject to the per-range cap. Windows are absolute and aligned.
+ */
+export function mergeByteWindows(
+  windows: Array<{ byteStart: number; byteLen: number }>,
+  maxMergedLen: number,
+  maxGapBytes: number,
+): Array<{ byteStart: number; byteLen: number }> {
+  const sorted = [...windows]
+    .filter((w) => w.byteLen > 0)
+    .sort((a, b) => a.byteStart - b.byteStart);
+  const merged: Array<{ byteStart: number; byteLen: number }> = [];
+  for (const w of sorted) {
+    const last = merged[merged.length - 1];
+    if (last) {
+      const lastEnd = last.byteStart + last.byteLen;
+      const gap = w.byteStart - lastEnd;
+      const newLen = Math.max(lastEnd, w.byteStart + w.byteLen) - last.byteStart;
+      if (gap <= maxGapBytes && newLen <= maxMergedLen) {
+        last.byteLen = newLen;
+        continue;
+      }
+    }
+    merged.push({ ...w });
+  }
+  return merged;
+}
+
+/** Convert an absolute byte offset to an approximate timeline position. */
+export function byteOffsetToSeconds(byteStart: number, sourceSize: number, durationSec: number | null): number {
+  if (!durationSec || durationSec <= 0 || sourceSize <= 0) return 0;
+  return (byteStart / sourceSize) * durationSec;
+}
+
 export interface ByteWindow {
   /** Absolute ciphertext start offset (aligned per the source type). */
   byteStart: number;
+
   /** Window length in bytes (≤ sourceSize - byteStart). */
   byteLen: number;
 }

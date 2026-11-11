@@ -8,6 +8,10 @@
  * the card. Polling is bounded — 30 s total — and stops immediately when the
  * pointer leaves, the card switches, or the server reports a terminal state.
  *
+ * Phase 5.1: the wait result also reports the server status (`pending`,
+ * `queued`, `generating`, `failed`, `unsupported`, …) so the loading
+ * indicator can say what is actually happening instead of spinning blindly.
+ *
  * Page-lifetime module cache — no persistence; a stale clip URL simply 404s
  * and the card falls back.
  */
@@ -24,6 +28,9 @@ const META_TIMEOUT_MS = 5000;
 /** Defaults for waiting out a cold background generation. */
 const GENERATING_POLL_INTERVAL_MS = 2000;
 const GENERATING_WAIT_MS = 30_000;
+
+/** Server states that can still become ready without user action. */
+const WAITABLE_STATUSES = new Set(['pending', 'queued', 'generating']);
 
 export function cachedCardPreviewMeta(videoId: number): CardPreviewMeta | null {
   return cache.get(videoId) ?? null;
@@ -58,43 +65,78 @@ async function fetchMetaOnce(videoId: number): Promise<MetaFetchResult | null> {
  *  - anything else → null (the caller decides whether to wait/fall back).
  */
 export async function resolveCardHoverPreview(videoId: number): Promise<string | null> {
+  return (await resolveCardHoverPreviewState(videoId)).url;
+}
+
+/** Same as `resolveCardHoverPreview` but keeps the server status. */
+export async function resolveCardHoverPreviewState(
+  videoId: number,
+): Promise<{ url: string | null; status: string }> {
   const cached = cache.get(videoId);
-  if (cached?.hoverUrl) return cached.hoverUrl;
+  if (cached?.hoverUrl) return { url: cached.hoverUrl, status: 'ready' };
   const meta = await fetchMetaOnce(videoId);
-  return meta?.hoverUrl ?? null;
+  return { url: meta?.hoverUrl ?? null, status: meta?.status ?? 'unavailable' };
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export interface HoverWaitResult {
+  url: string | null;
+  /** Last server status observed, or 'unavailable' when none was received. */
+  status: string;
+  timedOut: boolean;
+}
+
 /**
  * Wait (bounded) for a cold preview to finish generating. The meta endpoint
  * admits the job and answers `generating` immediately; this loop polls until
  * the clip is ready, the server reports a terminal state, the pointer leaves
- * (`isActive` false), or the timeout expires. Returns the clip URL or null.
+ * (`isActive` false), or the timeout expires.
+ *
+ * `onStatus` fires for every observed state so the card can label its
+ * loading indicator truthfully (preparing / waiting / loading).
+ */
+export async function waitForCardHoverPreviewDetailed(
+  videoId: number,
+  isActive: () => boolean,
+  opts?: { timeoutMs?: number; intervalMs?: number; onStatus?: (status: string) => void },
+): Promise<HoverWaitResult> {
+  const timeoutMs = opts?.timeoutMs ?? GENERATING_WAIT_MS;
+  const intervalMs = opts?.intervalMs ?? GENERATING_POLL_INTERVAL_MS;
+  const deadline = Date.now() + timeoutMs;
+  let status = 'unavailable';
+
+  while (Date.now() < deadline) {
+    if (!isActive()) return { url: null, status, timedOut: false };
+    await sleep(Math.min(intervalMs, Math.max(0, deadline - Date.now())));
+    if (!isActive()) return { url: null, status, timedOut: false };
+
+    const cached = cache.get(videoId);
+    if (cached?.hoverUrl) return { url: cached.hoverUrl, status: 'ready', timedOut: false };
+
+    const meta = await fetchMetaOnce(videoId);
+    if (!meta) return { url: null, status, timedOut: false }; // network/auth failure
+    status = meta.status;
+    opts?.onStatus?.(status);
+    if (meta.hoverUrl) return { url: meta.hoverUrl, status: 'ready', timedOut: false };
+    if (!WAITABLE_STATUSES.has(meta.status)) {
+      // Terminal: failed / unsupported / unavailable / rejected.
+      return { url: null, status: meta.status, timedOut: false };
+    }
+  }
+  return { url: null, status, timedOut: true };
+}
+
+/**
+ * Backwards-compatible wrapper: returns only the clip URL.
  */
 export async function waitForCardHoverPreview(
   videoId: number,
   isActive: () => boolean,
   opts?: { timeoutMs?: number; intervalMs?: number },
 ): Promise<string | null> {
-  const timeoutMs = opts?.timeoutMs ?? GENERATING_WAIT_MS;
-  const intervalMs = opts?.intervalMs ?? GENERATING_POLL_INTERVAL_MS;
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    if (!isActive()) return null;
-    await sleep(Math.min(intervalMs, Math.max(0, deadline - Date.now())));
-    if (!isActive()) return null;
-
-    const cached = cache.get(videoId);
-    if (cached?.hoverUrl) return cached.hoverUrl;
-
-    const meta = await fetchMetaOnce(videoId);
-    if (!meta) return null; // network/auth failure → caller falls back
-    if (meta.hoverUrl) return meta.hoverUrl;
-    if (meta.status !== 'generating') return null; // terminal: unavailable/rejected
-  }
-  return null;
+  const result = await waitForCardHoverPreviewDetailed(videoId, isActive, opts);
+  return result.url;
 }

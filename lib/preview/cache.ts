@@ -21,6 +21,7 @@ import {
   previewCacheMaxBytes,
   previewEvictionGraceMs,
   previewEvictionIntervalMs,
+  previewGenerationVersion,
   previewTouchIntervalMs,
 } from './config';
 import { isPreviewSidecar, type PreviewSidecar } from './types';
@@ -57,12 +58,62 @@ export async function writeSidecarAtomic(sidecar: PreviewSidecar): Promise<void>
   await fs.promises.rename(tmp, target);
 }
 
+/**
+ * Phase 5 v1 sidecars (single-scene hover clips, optional timeline sprite)
+ * are migrated on read so timeline functionality is never lost by the Phase
+ * 5.1 format change. The old hover is deliberately dropped: its bytes were
+ * produced by a different scene-selection/encoding configuration and must
+ * not be served as a current montage.
+ */
+export function isLegacyPreviewSidecar(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const v = value as Record<string, unknown>;
+  return (
+    v.version === 1 &&
+    typeof v.videoId === 'number' &&
+    typeof v.megaNodeId === 'string' &&
+    typeof v.sourceSize === 'number' &&
+    (v.status === 'ready' || v.status === 'failed') &&
+    typeof v.lastAccessedAt === 'string'
+  );
+}
+
 /** Read + validate a sidecar; null when absent/corrupt (never throws). */
 export async function readSidecar(videoId: number): Promise<PreviewSidecar | null> {
   try {
     const parsed: unknown = JSON.parse(await fs.promises.readFile(sidecarPath(videoId), 'utf8'));
-    if (!isPreviewSidecar(parsed) || parsed.videoId !== videoId) return null;
-    return parsed;
+    if (isPreviewSidecar(parsed) && parsed.videoId === videoId) return parsed;
+    if (!isLegacyPreviewSidecar(parsed) || (parsed as { videoId?: unknown }).videoId !== videoId) return null;
+    const legacy = parsed as unknown as {
+      megaNodeId: string;
+      sourceSize: number;
+      durationSeconds: number | null;
+      status: 'ready' | 'failed';
+      hover: unknown;
+      timeline: PreviewSidecar['timeline'];
+      attempts: number;
+      lastError: string | null;
+      lastAccessedAt: string;
+      metrics: PreviewSidecar['metrics'];
+    };
+    const migrated: PreviewSidecar = {
+      version: 2,
+      videoId,
+      megaNodeId: legacy.megaNodeId,
+      sourceSize: legacy.sourceSize,
+      durationSeconds: legacy.durationSeconds,
+      status: legacy.timeline ? 'ready' : 'failed',
+      hover: null,
+      timeline: legacy.timeline ?? null,
+      attempts: 0,
+      lastError: legacy.lastError ?? null,
+      failedAt: null,
+      lastAccessedAt: legacy.lastAccessedAt,
+      metrics: legacy.metrics ?? null,
+      generationVersion: previewGenerationVersion(),
+    };
+    await writeSidecarAtomic(migrated).catch(() => {});
+    return migrated;
   } catch {
     return null;
   }

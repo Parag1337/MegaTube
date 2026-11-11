@@ -34,15 +34,15 @@ import {
   writeSidecarAtomic,
 } from './cache';
 import {
-  previewClipHeight,
-  previewClipMaxFileBytes,
-  previewClipMinSeconds,
-  previewClipSeconds,
   previewDisabled,
   previewFfmpegTimeoutMs,
-  previewMaxAttempts,
   previewMaxHeapRatio,
   previewFailureCooldownMs,
+  previewGenerationConfig,
+  previewGenerationVersion,
+  previewMontageMaxFileBytes,
+  previewPriorityHover,
+  previewSceneAlternatives,
   previewSpriteCols,
   previewSpriteMaxTiles,
   previewSpriteMinIntervalSec,
@@ -50,22 +50,46 @@ import {
 } from './config';
 import {
   brightnessVerdict,
-  encodeHoverClip,
+  encodeMontage,
   encodeSprite,
-  probeBrightnessFrames,
   probeMedia,
+  probeSceneSample,
+  sceneSignatureDistance,
+  validateMontageFile,
+  type MontageInput,
 } from './ffmpeg';
 import { PreviewQueue, previewQueueSingleton } from './queue';
-import { buildSpriteVtt, candidatePositions, spritePlan } from './segment';
+import {
+  buildSpriteVtt,
+  montageCanvas,
+  outputFps,
+  planMontage,
+  sceneAlternatives,
+  spritePlan,
+  type MontagePlan,
+} from './segment';
 import {
   createWorkDir,
   defaultPreviewSourceDeps,
   removeWorkDir,
-  resolvePreviewSource,
-  SourceUnavailableError,
+  resolveMontageSources,
+  type MontageSceneRequest,
   type PreviewSourceDeps,
 } from './source';
-import type { AssetReportStatus, MetaResponse, OwnedVideo, PreviewSidecar } from './types';
+import {
+  ensurePreviewJob,
+  requeueMissingPreviewJob,
+  sourceFingerprintFor,
+  type PreviewJobEnsureResult,
+  type PreviewJobMetrics,
+} from './jobs';
+import type {
+  AssetReportStatus,
+  MetaResponse,
+  OwnedVideo,
+  PreviewMetrics,
+  PreviewSidecar,
+} from './types';
 
 // ---------------------------------------------------------------------------
 // Injectable deps (unit tests swap prisma / MEGA boundaries out)
@@ -93,6 +117,15 @@ export interface PreviewServiceDeps {
   ) => Promise<{ path: string; size: number } | null>;
   queue: PreviewQueue;
   now: () => number;
+  /** Durable backlog integration (production default; tests inject a stub). */
+  ensureJob?: (
+    videoId: number,
+    sourceFingerprint: string,
+    priority: number,
+    opts?: { retryEligible?: boolean; artifactValid?: boolean },
+  ) => Promise<PreviewJobEnsureResult>;
+  requeueMissingArtifact?: (jobId: number) => Promise<boolean>;
+  wakeWorker?: () => void;
 }
 
 function defaultDeps(): PreviewServiceDeps {
@@ -116,6 +149,20 @@ function defaultDeps(): PreviewServiceDeps {
     readWarmCache: defaultPreviewSourceDeps.readWarmCache,
     queue: previewQueueSingleton(),
     now: () => Date.now(),
+    ensureJob: (videoId, sourceFingerprint, priority, opts) =>
+      ensurePreviewJob({
+        videoId,
+        sourceFingerprint,
+        priority,
+        retryEligible: opts?.retryEligible,
+        artifactValid: opts?.artifactValid,
+      }),
+    requeueMissingArtifact: (jobId) => requeueMissingPreviewJob(jobId),
+    wakeWorker: () => {
+      // Dynamic import keeps worker -> service -> worker from being a
+      // synchronous cycle and keeps build-time evaluation free of timers.
+      void import('./worker').then((m) => m.wakePreviewWorker(), () => {});
+    },
   };
 }
 
@@ -192,175 +239,347 @@ const timelineCooldown = new Map<number, number>();
 
 const GENERATION_LOG_PREFIX = '[preview]';
 
-interface HoverOutcome {
+export interface HoverGenerationOutcome {
   ok: boolean;
   detail: string;
+  errorCode?: string;
+  retryable?: boolean;
+  unsupported?: boolean;
+  /** Full job metrics, or the sidecar metrics when a ready artifact exists. */
+  metrics?: PreviewJobMetrics | PreviewMetrics;
+}
+
+type HoverOutcome = HoverGenerationOutcome;
+
+/** Sanitized one-line failure detail (never a URL or credential). */
+function sanitizeFailureDetail(input: unknown): string {
+  const text = input instanceof Error ? input.message : String(input);
+  return text.replace(/https?:\/\/\S+/g, '[url]').replace(/\s+/g, ' ').trim().slice(0, 240);
+}
+
+function classifyGenerationError(input: unknown): {
+  code: string;
+  retryable: boolean;
+  unsupported: boolean;
+} {
+  const text = (input instanceof Error ? input.message : String(input)).toLowerCase();
+  if (text.includes('source size unknown')) return { code: 'source_size_unknown', retryable: false, unsupported: false };
+  if (text.includes('unsupported') || text.includes('unknown decoder') || text.includes('invalid data')) {
+    return { code: 'unsupported_codec', retryable: false, unsupported: true };
+  }
+  if (text.includes('moov not found') || text.includes('moov incomplete')) {
+    return { code: 'moov_missing', retryable: true, unsupported: false };
+  }
+  if (text.includes('timeout') || text.includes('timed out')) {
+    return { code: 'ffmpeg_timeout', retryable: true, unsupported: false };
+  }
+  if (text.includes('ciphertext fetch failed') || text.includes('source unavailable')) {
+    return { code: 'download_failed', retryable: true, unsupported: false };
+  }
+  if (text.includes('output too large')) return { code: 'output_too_large', retryable: true, unsupported: false };
+  if (text.includes('output') || text.includes('probe failed')) {
+    return { code: 'output_invalid', retryable: true, unsupported: false };
+  }
+  if (text.includes('encode failed') || text.includes('ffmpeg')) {
+    return { code: 'encode_failed', retryable: true, unsupported: false };
+  }
+  return { code: 'internal', retryable: true, unsupported: false };
+}
+
+async function writeFailedSidecar(
+  video: PreviewVideoRow,
+  previous: PreviewSidecar | null,
+  detail: string,
+  deps: PreviewServiceDeps,
+): Promise<void> {
+  const nowIso = new Date(deps.now()).toISOString();
+  const next: PreviewSidecar = {
+    version: 2,
+    videoId: video.id,
+    megaNodeId: video.megaNodeId as string,
+    sourceSize: video.fileSize !== null ? Number(video.fileSize) : previous?.sourceSize ?? 1,
+    durationSeconds: video.duration ?? previous?.durationSeconds ?? null,
+    status: 'failed',
+    hover: null,
+    timeline: previous?.timeline ?? null,
+    attempts: (previous?.attempts ?? 0) + 1,
+    lastError: sanitizeFailureDetail(detail),
+    failedAt: nowIso,
+    lastAccessedAt: previous?.lastAccessedAt ?? nowIso,
+    metrics: previous?.metrics ?? null,
+    generationVersion: previewGenerationVersion(),
+  };
+  await writeSidecarAtomic(next).catch(() => {});
 }
 
 /**
- * Generate the hover clip. Tries up to PREVIEW_MAX_ATTEMPTS candidates per
- * run; on total failure records attempts/failedAt in the sidecar so meta
- * stops paying for this video until the cooldown expires.
+ * Generate one compact multi-scene hover montage for a video.
+ *
+ * The flow is bounded end-to-end:
+ *   1. plan representative scenes (short videos get fewer/shorter scenes),
+ *   2. acquire all scene windows in ONE cheap source pass (warm cache →
+ *      local TS prefix → merged MEGA ranges; never the whole video),
+ *   3. brightness/duplicate-gate every scene, retrying small offsets within
+ *      the already-acquired window,
+ *   4. encode the scenes into one silent faststart MP4, validate the bytes,
+ *   5. publish atomically and write the versioned sidecar.
+ *
+ * Exported for the durable worker; the old on-demand single-scene path is
+ * intentionally gone (the montage replaces it for every card preview).
  */
-async function generateHover(video: PreviewVideoRow, deps: PreviewServiceDeps): Promise<HoverOutcome> {
+export async function generateHoverForWorker(
+  video: PreviewVideoRow,
+  deps: PreviewServiceDeps,
+  opts?: { onStage?: (stage: string) => void },
+): Promise<HoverGenerationOutcome> {
   const videoId = video.id;
   const timeoutMs = previewFfmpegTimeoutMs();
-  let lastDetail = 'no candidate produced a usable segment';
+  const version = previewGenerationVersion();
+  const startedAt = deps.now();
   let transferBytes = 0;
   let ffmpegMs = 0;
+  let acquisitionMs = 0;
   const workDir = await createWorkDir(videoId);
+  let sidecar: PreviewSidecar | null = null;
   try {
-    let sidecar = await readSidecar(videoId);
-    if (sidecar && sidecar.status === 'ready' && sidecar.hover) {
-      const clip = await fileReadable(clipPath(videoId));
-      if (clip.ok) return { ok: true, detail: 'already ready' };
-      sidecar = null; // assets vanished (raced eviction): regenerate
-    }
-
-    // Attempt budget (design §7): retried at most PREVIEW_MAX_ATTEMPTS times,
-    // then parked for the cooldown. Expired cooldown resets the budget.
-    let attempts = sidecar?.attempts ?? 0;
-    if (sidecar?.status === 'failed' && sidecar.failedAt) {
-      const age = deps.now() - Date.parse(sidecar.failedAt);
-      if (Number.isFinite(age) && age >= previewFailureCooldownMs()) attempts = 0;
-    }
-    if (attempts >= previewMaxAttempts()) {
-      return { ok: false, detail: 'attempt budget exhausted (cooldown active)' };
-    }
-
-    const owned = ownedVideoOf(video);
-    const fileKey = deps.decryptFileKey(video.fileKeyEncrypted as string);
-    const candidates = candidatePositions(video.duration, previewClipSeconds()).slice(0, previewMaxAttempts());
-    let bestFailure: HoverOutcome | null = null;
-
-    for (const candidate of candidates) {
-      attempts++;
-      let plan: Awaited<ReturnType<typeof resolvePreviewSource>> | null = null;
-      try {
-        plan = await resolvePreviewSource(owned, candidate.t, workDir, fileKey, deps.sourceDeps);
-        transferBytes += plan.transferBytes;
-
-        const tmpOut = path.join(workDir, 'clip.tmp.mp4');
-        let t0 = deps.now();
-        const encoded = await encodeHoverClip({
-          inputPath: plan.path,
-          seekSec: plan.seekSec,
-          clipSeconds: previewClipSeconds(),
-          height: previewClipHeight(),
-          outPath: tmpOut,
-          timeoutMs,
-        });
-        ffmpegMs += deps.now() - t0;
-        if (!encoded.ok) {
-          lastDetail = `encode failed (${encoded.detail})`;
-          await plan.cleanup();
-          plan = null;
-          continue;
+    sidecar = await readSidecar(videoId);
+    if (sidecar) {
+      if (sidecar.generationVersion !== version || !sidecarMatchesRow(sidecar, video)) {
+        // Old-format or changed-source artifact: never serve it as current.
+        await removePreviewAssets(videoId).catch(() => {});
+        sidecar = null;
+      } else if (sidecar.status === 'ready' && sidecar.hover) {
+        const clip = await fileReadable(clipPath(videoId));
+        if (clip.ok) {
+          return { ok: true, detail: 'already ready', metrics: sidecar.metrics ?? undefined };
         }
-
-        t0 = deps.now();
-        const probe = await probeMedia(tmpOut, timeoutMs);
-        ffmpegMs += deps.now() - t0;
-        if (!probe || probe.durationSec === null || probe.durationSec < previewClipMinSeconds()) {
-          lastDetail = probe
-            ? `clip too short (${probe.durationSec?.toFixed(1) ?? '?'}s < ${previewClipMinSeconds()}s)`
-            : 'clip probe failed';
-          await plan.cleanup();
-          plan = null;
-          continue;
-        }
-
-        t0 = deps.now();
-        const means = await probeBrightnessFrames(tmpOut, { timeoutMs });
-        ffmpegMs += deps.now() - t0;
-        const verdict = brightnessVerdict(means);
-        if (verdict !== 'usable') {
-          // Black/unknown segment: keep as best-effort fallback, prefer a
-          // brighter candidate (mirrors the thumbs pickFrame ladder).
-          if (!bestFailure) {
-            bestFailure = { ok: false, detail: `segment rejected (${verdict})` };
-          }
-          lastDetail = `segment rejected (${verdict})`;
-          await plan.cleanup();
-          plan = null;
-          continue;
-        }
-
-        const st = await fs.promises.stat(tmpOut);
-        if (st.size <= 0 || st.size > previewClipMaxFileBytes()) {
-          lastDetail = `clip size out of bounds (${st.size} B)`;
-          await plan.cleanup();
-          plan = null;
-          continue;
-        }
-
-        // Publish atomically within the same filesystem (workDir lives inside
-        // the previews dir): rename over any previous clip, then the sidecar.
-        const published = clipPath(videoId);
-        await fs.promises.rename(tmpOut, published);
-        const durationSec = Math.min(probe.durationSec, previewClipSeconds());
-        const nowIso = new Date(deps.now()).toISOString();
-        const next: PreviewSidecar = {
-          version: 1,
-          videoId,
-          megaNodeId: owned.megaNodeId,
-          sourceSize: owned.fileSize ?? sidecar?.sourceSize ?? 1,
-          durationSeconds: video.duration ?? sidecar?.durationSeconds ?? null,
-          status: 'ready',
-          hover: {
-            startSec: candidate.t,
-            durationSec,
-            width: probe.width,
-            height: probe.height,
-            bytes: st.size,
-            estimated: candidate.estimated,
-          },
-          timeline: sidecar?.timeline ?? null,
-          attempts,
-          lastError: null,
-          failedAt: null,
-          lastAccessedAt: nowIso,
-          metrics: { transferBytes, ffmpegMs: Math.round(ffmpegMs), generatedAt: nowIso },
-        };
-        await writeSidecarAtomic(next);
-        console.log(
-          `${GENERATION_LOG_PREFIX} hover ready video ${videoId} source=${plan.kind} ` +
-            `t=${candidate.t.toFixed(0)}s ${(st.size / 1024).toFixed(0)}KB ` +
-            `mega=${(transferBytes / 1048576).toFixed(1)}MB ffmpeg=${Math.round(ffmpegMs)}ms`,
-        );
-        return { ok: true, detail: 'generated' };
-      } catch (err) {
-        if (err instanceof SourceUnavailableError) {
-          lastDetail = `source unavailable: ${err.message}`;
-        } else {
-          lastDetail = `generation error: ${err instanceof Error ? err.message.slice(0, 120) : typeof err}`;
-          console.warn(`${GENERATION_LOG_PREFIX} hover candidate error video ${videoId}: ${lastDetail}`);
-        }
-      } finally {
-        if (plan) await plan.cleanup().catch(() => {});
+        sidecar = null; // asset vanished (eviction/restart): regenerate
       }
     }
 
-    // All candidates failed: record the failure (bounded retries + cooldown).
+    const owned = ownedVideoOf(video);
+    if (!owned.megaNodeId || !video.fileKeyEncrypted) {
+      return { ok: false, detail: 'source is not playable', errorCode: 'source_unavailable', retryable: false };
+    }
+    const fileKey = deps.decryptFileKey(video.fileKeyEncrypted);
+    const cfg = previewGenerationConfig();
+    const plan = planMontage(video.duration, cfg.sceneCount, cfg.sceneSeconds);
+    if (plan.scenes.length === 0) {
+      return { ok: false, detail: 'no usable scenes', errorCode: 'output_invalid', retryable: false };
+    }
+
+    opts?.onStage?.('acquiring');
+    const acquireStarted = deps.now();
+    let source: Awaited<ReturnType<typeof resolveMontageSources>>;
+    try {
+      source = await resolveMontageSources(
+        owned,
+        plan.scenes.map((scene): MontageSceneRequest => ({
+          index: scene.index,
+          startSec: scene.startSec,
+          durationSec: scene.durationSec,
+        })),
+        workDir,
+        fileKey,
+        deps.sourceDeps,
+      );
+    } catch (err) {
+      const cls = classifyGenerationError(err);
+      return {
+        ok: false,
+        detail: sanitizeFailureDetail(err),
+        errorCode: cls.code,
+        retryable: cls.retryable,
+        unsupported: cls.unsupported,
+      };
+    }
+    acquisitionMs = deps.now() - acquireStarted;
+    transferBytes = source.transferBytes;
+    if (source.segments.length === 0) {
+      return {
+        ok: false,
+        detail: 'no source segment could be acquired',
+        errorCode: 'source_unavailable',
+        retryable: true,
+      };
+    }
+
+    // Source geometry/fps: one probe of the first acquired segment is enough
+    // (all scenes come from the same original). The canvas is never larger
+    // than the source, so low-resolution videos are never upscaled.
+    const probeStarted = deps.now();
+    const sourceProbe = await probeMedia(source.segments[0].path, timeoutMs);
+    ffmpegMs += deps.now() - probeStarted;
+    if (!sourceProbe) {
+      return {
+        ok: false,
+        detail: 'source probe failed',
+        errorCode: 'output_invalid',
+        retryable: false,
+      };
+    }
+    const canvas = montageCanvas(sourceProbe.width, sourceProbe.height, cfg);
+    const fps = outputFps(sourceProbe.fps, cfg.fpsCap);
+
+    opts?.onStage?.('scene-selection');
+    const selected: Array<{
+      scene: MontagePlan['scenes'][number];
+      input: MontageInput;
+      sample: NonNullable<Awaited<ReturnType<typeof probeSceneSample>>>;
+    }> = [];
+    const signatures: number[][] = [];
+    for (const scene of plan.scenes) {
+      const segment = source.segments.find((s) => s.index === scene.index);
+      if (!segment) continue;
+      type SceneSample = NonNullable<Awaited<ReturnType<typeof probeSceneSample>>>;
+      let usable: { input: MontageInput; sample: SceneSample } | null = null;
+      let best: { input: MontageInput; sample: SceneSample } | null = null;
+      for (const alt of sceneAlternatives(scene, video.duration, previewSceneAlternatives())) {
+        const seek = Math.max(0, segment.seekSec + (alt - scene.startSec));
+        const t0 = deps.now();
+        const sample = await probeSceneSample(segment.path, {
+          seekSec: seek,
+          durationSec: scene.durationSec,
+          timeoutMs,
+        });
+        ffmpegMs += deps.now() - t0;
+        if (!sample) continue;
+        const input: MontageInput = { path: segment.path, seekSec: seek, durationSec: scene.durationSec };
+        if (!best) best = { input, sample };
+        const verdict = brightnessVerdict(sample.means);
+        const duplicate = signatures.some((sig) => sceneSignatureDistance(sig, sample.signature) < 2.5);
+        if (verdict === 'usable' && !duplicate) {
+          usable = { input, sample };
+          break;
+        }
+      }
+      const chosen = usable ?? best;
+      if (!chosen) continue;
+      selected.push({ scene, input: chosen.input, sample: chosen.sample });
+      signatures.push(chosen.sample.signature);
+    }
+    if (selected.length === 0) {
+      return {
+        ok: false,
+        detail: 'all candidate scenes were unusable',
+        errorCode: 'output_invalid',
+        retryable: true,
+      };
+    }
+    // Chronological order, independent of the percentage ladder index.
+    selected.sort((a, b) => a.input.seekSec - b.input.seekSec);
+
+    opts?.onStage?.('encoding');
+    const tmpOut = path.join(workDir, 'montage.tmp.mp4');
+    const encodeStarted = deps.now();
+    const encoded = await encodeMontage({
+      inputs: selected.map((s) => s.input),
+      width: canvas.width,
+      height: canvas.height,
+      fps,
+      bitrateKbps: cfg.bitrateKbps,
+      outPath: tmpOut,
+      timeoutMs,
+    });
+    ffmpegMs += deps.now() - encodeStarted;
+    if (!encoded.ok) {
+      const cls = classifyGenerationError(encoded.detail);
+      return {
+        ok: false,
+        detail: `encode failed (${sanitizeFailureDetail(encoded.detail)})`,
+        errorCode: cls.code,
+        retryable: cls.retryable,
+        unsupported: cls.unsupported,
+      };
+    }
+
+    const validateStarted = deps.now();
+    const selectedDuration = selected.reduce((sum, s) => sum + s.input.durationSec, 0);
+    const validated = await validateMontageFile(tmpOut, {
+      minDurationSec: Math.max(0.5, selectedDuration * 0.5),
+      maxBytes: previewMontageMaxFileBytes(),
+      timeoutMs,
+    });
+    ffmpegMs += deps.now() - validateStarted;
+    if (!validated.ok) {
+      const cls = classifyGenerationError(validated.reason);
+      return {
+        ok: false,
+        detail: `output invalid (${sanitizeFailureDetail(validated.reason)})`,
+        errorCode: cls.code,
+        retryable: cls.retryable,
+        unsupported: cls.unsupported,
+      };
+    }
+
+    opts?.onStage?.('publishing');
+    await fs.promises.rename(tmpOut, clipPath(videoId));
     const nowIso = new Date(deps.now()).toISOString();
-    const parked = attempts >= previewMaxAttempts();
+    const scenes = selected.map((s) => ({
+      startSec: s.scene.startSec,
+      durationSec: s.input.durationSec,
+      sourceSeekSec: s.input.seekSec,
+    }));
+    const metrics: PreviewJobMetrics = {
+      transferBytes,
+      acquisitionMs: Math.round(acquisitionMs),
+      ffmpegMs: Math.round(ffmpegMs),
+      totalMs: Math.round(deps.now() - startedAt),
+      outputBytes: validated.bytes,
+      scenes,
+      sourceKind: source.kind,
+      generationVersion: version,
+    };
     const next: PreviewSidecar = {
-      version: 1,
+      version: 2,
       videoId,
       megaNodeId: owned.megaNodeId,
       sourceSize: owned.fileSize ?? sidecar?.sourceSize ?? 1,
       durationSeconds: video.duration ?? sidecar?.durationSeconds ?? null,
-      status: 'failed',
-      hover: null,
+      status: 'ready',
+      hover: {
+        startSec: scenes[0]?.startSec ?? 0,
+        durationSec: validated.durationSec ?? selectedDuration,
+        width: validated.width,
+        height: validated.height,
+        bytes: validated.bytes,
+        estimated: plan.estimated,
+        generationVersion: version,
+        scenes,
+        faststart: validated.faststart,
+      },
       timeline: sidecar?.timeline ?? null,
-      attempts,
-      lastError: bestFailure ? `${bestFailure.detail}; ${lastDetail}` : lastDetail,
-      failedAt: parked ? nowIso : null,
-      lastAccessedAt: sidecar?.lastAccessedAt ?? nowIso,
-      metrics: sidecar?.metrics ?? null,
+      attempts: 0,
+      lastError: null,
+      failedAt: null,
+      lastAccessedAt: nowIso,
+      metrics: {
+        transferBytes,
+        acquisitionMs: Math.round(acquisitionMs),
+        ffmpegMs: Math.round(ffmpegMs),
+        totalMs: Math.round(deps.now() - startedAt),
+        sourceKind: source.kind,
+        generatedAt: nowIso,
+      },
+      generationVersion: version,
     };
     await writeSidecarAtomic(next);
-    return { ok: false, detail: next.lastError ?? lastDetail };
+    console.log(
+      `${GENERATION_LOG_PREFIX} montage ready video ${videoId} scenes=${scenes.length} ` +
+        `source=${source.kind} ${(validated.bytes / 1024).toFixed(0)}KB ` +
+        `mega=${(transferBytes / 1048576).toFixed(1)}MB ffmpeg=${Math.round(ffmpegMs)}ms`,
+    );
+    return { ok: true, detail: 'generated', metrics };
+  } catch (err) {
+    const cls = classifyGenerationError(err);
+    await writeFailedSidecar(video, sidecar, sanitizeFailureDetail(err), deps);
+    return {
+      ok: false,
+      detail: sanitizeFailureDetail(err),
+      errorCode: cls.code,
+      retryable: cls.retryable,
+      unsupported: cls.unsupported,
+    };
   } finally {
     await removeWorkDir(workDir);
   }
@@ -437,7 +656,7 @@ async function generateTimeline(video: PreviewVideoRow, deps: PreviewServiceDeps
     await fs.promises.rename(tmpOut, spritePath(videoId));
     const nowIso = new Date(deps.now()).toISOString();
     const base: PreviewSidecar = sidecar ?? {
-      version: 1,
+      version: 2,
       videoId,
       megaNodeId: video.megaNodeId as string,
       sourceSize,
@@ -450,6 +669,7 @@ async function generateTimeline(video: PreviewVideoRow, deps: PreviewServiceDeps
       failedAt: null,
       lastAccessedAt: nowIso,
       metrics: null,
+      generationVersion: previewGenerationVersion(),
     };
     await writeSidecarAtomic({
       ...base,
@@ -492,21 +712,16 @@ function heapAdmissionRefused(): boolean {
 
 function enqueueGeneration(
   video: PreviewVideoRow,
-  kind: 'hover' | 'timeline',
   signal: AbortSignal | undefined,
   deps: PreviewServiceDeps,
 ): 'started' | 'queued' | 'rejected' {
-  const key = `${kind}:${video.id}`;
+  const key = `timeline:${video.id}`;
   if (deps.queue.has(key)) return 'started';
   if (heapAdmissionRefused()) return 'rejected';
   // IMPORTANT: admit only. The meta endpoint must answer in milliseconds
   // with `generating`; waiting for the job outcome made meta block for the
   // entire MEGA download + ffmpeg run (and the browser fetch timed out).
-  return deps.queue.enqueueNow(
-    key,
-    () => (kind === 'hover' ? generateHover(video, deps) : generateTimeline(video, deps)),
-    signal ?? null,
-  );
+  return deps.queue.enqueueNow(key, () => generateTimeline(video, deps), signal ?? null);
 }
 
 // ---------------------------------------------------------------------------
@@ -525,13 +740,6 @@ function parseWant(raw: string | null | undefined): { hover: boolean; timeline: 
   return { hover: parts.includes('hover'), timeline: parts.includes('timeline') };
 }
 
-function cooldownActive(sidecar: PreviewSidecar, deps: PreviewServiceDeps): boolean {
-  if (sidecar.status !== 'failed' || !sidecar.failedAt) return false;
-  if (sidecar.attempts < previewMaxAttempts()) return false; // budget left: retry allowed
-  const age = deps.now() - Date.parse(sidecar.failedAt);
-  return Number.isFinite(age) && age < previewFailureCooldownMs();
-}
-
 export async function handlePreviewMeta(
   rawUserId: string | null,
   videoIdParam: string,
@@ -544,7 +752,8 @@ export async function handlePreviewMeta(
   const video = auth.video;
 
   const want = parseWant(request.want);
-  const base: MetaResponse = { videoId, status: 'unavailable', hover: null, timeline: null };
+  const version = previewGenerationVersion();
+  const base: MetaResponse = { videoId, status: 'unavailable', hover: null, errorCode: null, reason: null, timeline: null };
 
   if (previewDisabled()) {
     return NextResponse.json(
@@ -558,20 +767,21 @@ export async function handlePreviewMeta(
     );
   }
 
-  // Sidecar: read + validate identity (a changed source invalidates itself).
+  // Sidecar: read + validate identity and generation version. A changed
+  // source or old-format hover artifact invalidates itself; a legacy v1
+  // sidecar was already migrated (timeline preserved) by readSidecar.
   let sidecar = await readSidecar(videoId);
-  if (sidecar && !sidecarMatchesRow(sidecar, video)) {
+  if (sidecar && (sidecar.generationVersion !== version || !sidecarMatchesRow(sidecar, video))) {
     sidecar = null;
     await removePreviewAssets(videoId).catch(() => {});
   }
-  const hoverInFlight = deps.queue.has(`hover:${videoId}`);
   const timelineInFlight = deps.queue.has(`timeline:${videoId}`);
 
-  // ---- hover ----
+  // ---- hover (durable PostgreSQL backlog) ----
   let hoverStatus: AssetReportStatus = 'unavailable';
-  let hoverCooldown = false;
   if (want.hover) {
-    const clip = sidecar?.status === 'ready' && sidecar.hover ? await fileReadable(clipPath(videoId)) : { ok: false, size: 0 };
+    const hoverReady = sidecar?.status === 'ready' && sidecar.hover && sidecar.generationVersion === version;
+    const clip = hoverReady ? await fileReadable(clipPath(videoId)) : { ok: false, size: 0 };
     if (clip.ok && sidecar?.hover) {
       hoverStatus = 'ready';
       base.hover = {
@@ -581,21 +791,56 @@ export async function handlePreviewMeta(
         width: sidecar.hover.width,
         height: sidecar.hover.height,
         estimated: sidecar.hover.estimated,
+        scenes: sidecar.hover.scenes ?? [],
       };
       void touchPreview(videoId);
-    } else if (hoverInFlight) {
-      hoverStatus = 'generating';
-    } else if (sidecar && cooldownActive(sidecar, deps)) {
-      hoverStatus = 'unavailable';
-      hoverCooldown = true;
     } else {
-      // Not ready (or a ready sidecar without bytes — stale): enqueue a run.
-      const outcome = enqueueGeneration(video, 'hover', request.signal, deps);
-      hoverStatus = outcome === 'rejected' ? 'rejected' : 'generating';
+      const fingerprint = sourceFingerprintFor({
+        megaNodeId: video.megaNodeId,
+        fileSize: video.fileSize,
+      });
+      const ensure = deps.ensureJob ?? ((id, fp, priority, opts) => ensurePreviewJob({
+        videoId: id,
+        sourceFingerprint: fp,
+        priority,
+        retryEligible: opts?.retryEligible,
+        artifactValid: opts?.artifactValid,
+      }));
+      const job = await ensure(videoId, fingerprint, previewPriorityHover(), {
+        retryEligible: true,
+        artifactValid: false,
+      });
+      deps.wakeWorker?.();
+      if (job.status === 'completed') {
+        // A completed row without a readable current artifact means the
+        // local preview directory was ephemeral/cleared: requeue safely.
+        const requeue = deps.requeueMissingArtifact ?? requeueMissingPreviewJob;
+        if (job.jobId) await requeue(job.jobId).catch(() => {});
+        hoverStatus = 'pending';
+        base.errorCode = 'artifact_missing';
+        base.reason = 'Preview artifact missing; requeued.';
+      } else if (job.status === 'generating') {
+        hoverStatus = 'generating';
+        base.reason = 'Preview is being generated.';
+      } else if (job.status === 'queued') {
+        hoverStatus = 'queued';
+        base.reason = 'Waiting for a preview worker slot.';
+      } else if (job.status === 'pending') {
+        hoverStatus = 'pending';
+        base.reason = 'Preparing preview.';
+      } else if (job.status === 'unsupported') {
+        hoverStatus = 'unsupported';
+        base.errorCode = 'unsupported_codec';
+        base.reason = 'This source cannot be previewed safely.';
+      } else {
+        hoverStatus = 'failed';
+        base.errorCode = 'generation_failed';
+        base.reason = 'Preview generation failed.';
+      }
     }
     base.status = hoverStatus;
   } else {
-    base.status = hoverInFlight ? 'generating' : 'unavailable';
+    base.status = 'unavailable';
   }
 
   // ---- timeline ----
@@ -622,11 +867,8 @@ export async function handlePreviewMeta(
       // enqueue nothing — the first full playback warms the cache.
       timelineStatus = 'unavailable';
       reason = 'source-not-local';
-    } else if (hoverCooldown && sidecar && cooldownActive(sidecar, deps)) {
-      timelineStatus = 'unavailable';
-      reason = 'cooldown';
     } else {
-      const outcome = enqueueGeneration(video, 'timeline', request.signal, deps);
+      const outcome = enqueueGeneration(video, request.signal, deps);
       if (outcome === 'rejected') {
         timelineStatus = 'unavailable';
         reason = 'busy';
@@ -703,7 +945,13 @@ export async function handlePreviewAsset(
   if (!sidecar || !sidecarMatchesRow(sidecar, auth.video) || sidecar.status !== 'ready') {
     return jsonError(404, 'Preview not available.', { status: 'unavailable' });
   }
-  if (kind === 'clip' && !sidecar.hover) return jsonError(404, 'Preview not available.', { status: 'unavailable' });
+  if (kind === 'clip') {
+    // Only current-generation montages may be served. This is the hard
+    // guarantee that an old/stale artifact is never exposed as ready.
+    if (!sidecar.hover || sidecar.generationVersion !== previewGenerationVersion()) {
+      return jsonError(404, 'Preview not available.', { status: 'unavailable' });
+    }
+  }
   if (kind === 'sprite' && !sidecar.timeline) return jsonError(404, 'Preview not available.', { status: 'unavailable' });
 
   const absPath = kind === 'clip' ? clipPath(videoId) : spritePath(videoId);

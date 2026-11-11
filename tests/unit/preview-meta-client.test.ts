@@ -92,6 +92,50 @@ test('wait loop is bounded by its timeout', async () => {
   assert.ok(Date.now() - start >= 20);
 });
 
+test('detailed wait reports each real generation state to the card', async () => {
+  mockMetaSequence([
+    { status: 'pending', hover: null },
+    { status: 'queued', hover: null },
+    { status: 'generating', hover: null },
+    { status: 'ready', hover: { url: '/api/preview/107' } },
+  ]);
+  const seen: string[] = [];
+  const result = await client.waitForCardHoverPreviewDetailed(107, () => true, {
+    intervalMs: 1,
+    timeoutMs: 200,
+    onStatus: (status) => seen.push(status),
+  });
+  assert.equal(result.url, '/api/preview/107');
+  assert.equal(result.status, 'ready');
+  assert.equal(result.timedOut, false);
+  assert.deepEqual(seen, ['pending', 'queued', 'generating', 'ready']);
+});
+
+test('detailed wait surfaces failed/unsupported as terminal (no endless spinner)', async () => {
+  for (const status of ['failed', 'unsupported', 'unavailable', 'rejected']) {
+    const mock = mockMetaSequence([{ status, hover: null }]);
+    const result = await client.waitForCardHoverPreviewDetailed(108, () => true, {
+      intervalMs: 1,
+      timeoutMs: 200,
+    });
+    assert.equal(result.url, null, status);
+    assert.equal(result.status, status);
+    assert.equal(result.timedOut, false);
+    assert.equal(mock.calls(), 1, `${status} must not be polled again`);
+  }
+});
+
+test('detailed wait flags a timeout so the card can drop its loader', async () => {
+  mockMetaSequence([{ status: 'generating', hover: null }]);
+  const result = await client.waitForCardHoverPreviewDetailed(109, () => true, {
+    intervalMs: 5,
+    timeoutMs: 25,
+  });
+  assert.equal(result.url, null);
+  assert.equal(result.timedOut, true);
+  assert.equal(result.status, 'generating');
+});
+
 test('network failure during the wait stops the loop (fallback path)', async () => {
   globalThis.fetch = (async () => {
     throw new Error('network down');
