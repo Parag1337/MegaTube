@@ -354,6 +354,8 @@ chain in this repo.
 | `scripts/bench-db.mts` | new query-count/wall-time harness |
 | `scripts/measure-one.mjs` | `--thumb-base` flag (fixture ids) |
 | `scripts/seed-perf.mts` | cyclic creator assignment (realistic N+1 exposure) |
+| `scripts/bench-playback.mts` | local playback-engine benchmark harness (added unchanged apart from an unused-import cleanup; used for the Phase 4 numbers) |
+| `scripts/auth-prod.mjs` | local Playwright auth smoke script (dev server `:3101`) |
 | `.gitignore` | ignore benchmark build outputs and Playwright artifacts |
 | `docs/PHASE-3-4-PERFORMANCE-REPORT.md` | this report |
 
@@ -404,8 +406,9 @@ feature flag.
   (imports a non-existent `handlers` export and breaks `next build`) was
   parked at `/tmp/opencode/user-wip-backup/[...nextauth]` so the repo could
   build. It was **not** deleted and is not part of this commit.
-- `scripts/auth-prod.mjs` and `scripts/bench-playback.mts` are untracked
-  files from earlier local work; they are intentionally left untracked.
+- `scripts/auth-prod.mjs` and `scripts/bench-playback.mts` are local
+  harnesses committed as-is; they require a running dev server / local
+  MEGA-free fixture respectively and are not part of the app runtime.
 - `test-results/`, `.next-perf/` and `.tmp-bench/` are local
   build/test/benchmark artifacts (gitignored in this commit).
 
@@ -424,8 +427,6 @@ DATABASE_URL='postgresql://megatube:megatube-dev-only@localhost:5433/megatube?sc
   npx tsx scripts/bench-db.mts --runs 5
 
 # 3. playback engine bench (fixture is generated locally, no MEGA account)
-#    note: scripts/bench-playback.mts is a local harness left untracked in
-#    this worktree (user-created WIP); it was used as-is for the numbers above
 npx tsx scripts/bench-playback.mts --seconds 60 --bitrate-k 3000
 
 # 4. HTTP comparison at simulated ~400 ms DB RTT
