@@ -1,6 +1,7 @@
 import { randomBytes } from 'crypto';
 import { prisma } from './db';
 import type { UserRecord } from './auth';
+import { TtlMemo, authMemoTtlMs } from './user-memo';
 
 // NOTE: @clerk/nextjs/server is imported lazily inside getCurrentMegaUser
 // so that resolveMegaUserForClerk stays importable in plain unit tests
@@ -101,6 +102,20 @@ export async function resolveMegaUserForClerk(
  *     converted into a misleading signed-out state during a database
  *     outage.
  */
+/**
+ * Clerk user id -> MegaTube user memo (short TTL + in-flight sharing).
+ * Same rationale as the legacy session memo in lib/auth.ts: one page load
+ * issues ~50 auth lookups. The memo key is the Clerk identity, the value is
+ * the immutable MegaTube user projection. Linking/unlinking is rare and
+ * runs THROUGH this function (whose fresh run re-populates the memo);
+ * disconnect/reconnect flows call it again. TTL default 10s, 0 disables.
+ */
+const clerkUserMemo = new TtlMemo<UserRecord>(authMemoTtlMs());
+
+export function clearClerkUserMemoForTests(): void {
+  clerkUserMemo.clear();
+}
+
 export async function getCurrentMegaUser(): Promise<UserRecord | null> {
   // 1. Clerk session id only (cheap, no Clerk Backend API call).
   let clerkUserId: string;
@@ -116,19 +131,28 @@ export async function getCurrentMegaUser(): Promise<UserRecord | null> {
     return null;
   }
 
-  // 2. Link lookup — a Prisma/pg failure must NOT read as "signed out".
+  // 2. Memoized link lookup. DB failures inside still propagate (honest
+  //    5xx) - the memo only shortcuts repeated READS, never failure modes.
+  return clerkUserMemo.resolve(`clerk:${clerkUserId}`, () =>
+    resolveMegaUserForClerkBySession(clerkUserId),
+  );
+}
+
+/**
+ * Resolve the MegaTube user for an ALREADY-VERIFIED Clerk identity:
+ * direct link lookup first; on a miss, fetch the Clerk profile for
+ * email-based linking. A Clerk Backend API failure here is an auth-side
+ * failure (identity known, email not) -> null, preserving the legacy
+ * fallback. The DB mapping stays OUTSIDE any catch: a database failure
+ * must propagate (honest 5xx), never be converted into a signed-out state.
+ */
+async function resolveMegaUserForClerkBySession(clerkUserId: string): Promise<UserRecord | null> {
   const linked = await prisma.user.findUnique({
     where: { clerkUserId },
     select: SELECT,
   });
   if (linked) return linked;
 
-  // 3. Unlinked: fetch the Clerk profile for email-based linking. A Clerk
-  //    Backend API failure here is an auth-side failure (the identity is
-  //    known but the email is not) -> null, preserving the legacy fallback.
-  //    The DB mapping below stays OUTSIDE this catch: a database failure
-  //    inside resolveMegaUserForClerk must propagate (honest 5xx), never be
-  //    converted into a signed-out state.
   let email: string | null = null;
   try {
     const { currentUser } = await import('@clerk/nextjs/server');

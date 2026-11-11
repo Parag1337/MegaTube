@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Perf investigation: allows a second dev server (separate distDir) so
+  // benchmarks run against local Postgres without touching the running one.
+  distDir: process.env.NEXT_DIST_DIR ?? '.next',
   /**
    * Dev-only: allow the dev server's internal resources (HMR websocket,
    * static chunks) to be requested from the LAN/Tailscale origins used to

@@ -1,6 +1,7 @@
 import { randomBytes, pbkdf2 as nodePbkdf2 } from 'crypto';
 import { cookies, headers } from 'next/headers';
 import { prisma } from './db';
+import { TtlMemo, authMemoTtlMs } from './user-memo';
 
 const SESSION_COOKIE = 'session_token';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
@@ -128,6 +129,19 @@ export async function createSession(userId: string): Promise<string> {
   return token;
 }
 
+/**
+ * Session-token -> UserRecord memo (short TTL + in-flight sharing): one
+ * page load issues ~50 auth lookups (24 thumbnails x 2); each is a DB round
+ * trip. Invalidated on logout (see logout()). TTL default 10s - a session
+ * deleted without logout() stays accepted for at most this long (documented
+ * in docs/LOCALHOST-PERFORMANCE-INVESTIGATION.md). 0 disables.
+ */
+const sessionMemo = new TtlMemo<UserRecord>(authMemoTtlMs());
+
+export function clearSessionMemoForTests(): void {
+  sessionMemo.clear();
+}
+
 export async function getCurrentUser(): Promise<UserRecord | null> {
   // Clerk is the website authentication provider. A signed-in Clerk user
   // resolves (linking by email on first sign-in, so existing MegaTube data
@@ -143,19 +157,23 @@ export async function getCurrentUser(): Promise<UserRecord | null> {
 
   if (!token) return null;
 
-  const session = await prisma.session.findUnique({
-    where: { token },
-    include: { user: { select: { id: true, email: true, createdAt: true } } },
+  const session = await sessionMemo.resolve(`legacy:${token}`, async () => {
+    const row = await prisma.session.findUnique({
+      where: { token },
+      include: { user: { select: { id: true, email: true, createdAt: true } } },
+    });
+
+    if (!row) return null;
+
+    if (row.expiresAt < new Date()) {
+      await prisma.session.delete({ where: { token } }).catch(() => {});
+      return null;
+    }
+
+    return row.user;
   });
 
-  if (!session) return null;
-
-  if (session.expiresAt < new Date()) {
-    await prisma.session.delete({ where: { token } }).catch(() => {});
-    return null;
-  }
-
-  return session.user;
+  return session;
 }
 
 export async function invalidateSession(token: string): Promise<void> {
@@ -187,6 +205,7 @@ export async function logout(): Promise<void> {
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE)?.value;
   if (token) {
+    sessionMemo.invalidate(`legacy:${token}`);
     await invalidateSession(token);
   }
   await clearSessionCookie();
