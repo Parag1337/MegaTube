@@ -90,32 +90,58 @@ export async function resolveMegaUserForClerk(
 
 /**
  * Server-side helper: return the MegaTube user for the current Clerk
- * session, or null when signed out / unmappable. Null-safe: any Clerk
- * failure (missing keys, network) resolves to null so callers can fall
- * back to the legacy session cookie.
+ * session, or null when signed out / unmappable.
+ *
+ * Failure boundaries are DISTINGUISHED deliberately:
+ *   - Clerk identity failures (missing keys, Clerk outage, no session) mean
+ *     "we cannot tell who this visitor is" -> null, so callers fall back to
+ *     the legacy session cookie (previous behavior preserved).
+ *   - DATABASE failures (Prisma/pg) are NOT auth failures: they are
+ *     rethrown so the request fails with a 5xx instead of being silently
+ *     converted into a misleading signed-out state during a database
+ *     outage.
  */
 export async function getCurrentMegaUser(): Promise<UserRecord | null> {
+  // 1. Clerk session id only (cheap, no Clerk Backend API call).
+  let clerkUserId: string;
   try {
-    const { auth, currentUser } = await import('@clerk/nextjs/server');
+    const { auth } = await import('@clerk/nextjs/server');
     const { userId } = await auth();
     if (!userId) return null;
-
-    const linked = await prisma.user.findUnique({
-      where: { clerkUserId: userId },
-      select: SELECT,
-    });
-    if (linked) return linked;
-
-    const clerkUser = await currentUser();
-    const email =
-      clerkUser?.primaryEmailAddress?.emailAddress ??
-      clerkUser?.emailAddresses?.[0]?.emailAddress ??
-      null;
-    return await resolveMegaUserForClerk(userId, email);
+    clerkUserId = userId;
   } catch (err) {
     console.warn(
-      `[clerk] getCurrentMegaUser failed, treating as signed out: ${err instanceof Error ? err.message.slice(0, 120) : typeof err}`,
+      `[clerk] getCurrentMegaUser session lookup failed, treating as signed out: ${err instanceof Error ? err.message.slice(0, 120) : typeof err}`,
     );
     return null;
   }
+
+  // 2. Link lookup — a Prisma/pg failure must NOT read as "signed out".
+  const linked = await prisma.user.findUnique({
+    where: { clerkUserId },
+    select: SELECT,
+  });
+  if (linked) return linked;
+
+  // 3. Unlinked: fetch the Clerk profile for email-based linking. A Clerk
+  //    Backend API failure here is an auth-side failure (the identity is
+  //    known but the email is not) -> null, preserving the legacy fallback.
+  //    The DB mapping below stays OUTSIDE this catch: a database failure
+  //    inside resolveMegaUserForClerk must propagate (honest 5xx), never be
+  //    converted into a signed-out state.
+  let email: string | null = null;
+  try {
+    const { currentUser } = await import('@clerk/nextjs/server');
+    const clerkUser = await currentUser();
+    email =
+      clerkUser?.primaryEmailAddress?.emailAddress ??
+      clerkUser?.emailAddresses?.[0]?.emailAddress ??
+      null;
+  } catch (err) {
+    console.warn(
+      `[clerk] getCurrentMegaUser profile lookup failed, treating as signed out: ${err instanceof Error ? err.message.slice(0, 120) : typeof err}`,
+    );
+    return null;
+  }
+  return await resolveMegaUserForClerk(clerkUserId, email);
 }

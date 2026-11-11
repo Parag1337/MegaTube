@@ -317,10 +317,44 @@ test('runtime boundary: client components never import the Node-only network mod
     }
     return out;
   };
-  const files = [...glob('components'), ...glob('app')].filter((f) => !f.includes('api/media'));
+  // Intent of this test: files that can be bundled for the BROWSER (client
+  // components, pages, layouts) must never import the Node-only network
+  // module (node:dns/node:net do not exist in Edge/browser bundles).
+  //
+  // Server API routes (app/api/**) are NOT client-reachable: they execute
+  // exclusively on the server, and the ones that need the Node-only network
+  // stack legitimately import net-resilience. Each such route is instead
+  // required below to pin `runtime = 'nodejs'` so it can never be evaluated
+  // in the Edge runtime (that assertion is the server-side half of this
+  // boundary — the old blanket exclusion of only api/media misfired when the
+  // download route adopted the keep-alive fetcher).
+  const files = [...glob('components'), ...glob('app')].filter((f) => !/app[\\/]api[\\/]/.test(f));
   for (const f of files) {
     const src = readFileSync(f, 'utf8');
     assert.ok(!src.includes('net-resilience'), `client/server-component file must not import net-resilience: ${f}`);
     assert.ok(!/from 'node:dns'|from 'node:net'/.test(src), `client-reachable file must not import node:dns|node:net: ${f}`);
+  }
+});
+
+test('runtime boundary: every app/api route importing net-resilience pins the Node.js runtime', () => {
+  const glob = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir, { withFileTypes: true }) as Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) out.push(...glob(p));
+      else if (/\.ts$/.test(e.name)) out.push(p);
+    }
+    return out;
+  };
+  const routes = glob('app/api').filter((f) => f.endsWith('route.ts'));
+  assert.ok(routes.length > 0, 'sanity: app/api routes were discovered');
+  for (const f of routes) {
+    const src = readFileSync(f, 'utf8');
+    if (!src.includes('net-resilience')) continue;
+    assert.match(
+      src,
+      /export const runtime = 'nodejs'/,
+      `route importing the Node-only network module must pin runtime='nodejs': ${f}`,
+    );
   }
 });

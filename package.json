@@ -8,12 +8,12 @@
     "start": "next start",
     "lint": "eslint",
     "keygen": "tsx scripts/keygen.ts",
-    "test": "tsx --test tests/**/*.test.ts",
-    "test:unit": "tsx --test tests/unit/**/*.test.ts",
-    "test:integration": "tsx --test tests/integration/**/*.test.ts"
+    "test": "DATABASE_URL=\"${DATABASE_URL:-postgresql://megatube:megatube-dev-only@localhost:5433/megatube?schema=public}\" tsx --test tests/**/*.test.ts",
+    "test:unit": "DATABASE_URL=\"${DATABASE_URL:-postgresql://megatube:megatube-dev-only@localhost:5433/megatube?schema=public}\" tsx --test tests/unit/**/*.test.ts",
+    "test:integration": "DATABASE_URL=\"${DATABASE_URL:-postgresql://megatube:megatube-dev-only@localhost:5433/megatube?schema=public}\" tsx --test tests/integration/**/*.test.ts"
   },
   "dependencies": {
-    "@clerk/nextjs": "^7.9.2",
+    "@clerk/nextjs": "^7.9.4",
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
     "@vidstack/react": "^1.15.6",

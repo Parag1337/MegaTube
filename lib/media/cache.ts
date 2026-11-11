@@ -342,6 +342,85 @@ export async function evictMediaCache(options?: {
 }
 
 // ---------------------------------------------------------------------------
+// Read-only cache statistics (diagnostics endpoint; never mutates state)
+// ---------------------------------------------------------------------------
+
+export interface MediaCacheStats {
+  dir: string;
+  /** Completed cache entries (<id>.mp4) with a matching readable sidecar. */
+  entries: number;
+  /** Total bytes of completed cache entries. */
+  entryBytes: number;
+  /** Entries whose sidecar is missing/disagreeing (unservable until reclaimed). */
+  staleEntries: number;
+  /** Bytes held by <id>.mp4 files with no valid sidecar (stale included). */
+  staleBytes: number;
+  /** Temp media footprint (*.ts.part / *.live.spool / *.part.mp4) right now. */
+  tempBytes: number;
+  tempFiles: number;
+  maxBytes: number;
+}
+
+/** Scan the cache directory WITHOUT evicting or touching anything. */
+export async function mediaCacheStats(): Promise<MediaCacheStats> {
+  const dir = mediaCacheDir();
+  const stats: MediaCacheStats = {
+    dir,
+    entries: 0,
+    entryBytes: 0,
+    staleEntries: 0,
+    staleBytes: 0,
+    tempBytes: 0,
+    tempFiles: 0,
+    maxBytes: mediaCacheMaxBytes(),
+  };
+  let names: string[];
+  try {
+    names = await fs.promises.readdir(dir);
+  } catch {
+    return stats; // no cache dir yet
+  }
+  for (const name of names) {
+    const id = parseVideoId(name);
+    if (id === null) {
+      if (TEMP_NAME_RE.test(name)) {
+        try {
+          const st = await fs.promises.stat(path.join(dir, name));
+          if (st.isFile()) {
+            stats.tempBytes += st.size;
+            stats.tempFiles++;
+          }
+        } catch {
+          // raced deletion - ignore
+        }
+      }
+      continue;
+    }
+    try {
+      const st = await fs.promises.stat(path.join(dir, name));
+      if (!st.isFile() || st.size <= 0) continue;
+      let valid = false;
+      try {
+        const sidecar = JSON.parse(await fs.promises.readFile(sidecarPath(id), 'utf8')) as CacheSidecar;
+        valid = typeof sidecar.megaNodeId === 'string' && sidecar.outputSize === st.size;
+      } catch {
+        valid = false;
+      }
+      if (valid) {
+        stats.entries++;
+        stats.entryBytes += st.size;
+      } else {
+        stats.staleEntries++;
+        stats.staleBytes += st.size;
+      }
+    } catch {
+      // raced deletion - ignore
+    }
+  }
+  return stats;
+}
+
+// ---------------------------------------------------------------------------
 // Background scheduling (amortized: never on the playback hot path)
 // ---------------------------------------------------------------------------
 

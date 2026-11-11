@@ -296,7 +296,12 @@ const UPSTREAM_STATUS_BACKOFF_MS = 800;
  * key. HTTP Range requests are supported for seeking.
  */
 
-function parseRange(range: string | null, size: number): { start: number; end: number } | null | 'invalid' {
+/** Parse an HTTP Range header against `size`.
+ *  Returns null (no/ignored Range), { start, end } (inclusive, clamped), or
+ *  'invalid' (malformed/unsatisfiable — the caller maps to 416).
+ *  Exported for unit tests: Range parsing is shared contract for the direct,
+ *  warm-cache and 416 paths. */
+export function parseRange(range: string | null, size: number): { start: number; end: number } | null | 'invalid' {
   if (!range) return null; // full resource
   const m = range.match(/^bytes=(\d*)-(\d*)$/);
   if (!m) return 'invalid';

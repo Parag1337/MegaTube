@@ -1081,6 +1081,29 @@ export function getLiveRemuxStats(): { active: number; videoIds: number[] } {
 }
 
 /**
+ * Numeric-only diagnostic view of one live job (observability endpoint).
+ * Deliberately exposes gauges and state flags ONLY — never URLs, keys,
+ * buffers, or filesystem paths that could carry node handles.
+ */
+export function describeLiveRemuxJob(videoId: number, now: number): Record<string, unknown> | null {
+  const job = liveJobs.get(videoId);
+  if (!job) return null;
+  return {
+    videoId,
+    state: job.settled ? 'settled' : job.cancelling ? 'cancelling' : job.dying ? 'dying' : 'running',
+    ageMs: now - job.xStartedAt,
+    broadcastBytes: job.xBroadcastBytes,
+    spoolBytes: job.spoolBytes,
+    initPublished: job.initSegment !== null,
+    initSpoolOffset: job.initSpoolOffset,
+    subscribers: job.subscribers.size,
+    joinedCount: job.xJoinedCount,
+    liveEnded: job.liveEnded,
+    liveErrorName: job.liveError instanceof Error ? job.liveError.name : job.liveError ? typeof job.liveError : null,
+  };
+}
+
+/**
  * Wake every registered spool-offset waiter. Each waiter re-checks the
  * frontier against its target and re-registers itself while unsatisfied, so
  * waking early or often is harmless; never waking strands seekers. Called
@@ -1848,7 +1871,12 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
           initAccum = [];
         };
         ffOut.on('data', (c: Buffer) => {
-          const chunk = Buffer.from(c);
+          // No Buffer.from copy here: Node allocates a fresh Buffer for every
+          // stdout 'data' chunk (never reused), and each consumer (spool
+          // appendFile, subscriber wake) either serializes the bytes
+          // immediately or reads them back from the spool file. Copying every
+          // chunk only doubled allocation churn in the hot path.
+          const chunk = c;
           if (!initPublished) {
             initAccum.push(chunk);
             initLen += chunk.length;
