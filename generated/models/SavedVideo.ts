@@ -798,7 +798,7 @@ export type $SavedVideoPayload<ExtArgs extends runtime.Types.Extensions.Internal
 export type SavedVideoGetPayload<S extends boolean | null | undefined | SavedVideoDefaultArgs> = runtime.Types.Result.GetResult<Prisma.$SavedVideoPayload, S>
 
 export type SavedVideoCountArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> =
-  Omit<SavedVideoFindManyArgs, 'select' | 'include' | 'distinct' | 'omit'> & {
+  Omit<SavedVideoFindManyArgs, 'select' | 'include' | 'distinct' | 'omit' | 'relationLoadStrategy'> & {
     select?: SavedVideoCountAggregateInputType | true
   }
 
@@ -1246,6 +1246,7 @@ export type SavedVideoFindUniqueArgs<ExtArgs extends runtime.Types.Extensions.In
    * Filter, which SavedVideo to fetch.
    */
   where: Prisma.SavedVideoWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1268,6 +1269,7 @@ export type SavedVideoFindUniqueOrThrowArgs<ExtArgs extends runtime.Types.Extens
    * Filter, which SavedVideo to fetch.
    */
   where: Prisma.SavedVideoWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1320,6 +1322,7 @@ export type SavedVideoFindFirstArgs<ExtArgs extends runtime.Types.Extensions.Int
    * Filter by unique combinations of SavedVideos.
    */
   distinct?: Prisma.SavedVideoScalarFieldEnum | Prisma.SavedVideoScalarFieldEnum[]
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1372,6 +1375,7 @@ export type SavedVideoFindFirstOrThrowArgs<ExtArgs extends runtime.Types.Extensi
    * Filter by unique combinations of SavedVideos.
    */
   distinct?: Prisma.SavedVideoScalarFieldEnum | Prisma.SavedVideoScalarFieldEnum[]
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1424,6 +1428,7 @@ export type SavedVideoFindManyArgs<ExtArgs extends runtime.Types.Extensions.Inte
    * Filter by unique combinations of SavedVideos.
    */
   distinct?: Prisma.SavedVideoScalarFieldEnum | Prisma.SavedVideoScalarFieldEnum[]
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1446,6 +1451,7 @@ export type SavedVideoCreateArgs<ExtArgs extends runtime.Types.Extensions.Intern
    * The data needed to create a SavedVideo.
    */
   data: Prisma.XOR<Prisma.SavedVideoCreateInput, Prisma.SavedVideoUncheckedCreateInput>
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1506,6 +1512,7 @@ export type SavedVideoUpdateArgs<ExtArgs extends runtime.Types.Extensions.Intern
    * Choose, which SavedVideo to update.
    */
   where: Prisma.SavedVideoWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1584,6 +1591,7 @@ export type SavedVideoUpsertArgs<ExtArgs extends runtime.Types.Extensions.Intern
    * In case the SavedVideo was found with the provided `where` argument, update it with this data.
    */
   update: Prisma.XOR<Prisma.SavedVideoUpdateInput, Prisma.SavedVideoUncheckedUpdateInput>
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1606,6 +1614,7 @@ export type SavedVideoDeleteArgs<ExtArgs extends runtime.Types.Extensions.Intern
    * Filter which SavedVideo to delete.
    */
   where: Prisma.SavedVideoWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**

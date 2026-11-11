@@ -117,7 +117,11 @@ async function main() {
         createdAt: new Date(now - i * 3_600_000),
         megaAccountId: account.id,
         megaFa: null,
-        creatorId: i % 3 === 0 ? creators[i % creators.length].id : null,
+        // Cyclic assignment: every video belongs to one of the 6 creators,
+        // so creator- and title-related pools have real work to do (the old
+        // sparse i%3 assignment left most videos unassigned, which made the
+        // home feed's history/related pools cheaper than any real library).
+        creatorId: creators[i % creators.length].id,
       },
       select: { id: true },
     });

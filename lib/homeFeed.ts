@@ -166,7 +166,12 @@ async function fetchRelatedPool(userId: string, seeds: FeedVideo[], cap = 24): P
   const perSeed = await Promise.all(
     seedList.map((seed) =>
       Promise.all([
-        getSameCreatorVideos(userId, seed.id, 12),
+        // Phase 3: the seeds are rows the caller just fetched (listNewVideos
+        // above), so their creator id is already known — pass it through and
+        // skip getSameCreatorVideos' per-seed existence lookup (2 queries per
+        // page build). Row order/output is unchanged (the lookup only
+        // decided "no creator -> []").
+        getSameCreatorVideos(userId, seed.id, 12, seed.creatorId ?? null),
         getTitleRelatedVideos(userId, seed.title, { excludeVideoIds: [seed.id], limit: 12 }),
       ]),
     ),

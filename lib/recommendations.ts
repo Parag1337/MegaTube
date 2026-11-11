@@ -36,6 +36,7 @@ const videoSelect = {
   mimeType: true,
   duration: true,
   embedUrl: true,
+  creatorId: true,
   creator: { select: { id: true, slug: true, name: true } },
   megaAccount: { select: { id: true, userId: true, label: true, status: true } },
 } as const;
@@ -175,33 +176,57 @@ export async function getHistoryRelatedVideos(
     if (found.length < take) found.push(v);
   };
 
-  // Creator matches first, most recently watched creator first.
-  for (const ref of refs) {
-    if (found.length >= take) break;
-    if (ref.creatorId === null) continue;
-    const rows = await prisma.video.findMany({
-      where: {
-        AND: [
-          userLibraryScope(userId),
-          { creatorId: ref.creatorId },
-          { id: { notIn: [...seen] } },
-        ],
-      },
-      select: videoSelect,
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      take: take - found.length,
-    });
-    for (const row of rows) push(serializeVideo(row));
-  }
+  // Phase 3: both phases used to run their per-ref queries SEQUENTIALLY
+  // (up to 5 creator queries + up to 5×3 title-walk queries one round trip
+  // at a time — the dominant cost of a cold Home feed build over a remote
+  // database). The per-ref queries are independent; only the MERGE order
+  // was sequential. Launch each phase's queries concurrently (one wave per
+  // phase, two waves total) and merge in ref order exactly as the old loop
+  // did: same rows (each per-ref query is unchanged, take capped at the
+  // maximum it could ever consume — truncation happens at merge time), same
+  // push order, same early-stop, identical output.
+  const creatorQueries = refs
+    .map((ref) => (ref.creatorId === null ? null : ref))
+    .filter((ref): ref is NonNullable<typeof ref> => ref !== null)
+    .map((ref) =>
+      prisma.video
+        .findMany({
+          where: {
+            AND: [
+              userLibraryScope(userId),
+              { creatorId: ref.creatorId },
+              { id: { notIn: [...excluded] } },
+            ],
+          },
+          select: videoSelect,
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          take,
+        })
+        .then((rows) => rows.map(serializeVideo)),
+    );
 
-  // Then title matches per watched video.
-  for (const ref of refs) {
+  for (const rows of creatorQueries) {
     if (found.length >= take) break;
-    const related = await getTitleRelatedVideos(userId, ref.title, {
-      excludeVideoIds: [...seen],
-      limit: take - found.length,
-    });
-    for (const v of related) push(v);
+    for (const row of await rows) push(row);
+  }
+  if (found.length >= take) return found;
+
+  // Then title matches per watched video. The exclusion set here is the
+  // merged creator matches (matching the old loop's `seen` at this point);
+  // rows claimed by an earlier title ref are skipped at merge time, which
+  // is equivalent to excluding them in the query — the engine's ordering
+  // does not depend on the exclusion set, only on which rows are filtered
+  // out of it.
+  const titleSeen = new Set(seen);
+  const titleQueries = refs.map((ref) =>
+    getTitleRelatedVideos(userId, ref.title, {
+      excludeVideoIds: [...titleSeen],
+      limit: take,
+    }),
+  );
+  for (const related of titleQueries) {
+    if (found.length >= take) break;
+    for (const v of await related) push(v);
   }
 
   return found;

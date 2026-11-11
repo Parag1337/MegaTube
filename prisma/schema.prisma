@@ -1,6 +1,14 @@
 generator client {
-  provider = "prisma-client"
-  output   = "../generated"
+  provider        = "prisma-client"
+  output          = "../generated"
+  // Phase 3 perf: makes PostgreSQL relation loads default to a single
+  // LATERAL-JOIN query (JSON-aggregated server-side) instead of one extra
+  // query per nested relation. Measured against the seeded perf database:
+  // every `videoSelect`-shaped findMany drops from 3 round trips to 1, and
+  // the cold Home feed build drops from ~35 queries to ~17 (see
+  // docs/PHASE-3-4-PERFORMANCE-REPORT.md). Rows returned are identical
+  // (verified by tests and by output comparison during the investigation).
+  previewFeatures = ["relationJoins"]
 }
 
 datasource db {

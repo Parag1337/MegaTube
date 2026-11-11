@@ -832,7 +832,16 @@ export async function handleMediaRequest(
       }
     }
     if (needsRemux) {
-      const warm = await readRemuxCache(video.id, video.megaNodeId, size);
+      // Phase 3: skip the second cache probe when the authoritative MEGA size
+      // equals the stored size used above — the identical lookup already
+      // missed before the network step, so re-reading the same sidecar can
+      // only repeat the miss (the cache validates against sourceSize). The
+      // probe is still required when the sizes disagree: then the earlier
+      // miss used a stale size and a real hit is possible now.
+      const warm =
+        cacheSize !== null && cacheSize === size
+          ? null
+          : await readRemuxCache(video.id, video.megaNodeId, size);
       if (warm) {
         const warmRange = parseRange(rangeHeader, warm.size);
         if (warmRange === 'invalid') {

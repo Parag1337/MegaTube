@@ -674,7 +674,7 @@ export type $WatchHistoryPayload<ExtArgs extends runtime.Types.Extensions.Intern
 export type WatchHistoryGetPayload<S extends boolean | null | undefined | WatchHistoryDefaultArgs> = runtime.Types.Result.GetResult<Prisma.$WatchHistoryPayload, S>
 
 export type WatchHistoryCountArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> =
-  Omit<WatchHistoryFindManyArgs, 'select' | 'include' | 'distinct' | 'omit'> & {
+  Omit<WatchHistoryFindManyArgs, 'select' | 'include' | 'distinct' | 'omit' | 'relationLoadStrategy'> & {
     select?: WatchHistoryCountAggregateInputType | true
   }
 
@@ -1121,6 +1121,7 @@ export type WatchHistoryFindUniqueArgs<ExtArgs extends runtime.Types.Extensions.
    * Filter, which WatchHistory to fetch.
    */
   where: Prisma.WatchHistoryWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1143,6 +1144,7 @@ export type WatchHistoryFindUniqueOrThrowArgs<ExtArgs extends runtime.Types.Exte
    * Filter, which WatchHistory to fetch.
    */
   where: Prisma.WatchHistoryWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1195,6 +1197,7 @@ export type WatchHistoryFindFirstArgs<ExtArgs extends runtime.Types.Extensions.I
    * Filter by unique combinations of WatchHistories.
    */
   distinct?: Prisma.WatchHistoryScalarFieldEnum | Prisma.WatchHistoryScalarFieldEnum[]
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1247,6 +1250,7 @@ export type WatchHistoryFindFirstOrThrowArgs<ExtArgs extends runtime.Types.Exten
    * Filter by unique combinations of WatchHistories.
    */
   distinct?: Prisma.WatchHistoryScalarFieldEnum | Prisma.WatchHistoryScalarFieldEnum[]
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1299,6 +1303,7 @@ export type WatchHistoryFindManyArgs<ExtArgs extends runtime.Types.Extensions.In
    * Filter by unique combinations of WatchHistories.
    */
   distinct?: Prisma.WatchHistoryScalarFieldEnum | Prisma.WatchHistoryScalarFieldEnum[]
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1321,6 +1326,7 @@ export type WatchHistoryCreateArgs<ExtArgs extends runtime.Types.Extensions.Inte
    * The data needed to create a WatchHistory.
    */
   data: Prisma.XOR<Prisma.WatchHistoryCreateInput, Prisma.WatchHistoryUncheckedCreateInput>
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1381,6 +1387,7 @@ export type WatchHistoryUpdateArgs<ExtArgs extends runtime.Types.Extensions.Inte
    * Choose, which WatchHistory to update.
    */
   where: Prisma.WatchHistoryWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1459,6 +1466,7 @@ export type WatchHistoryUpsertArgs<ExtArgs extends runtime.Types.Extensions.Inte
    * In case the WatchHistory was found with the provided `where` argument, update it with this data.
    */
   update: Prisma.XOR<Prisma.WatchHistoryUpdateInput, Prisma.WatchHistoryUncheckedUpdateInput>
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1481,6 +1489,7 @@ export type WatchHistoryDeleteArgs<ExtArgs extends runtime.Types.Extensions.Inte
    * Filter which WatchHistory to delete.
    */
   where: Prisma.WatchHistoryWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**

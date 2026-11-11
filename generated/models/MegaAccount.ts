@@ -1164,7 +1164,7 @@ export type $MegaAccountPayload<ExtArgs extends runtime.Types.Extensions.Interna
 export type MegaAccountGetPayload<S extends boolean | null | undefined | MegaAccountDefaultArgs> = runtime.Types.Result.GetResult<Prisma.$MegaAccountPayload, S>
 
 export type MegaAccountCountArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> =
-  Omit<MegaAccountFindManyArgs, 'select' | 'include' | 'distinct' | 'omit'> & {
+  Omit<MegaAccountFindManyArgs, 'select' | 'include' | 'distinct' | 'omit' | 'relationLoadStrategy'> & {
     select?: MegaAccountCountAggregateInputType | true
   }
 
@@ -1623,6 +1623,7 @@ export type MegaAccountFindUniqueArgs<ExtArgs extends runtime.Types.Extensions.I
    * Filter, which MegaAccount to fetch.
    */
   where: Prisma.MegaAccountWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1645,6 +1646,7 @@ export type MegaAccountFindUniqueOrThrowArgs<ExtArgs extends runtime.Types.Exten
    * Filter, which MegaAccount to fetch.
    */
   where: Prisma.MegaAccountWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1697,6 +1699,7 @@ export type MegaAccountFindFirstArgs<ExtArgs extends runtime.Types.Extensions.In
    * Filter by unique combinations of MegaAccounts.
    */
   distinct?: Prisma.MegaAccountScalarFieldEnum | Prisma.MegaAccountScalarFieldEnum[]
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1749,6 +1752,7 @@ export type MegaAccountFindFirstOrThrowArgs<ExtArgs extends runtime.Types.Extens
    * Filter by unique combinations of MegaAccounts.
    */
   distinct?: Prisma.MegaAccountScalarFieldEnum | Prisma.MegaAccountScalarFieldEnum[]
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1801,6 +1805,7 @@ export type MegaAccountFindManyArgs<ExtArgs extends runtime.Types.Extensions.Int
    * Filter by unique combinations of MegaAccounts.
    */
   distinct?: Prisma.MegaAccountScalarFieldEnum | Prisma.MegaAccountScalarFieldEnum[]
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1823,6 +1828,7 @@ export type MegaAccountCreateArgs<ExtArgs extends runtime.Types.Extensions.Inter
    * The data needed to create a MegaAccount.
    */
   data: Prisma.XOR<Prisma.MegaAccountCreateInput, Prisma.MegaAccountUncheckedCreateInput>
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1883,6 +1889,7 @@ export type MegaAccountUpdateArgs<ExtArgs extends runtime.Types.Extensions.Inter
    * Choose, which MegaAccount to update.
    */
   where: Prisma.MegaAccountWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1961,6 +1968,7 @@ export type MegaAccountUpsertArgs<ExtArgs extends runtime.Types.Extensions.Inter
    * In case the MegaAccount was found with the provided `where` argument, update it with this data.
    */
   update: Prisma.XOR<Prisma.MegaAccountUpdateInput, Prisma.MegaAccountUncheckedUpdateInput>
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1983,6 +1991,7 @@ export type MegaAccountDeleteArgs<ExtArgs extends runtime.Types.Extensions.Inter
    * Filter which MegaAccount to delete.
    */
   where: Prisma.MegaAccountWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**

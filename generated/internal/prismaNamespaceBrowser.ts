@@ -92,6 +92,14 @@ export const CreatorScalarFieldEnum = {
 export type CreatorScalarFieldEnum = (typeof CreatorScalarFieldEnum)[keyof typeof CreatorScalarFieldEnum]
 
 
+export const RelationLoadStrategy = {
+  query: 'query',
+  join: 'join'
+} as const
+
+export type RelationLoadStrategy = (typeof RelationLoadStrategy)[keyof typeof RelationLoadStrategy]
+
+
 export const VideoScalarFieldEnum = {
   id: 'id',
   megaAccountId: 'megaAccountId',

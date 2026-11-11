@@ -31,6 +31,7 @@ const videoSelect = {
   mimeType: true,
   duration: true,
   embedUrl: true,
+  creatorId: true,
   creator: { select: { id: true, slug: true, name: true } },
   megaAccount: { select: { id: true, userId: true, label: true, status: true } },
 } as const;

@@ -376,14 +376,13 @@ function pumpPrefixInto(prefixPath: string, frontier: number, dest: NodeJS.Writa
     }
     const rs = fs.createReadStream(prefixPath, { start: 0, end: frontier - 1 });
     rs.on('error', reject);
+    // Phase 4: pipe instead of a manual 'data' handler with an ignored
+    // write() return — the old shape buffered the whole prefix in Node
+    // memory whenever ffmpeg's stdin backpressured (stalled demuxer).
+    // pipe() applies real backpressure; end:false preserves the old
+    // contract (the caller ends stdin itself).
+    rs.pipe(dest, { end: false });
     rs.on('end', () => resolve());
-    rs.on('data', (c: Buffer) => {
-      try {
-        (dest as unknown as { write: (c: Buffer) => void }).write(c);
-      } catch {
-        // stdin already gone - the exit handler reports the real cause
-      }
-    });
   });
 }
 
@@ -572,15 +571,30 @@ function runFfmpegRemux(inputTs: string, outputMp4: string): Promise<void> {
 /**
  * End offset (exclusive) of the fMP4 init segment (ftyp + moov boxes) in
  * `buf`, or -1 when more bytes are needed to decide.
+ *
+ * Phase 4 hardening: the box TYPE is checked before the size validity. A
+ * first fragment box written with size=0 at the init boundary (ffmpeg
+ * 8.1.3 with a fragment larger than its AVIOContext patch-back buffer —
+ * see the -frag_duration comment at the live spawn) previously returned -1
+ * via the `size < 8` bail, so a complete init (ftyp+moov was already
+ * buffered) was never published and the job failed after 4MB. A size=0
+ * box is spec-invalid mid-file ("extends to end of file"), but at the
+ * init boundary the init itself IS complete: ftyp+moov parsed fine and
+ * everything after is fragment payload that streams byte-exactly, so
+ * publishing init end at the size-0 box is correct here. The fragment
+ * bytes themselves are passed through untouched (the live spool is a
+ * byte-exact ffmpeg-stdout prefix; only PARSING is affected, never
+ * content). Bounded-fragment output (-frag_duration) prevents the
+ * zero-size case from reaching cached artifacts.
  */
 export function findFragmentedMp4InitEnd(buf: Buffer): number {
   let off = 0;
   for (;;) {
-    if (off + 8 > buf.length) return off > 0 ? -1 : -1;
-    const size = buf.readUInt32BE(off);
-    if (size < 8) return -1;
+    if (off + 8 > buf.length) return -1; // box header incomplete - need more
     const type = buf.toString('latin1', off + 4, off + 8);
     if (type !== 'ftyp' && type !== 'moov') return off > 0 ? off : -1;
+    const size = buf.readUInt32BE(off);
+    if (size < 8) return -1; // malformed ftyp/moov header - need more/corrupt
     if (buf.length < off + size) return -1; // box incomplete - need more
     off += size;
   }
@@ -1785,6 +1799,21 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
         '-map', '0:a:0?',
         '-c', 'copy',
         '-bsf:a', 'aac_adtstoasc',
+        // Phase 4: bound the fragment duration. frag_keyframe alone lets a
+        // source with a long or single GOP (one keyframe for the whole file —
+        // verified reproducible) accumulate ONE fragment whose moof (with its
+        // sample tables) exceeds ffmpeg's AVIOContext write buffer (32KB).
+        // The non-seekable muxer patches box sizes by seeking back INSIDE
+        // that buffer; a moof larger than the buffer keeps its placeholder
+        // size=0 (observed: moof+traf+trun all size 0, moof ~35KB). Per the
+        // MP4 spec size=0 means "extends to end of file", so such a stream is
+        // unparseable by browsers (MSE) and defeated findFragmentedMp4InitEnd
+        // — the job then hit the 4MB init guard and retried forever, i.e.
+        // those videos never played at all. 2s bounds the moof to a few KB
+        // (dozens of samples' trun entries) with a ~10x margin, adds ~0.1-0.5%
+        // container overhead, improves first-fragment latency, and keeps the
+        // stream `-c copy` (no re-encode, original quality).
+        '-frag_duration', '2000000',
         '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
         '-f', 'mp4',
         'pipe:1',
@@ -2035,21 +2064,71 @@ export function getOrCreateLiveRemuxJob(src: RemuxSource): LiveRemuxJob {
           // Cap the tail at exactly the missing bytes (same surplus guard as
           // the background path): the file can never exceed the source size.
           const cappedTail = tailPlain.pipe(capBytes(Math.max(0, src.size - initialFrontier)));
-          cappedTail.on('data', (c: Buffer) => {
-            if (!ffIn.destroyed) {
-              try {
-                ffIn.write(c);
-              } catch {
-                // stdin already gone - download still completes for the cache
-              }
-            }
-          });
-          cappedTail.on('end', () => {
+          // Phase 4 backpressure: ffmpeg's stdin gets a BOUNDED buffer. The
+          // old shape ignored write()'s return value, so a stalled ffmpeg
+          // (slow disk on the spool side, blocked muxer) buffered the whole
+          // remainder of the plaintext in Node memory. The durable file tee
+          // (ws) stays unthrottled — only when the 8 MiB bound overflows is
+          // the source paused, which also pauses the file tee: strictly
+          // better than unbounded process memory, and bounded by the fact
+          // that a stalled ffmpeg produces no fragments anyway.
+          const FF_IN_BUFFER_MAX_BYTES = 8 * 1024 * 1024;
+          let ffInDrained = true;
+          let cappedTailEnded = false;
+          const ffInQueue: Buffer[] = [];
+          let ffInQueueBytes = 0;
+          // Close ffmpeg's stdin only once every queued byte has been
+          // written; 'end' can arrive while the queue is still non-empty
+          // (that is exactly the backpressure case), and ending early would
+          // silently truncate the stream ffmpeg is muxing.
+          const endFfInWhenDrained = () => {
+            if (!cappedTailEnded) return;
+            if (ffInQueue.length > 0 || !ffInDrained) return;
             try {
               ffIn.end();
             } catch {
               // ignore
             }
+          };
+          ffIn.on('drain', () => {
+            ffInDrained = true;
+            while (ffInQueue.length > 0 && ffInDrained) {
+              const next = ffInQueue.shift()!;
+              ffInQueueBytes -= next.length;
+              try {
+                ffInDrained = ffIn.write(next);
+              } catch {
+                return; // stdin gone - download still completes for the cache
+              }
+            }
+            if (ffInQueue.length === 0) cappedTail.resume();
+            endFfInWhenDrained();
+          });
+          // If ffmpeg dies while the queue holds bytes, no 'drain' will ever
+          // fire: drop the queue and resume the source so the durable file
+          // tee still completes (fail() reports the real ffmpeg error).
+          ffIn.on('close', () => {
+            ffInQueue.length = 0;
+            ffInQueueBytes = 0;
+            if (!cappedTail.destroyed) cappedTail.resume();
+          });
+          cappedTail.on('data', (c: Buffer) => {
+            if (ffIn.destroyed) return;
+            if (ffInDrained && ffInQueue.length === 0) {
+              try {
+                ffInDrained = ffIn.write(c);
+              } catch {
+                // stdin already gone - download still completes for the cache
+              }
+            } else {
+              ffInQueue.push(c);
+              ffInQueueBytes += c.length;
+              if (ffInQueueBytes > FF_IN_BUFFER_MAX_BYTES) cappedTail.pause();
+            }
+          });
+          cappedTail.on('end', () => {
+            cappedTailEnded = true;
+            endFfInWhenDrained();
           });
           nodeUpstream.pipe(decryptor as unknown as NodeJS.WritableStream);
           cappedTail.pipe(ws);

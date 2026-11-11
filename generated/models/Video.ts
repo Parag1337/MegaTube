@@ -2140,7 +2140,7 @@ export type $VideoPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs 
 export type VideoGetPayload<S extends boolean | null | undefined | VideoDefaultArgs> = runtime.Types.Result.GetResult<Prisma.$VideoPayload, S>
 
 export type VideoCountArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> =
-  Omit<VideoFindManyArgs, 'select' | 'include' | 'distinct' | 'omit'> & {
+  Omit<VideoFindManyArgs, 'select' | 'include' | 'distinct' | 'omit' | 'relationLoadStrategy'> & {
     select?: VideoCountAggregateInputType | true
   }
 
@@ -2611,6 +2611,7 @@ export type VideoFindUniqueArgs<ExtArgs extends runtime.Types.Extensions.Interna
    * Filter, which Video to fetch.
    */
   where: Prisma.VideoWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -2633,6 +2634,7 @@ export type VideoFindUniqueOrThrowArgs<ExtArgs extends runtime.Types.Extensions.
    * Filter, which Video to fetch.
    */
   where: Prisma.VideoWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -2685,6 +2687,7 @@ export type VideoFindFirstArgs<ExtArgs extends runtime.Types.Extensions.Internal
    * Filter by unique combinations of Videos.
    */
   distinct?: Prisma.VideoScalarFieldEnum | Prisma.VideoScalarFieldEnum[]
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -2737,6 +2740,7 @@ export type VideoFindFirstOrThrowArgs<ExtArgs extends runtime.Types.Extensions.I
    * Filter by unique combinations of Videos.
    */
   distinct?: Prisma.VideoScalarFieldEnum | Prisma.VideoScalarFieldEnum[]
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -2789,6 +2793,7 @@ export type VideoFindManyArgs<ExtArgs extends runtime.Types.Extensions.InternalA
    * Filter by unique combinations of Videos.
    */
   distinct?: Prisma.VideoScalarFieldEnum | Prisma.VideoScalarFieldEnum[]
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -2811,6 +2816,7 @@ export type VideoCreateArgs<ExtArgs extends runtime.Types.Extensions.InternalArg
    * The data needed to create a Video.
    */
   data: Prisma.XOR<Prisma.VideoCreateInput, Prisma.VideoUncheckedCreateInput>
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -2871,6 +2877,7 @@ export type VideoUpdateArgs<ExtArgs extends runtime.Types.Extensions.InternalArg
    * Choose, which Video to update.
    */
   where: Prisma.VideoWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -2949,6 +2956,7 @@ export type VideoUpsertArgs<ExtArgs extends runtime.Types.Extensions.InternalArg
    * In case the Video was found with the provided `where` argument, update it with this data.
    */
   update: Prisma.XOR<Prisma.VideoUpdateInput, Prisma.VideoUncheckedUpdateInput>
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -2971,6 +2979,7 @@ export type VideoDeleteArgs<ExtArgs extends runtime.Types.Extensions.InternalArg
    * Filter which Video to delete.
    */
   where: Prisma.VideoWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
