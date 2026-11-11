@@ -37,6 +37,13 @@ type PreviewState = 'idle' | 'pending' | 'active';
 /** What the active preview renders: the local clip, or the iframe fallback. */
 type PreviewView = { kind: 'local'; url: string } | { kind: 'iframe' } | null;
 
+/**
+ * Safety bound for local clip startup. The clip is tiny and served locally,
+ * so a much longer wait means the media element is stuck; stop the loader and
+ * use the existing fallback instead of leaving a spinner on the card forever.
+ */
+const LOCAL_PREVIEW_START_TIMEOUT_MS = 10_000;
+
 export function VideoCard({
   id,
   slug,
@@ -52,6 +59,7 @@ export function VideoCard({
 }: VideoCardProps) {
   const [preview, setPreview] = useState<PreviewState>('idle');
   const [previewView, setPreviewView] = useState<PreviewView>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const router = useRouter();
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const touchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -61,6 +69,8 @@ export function VideoCard({
   const metaInFlightRef = useRef(false);
   /** Short grace timer: show the legacy iframe while local generation runs. */
   const iframeFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Stops the loading indicator if a local clip never starts playing. */
+  const localStartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Invalidates async meta chains when the preview stops (leave/switch). */
   const runIdRef = useRef(0);
 
@@ -82,6 +92,11 @@ export function VideoCard({
       clearTimeout(iframeFallbackRef.current);
       iframeFallbackRef.current = null;
     }
+    if (localStartTimerRef.current) {
+      clearTimeout(localStartTimerRef.current);
+      localStartTimerRef.current = null;
+    }
+    setPreviewLoading(false);
     setPreviewView(null);
     setPreview('idle');
   }, []);
@@ -98,13 +113,6 @@ export function VideoCard({
     };
   }, [stopSelf]);
 
-  const beginLocalPreview = useCallback((url: string) => {
-    activeRef.current = true;
-    acquirePreview(stopSelf);
-    setPreviewView({ kind: 'local', url });
-    setPreview('active');
-  }, [stopSelf]);
-
   const beginIframePreview = useCallback(() => {
     if (!previewSrc) {
       // Neither a local clip nor the MEGA embed is available: no preview.
@@ -113,9 +121,56 @@ export function VideoCard({
     }
     activeRef.current = true;
     acquirePreview(stopSelf);
+    setPreviewLoading(false);
     setPreviewView({ kind: 'iframe' });
     setPreview('active');
   }, [previewSrc, stopSelf]);
+
+  /**
+   * A local clip failed before playback (media error, autoplay rejection, or
+   * startup watchdog). Stop its loader immediately; use the legacy embed when
+   * one exists, otherwise return to the thumbnail.
+   */
+  const failLocalPreview = useCallback(() => {
+    if (!activeRef.current) return;
+    setPreviewLoading(false);
+    if (previewSrc) beginIframePreview();
+    else stopSelf();
+  }, [beginIframePreview, previewSrc, stopSelf]);
+
+  const beginLocalPreview = useCallback((url: string) => {
+    activeRef.current = true;
+    acquirePreview(stopSelf);
+    setPreviewView({ kind: 'local', url });
+    setPreview('active');
+
+    // The indicator stays up until the clip actually plays. If the media
+    // element never reaches `playing`, fail over instead of spinning forever.
+    if (localStartTimerRef.current) {
+      clearTimeout(localStartTimerRef.current);
+    }
+    localStartTimerRef.current = setTimeout(() => {
+      localStartTimerRef.current = null;
+      failLocalPreview();
+    }, LOCAL_PREVIEW_START_TIMEOUT_MS);
+  }, [failLocalPreview, stopSelf]);
+
+  const handlePreviewPlaying = useCallback(() => {
+    if (!activeRef.current) return;
+    if (localStartTimerRef.current) {
+      clearTimeout(localStartTimerRef.current);
+      localStartTimerRef.current = null;
+    }
+    setPreviewLoading(false);
+  }, []);
+
+  const handlePreviewError = useCallback(() => {
+    if (localStartTimerRef.current) {
+      clearTimeout(localStartTimerRef.current);
+      localStartTimerRef.current = null;
+    }
+    failLocalPreview();
+  }, [failLocalPreview]);
 
   /**
    * Activate the preview: the local hover clip wins whenever meta says it is
@@ -132,10 +187,13 @@ export function VideoCard({
 
     const cached = cachedCardPreviewMeta(id);
     if (cached?.hoverUrl) {
+      // Known-ready: mount immediately and never flash the cold loader.
+      setPreviewLoading(false);
       beginLocalPreview(cached.hoverUrl);
       return;
     }
     if (metaInFlightRef.current) return;
+    setPreviewLoading(true);
     metaInFlightRef.current = true;
     const runId = ++runIdRef.current;
     const stillActive = () => activeRef.current && runIdRef.current === runId;
@@ -286,6 +344,8 @@ export function VideoCard({
             <PreviewVideo
               src={previewView.url}
               className="absolute inset-0 h-full w-full bg-black object-contain"
+              onPlaying={handlePreviewPlaying}
+              onError={handlePreviewError}
             />
             <div
               className="absolute inset-0 z-10"
@@ -321,9 +381,18 @@ export function VideoCard({
           </>
         )}
 
-        {preview === 'pending' && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/50">
-            <span className="h-8 w-8 animate-spin rounded-full border-2 border-muted-light/40 border-t-accent" />
+        {previewLoading && (
+          <div
+            data-preview-loading
+            role="status"
+            aria-label="Loading preview"
+            className="pointer-events-none absolute right-12 top-2 z-20 flex items-center gap-1.5 rounded-full border border-white/15 bg-black/75 px-2 py-1 text-[10px] font-medium leading-none text-white shadow-[0_2px_10px_rgba(0,0,0,0.45)] backdrop-blur-[2px]"
+          >
+            <span
+              aria-hidden
+              className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-white/30 border-t-white"
+            />
+            <span className="whitespace-nowrap">Loading preview</span>
           </div>
         )}
 

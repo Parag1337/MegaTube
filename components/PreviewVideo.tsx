@@ -10,7 +10,19 @@ import { useEffect, useRef } from 'react';
  * policy-compatible); unmount pauses/stops. `preview-manager` guarantees at
  * most one of these is mounted at any time.
  */
-export function PreviewVideo({ src, className }: { src: string; className?: string }) {
+export function PreviewVideo({
+  src,
+  className,
+  onPlaying,
+  onError,
+}: {
+  src: string;
+  className?: string;
+  /** Fired only once the browser has actually started playback. */
+  onPlaying?: () => void;
+  /** Fired for media/decode failures or a rejected autoplay request. */
+  onError?: () => void;
+}) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
@@ -20,7 +32,9 @@ export function PreviewVideo({ src, className }: { src: string; className?: stri
     const play = () => {
       if (cancelled) return;
       void video.play().catch(() => {
-        // Autoplay of a muted element cannot be blocked; ignore defensively.
+        // Muted autoplay should always succeed; if it does not, report it so
+        // the card can stop the loading indicator and use its fallback.
+        if (!cancelled) onError?.();
       });
     };
     if (video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
@@ -33,7 +47,7 @@ export function PreviewVideo({ src, className }: { src: string; className?: stri
       video.removeEventListener('canplay', play);
       video.pause();
     };
-  }, [src]);
+  }, [src, onError]);
 
   return (
     <video
@@ -44,6 +58,8 @@ export function PreviewVideo({ src, className }: { src: string; className?: stri
       playsInline
       preload="auto"
       disableRemotePlayback
+      onPlaying={onPlaying}
+      onError={onError}
       className={className}
     />
   );
