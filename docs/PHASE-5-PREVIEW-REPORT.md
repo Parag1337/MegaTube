@@ -14,7 +14,7 @@
 - A card hover asks `GET /api/preview/<id>/meta?want=hover`.
 - If a preview exists, the card mounts a muted, looping local `<video src="/api/preview/<id>">` — 5–10 s of representative content, 360p, ~0.3–0.8 MB.
 - If no preview exists yet (or generation is refused), the existing MEGA iframe behavior is untouched.
-- Generation is **on-demand and background**: the meta request only enqueues; it never blocks on MEGA/ffmpeg. The client re-polls once after 2.5 s and otherwise keeps the iframe until the next hover.
+- Generation is **on-demand and background**: the meta request admits the job and answers `generating` in milliseconds; it never blocks on MEGA/ffmpeg. While the pointer stays on the card, the client polls meta every ~2 s (bounded to 30 s) and mounts the local clip when ready. It falls back to the iframe only after a terminal state or the bounded wait. Clicking any card navigates its watch page in the **current tab**.
 - The segment is selected away from the intro: 25/50/75 % of a known duration; for unknown durations a fixed ladder starting at 10 s. It must pass the shared mean-brightness gate (≥ 2/3 usable probe frames), with a brightest-best-effort fallback.
 - Repeat hovers NEVER regenerate and never contact MEGA: the sidecar answers `ready`, and clip bytes are served with `Cache-Control: private, max-age=3600` + strong `ETag` (304 on revalidation).
 
@@ -57,7 +57,7 @@ app/api/preview/[videoId]/meta/route.ts         meta + enqueue
 app/api/preview/[videoId]/timeline/route.ts     sprite JPEG
 app/api/preview/[videoId]/timeline/vtt/route.ts WebVTT
 components/PreviewVideo.tsx                     hover <video>
-lib/preview-meta-client.ts                      page-lifetime meta cache + bounded re-poll
+lib/preview-meta-client.ts                      page-lifetime meta cache + bounded cold-generation polling
 lib/preview/config.ts                           env-tunable bounds
 lib/preview/types.ts                            sidecar/meta/source types
 lib/preview/segment.ts                          candidate ladder, alignment, sprite/VTT math
@@ -160,7 +160,7 @@ TS window decode was re-validated on a real 60 s MPEG-TS sample: a ~3 MB mid-fil
 
 ### Tests and static checks
 
-- `npm run test:unit`: **655/655 pass**, including 56 new preview tests.
+- `npm run test:unit`: **665/665 pass**, including 66 preview tests (10 added in this pass).
 - `npx tsc --noEmit`: clean.
 - ESLint on every new/modified file: clean.
 - HTTP checks: clip 200 / Range 206 / 416 invalid range / ETag 304 / sprite + VTT 200 with correct MIME types.
@@ -209,7 +209,60 @@ While hardening, two real failures exercised the retry/cooldown path: the video 
 
 ---
 
-## 8. Remaining issues / limitations
+## 8. Debugging pass after `b24428d`: cold hover + same-tab navigation
+
+### 8.1 Root cause: hover previews never appeared on cold cards
+
+The queue's `enqueue()` promise resolves only when the generation job **finishes**. `enqueueGeneration()` awaited that promise and the meta handler awaited `enqueueGeneration()`, so `GET /api/preview/<id>/meta` was held for the entire MEGA window download + ffmpeg run — 3.6–5.0 s in the first repro (longer for bigger/slower sources). The card's `fetchMetaOnce` uses `AbortSignal.timeout(5000)`, so the browser aborted the response and never received the ready URL. The old client had only one 2.5 s re-poll, which could not bridge a cold generation, and cards with no MEGA iframe then showed nothing.
+
+Cached previews were unaffected: hovering a card whose clip already existed mounted and played immediately, which confirmed the defect was the cold-generation path rather than the card DOM/CSS/auth. The real-homepage repro showed the meta request firing, ending `ERR_ABORTED`, and no `<video>` ever mounting; the server log showed the same meta route taking 3.8 s / 5.0 s / 3.6 s.
+
+**Fix**
+- `lib/preview/queue.ts`: new synchronous `enqueueNow()` / shared `admit()` returns `started | queued | rejected` immediately; the completion promise remains available to callers that need it (`enqueue`), but meta no longer waits on it.
+- `lib/preview/service.ts`: hover and timeline meta admit synchronously and return `generating` immediately (queue-full still returns `rejected`).
+- `lib/preview-meta-client.ts`: known-ready meta is cached; cold `generating` is polled every 2 s for up to 30 s while the pointer remains on the card. Polling stops on leave, card switch, terminal state, network failure, or timeout.
+- `components/VideoCard.tsx`: per-card run token invalidates stale async hover chains when the pointer leaves or moves to another card, so an old generation poll can never mount a clip on the wrong/re-entered hover. Cards that also have a legacy MEGA embed show that iframe after a 2.5 s grace while cold polling continues; the local clip replaces it when ready.
+
+### 8.2 Live verification (real dev server, real VideoCards)
+
+- Meta for a cold video: **~40–50 ms**, body `{"status":"generating","hover":null}` (previously 3.6–5.0 s and aborted).
+- Cold hover on search-result video 1373 after deleting its preview artifacts (warm media cache, so generation was local): meta at 430 ms `generating`, polls at 2.45/4.48/6.50 s, ready at 8.53 s; `<video src="/api/preview/1373">` mounted at 8.86 s, `muted=true`, `paused=false`, `loop=true`, `readyState=4`, `currentTime>0`, 203×360, no media error. Leave unmounted it. Repeat hover mounted in 808 ms with **0 new meta requests**.
+- Homepage rapid switch between two ready cards: first preview mounted, then first count 0 / second count 1 / total local previews 1.
+- Earlier cold-generation repro (106 MB video 1421) showed the meta answering in 47 ms while MEGA/ffmpeg continued in the background; that environment's MEGA throughput then collapsed to ~10 KB/s (throttling/contention), so a very large cold clip can still exceed the 30 s client wait. The generated sidecar remains cached for the next hover.
+
+### 8.3 Root cause: video clicks opened a new tab
+
+`components/VideoCard.tsx` `openVideo()` called `window.open('/video/'+slug, '_blank', 'noopener')`. The only other `window.open` is the watchlist "Play All" bulk action, which deliberately opens multiple videos; it is not a single-video click and was left intact.
+
+**Fix:** `openVideo()` now calls `router.push('/video/'+slug)` (Next.js client routing, current tab). Keyboard activation uses the same function. All listing cards share this component; History/Saved/related links already use internal `<Link>`/`<a>` and remain same-tab.
+
+**Live navigation matrix** (Playwright, real app, 1 browser page before and after every click, popup listener fired zero times):
+
+| Entry point | Result |
+|---|---|
+| Homepage card | `/video/my-sissy...-video`, same tab; Back returns `/` |
+| Search result | `/video/first-time-pegged...`, same tab; Back returns search URL |
+| Library card | `/video/my-sissy...-video`, same tab; Back returns `/library` |
+| Watchlist card | `/video/first-time-pegged...`, same tab; Back returns `/watchlist` |
+| Saved link | `/video/first-time-pegged...`, same tab; Back returns `/account/saved` |
+| History link | `/video/first-time-pegged...`, same tab; Back returns `/account/history` |
+| Creator card | `/video/thetabithajane...`, same tab; Back/Forward preserved |
+| Related-video link | `/video/wife-surprises-sissy-husband`, same tab; Back returns the watch page |
+
+Direct watch URL refresh loaded successfully with the player present; zero console errors in the matrix. No playlists/collections pages exist in this codebase.
+
+### 8.4 Verification for this pass
+
+- `npm run test:unit`: **665/665 pass** (10 new: queue admission, service non-blocking meta, client polling/cache/terminal states).
+- `npm run test:integration`: 5 tests, all skipped because real-MEGA credentials were not set.
+- `npx tsc --noEmit`: clean. `npm run build`: success.
+- ESLint changed files: clean. Full-repo ESLint reports 1 pre-existing error in `components/ThemeProvider.tsx` (unrelated `setState` in effect) plus 118 warnings.
+- Playwright `tests/e2e/preview.spec.mjs` against the running app: **8/8 pass**, including same-tab/no-popup/Back, a matrix covering home/search/library/creator/watchlist/saved/history, cold local clip playback, repeat/leave cleanup, rapid switching, and normal watch playback.
+- The browser run used a temporary `P5_E2E_LOCAL_BYPASS` middleware check plus the legacy session cookie; the bypass was reverted before commit. The committed E2E suite accepts `E2E_SESSION_TOKEN` for authenticated runs.
+
+---
+
+## 9. Remaining issues / limitations
 
 1. **MPEG-TS path is not E2E-tested through MEGA.** All 240 `video/mp2t` rows in the test database are fixtures without `megaNodeId` (they correctly answer 409). The TS decode and 752-byte window alignment were validated on a real TS sample and pinned by unit tests, but no live MEGA TS row exists to exercise end to end.
 2. **`libopenh264` only.** This FFmpeg build has no libx264; output is fixed-bitrate (~700 kbps at 360p), so quality is slightly below a CRF-encoded x264 preview. The code path will use better encoders if the deployment FFmpeg provides them, but this was not benchmarked here.
@@ -221,14 +274,16 @@ While hardening, two real failures exercised the retry/cooldown path: the video 
 8. **Sprite cadence follows keyframes.** `fps` holds the last keyframe, so sources with long GOPs can show duplicate adjacent cells; visually acceptable for scrub thumbnails.
 9. **Browser E2E used a temporary Clerk middleware bypass.** Pages are Clerk-protected and the legacy session cookie only authenticates API routes. The bypass (`P5_E2E_LOCAL_BYPASS`) was reverted before commit; `proxy.ts` is unchanged.
 10. **Dev-mode latency.** The 11.0 s cold figure includes dev-server overhead (one poll was delayed by Turbopack recompilation during the first measurement); expect lower wall time in a production build, network being the dominant cost.
+11. **Cold-preview polling is bounded to 30 s.** If a cold generation takes longer (observed during MEGA throttling/contention on a 106 MB source, where throughput fell to ~10 KB/s), the current hover falls back (iframe or thumbnail) and the clip appears on a later hover after the background job finishes. The client does not hold a request open or poll forever.
+12. **Watchlist "Play All" intentionally opens multiple tabs.** It is a bulk multi-open action, not a single-video click; the watchlist's video-card clicks use the same same-tab `router.push` path as every other listing. Changing Play All to current-tab navigation would open only the last video and break the feature.
 
 ---
 
-## 9. Verification commands
+## 10. Verification commands
 
 ```bash
 # from /home/parag/Projects/Project_Mega_phase5
-npm run test:unit                 # 655 pass (56 preview)
+npm run test:unit                 # 665 pass (66 preview)
 npx tsc --noEmit                  # clean
 npx eslint lib/preview app/api/preview components/PreviewVideo.tsx \
   components/VideoCard.tsx components/PrivatePlayer.tsx \

@@ -115,3 +115,42 @@ test('after a queued cancellation the key can be re-enqueued', async () => {
   gate.resolve(); // free the slot so the re-enqueued job can run
   assert.equal(await second, 'completed', 're-enqueued after cancellation');
 });
+
+test('enqueueNow admits without waiting for the runner to finish', async () => {
+  const gate = deferred<void>();
+  let ran = false;
+  const admission = q.enqueueNow('hover:1', () => {
+    ran = true;
+    return gate.promise;
+  });
+  assert.equal(admission, 'started');
+  assert.equal(ran, true, 'runner started synchronously');
+  assert.equal(q.snapshot().running, 1, 'job still running after admission returned');
+
+  gate.resolve();
+  await new Promise((r) => setImmediate(r));
+  assert.equal(q.snapshot().running, 0);
+});
+
+test('enqueueNow reports queued, joins single-flight, and rejects when full', async () => {
+  const gate = deferred<void>();
+  const running = q.enqueueNow('hover:1', () => gate.promise);
+  assert.equal(running, 'started');
+  assert.equal(q.enqueueNow('hover:1', () => gate.promise), 'started', 'joined running job');
+
+  assert.equal(q.enqueueNow('hover:2', () => gate.promise), 'queued');
+  assert.equal(q.enqueueNow('hover:2', () => Promise.resolve()), 'queued', 'joined queued job');
+  assert.equal(q.enqueueNow('hover:3', () => gate.promise), 'queued');
+  assert.equal(q.enqueueNow('hover:4', () => gate.promise), 'rejected', 'queue cap reached');
+  assert.equal(q.snapshot().queued, 2);
+
+  gate.resolve();
+  await new Promise((r) => setImmediate(r));
+});
+
+test('enqueueNow runner failures are contained (no unhandled rejection)', async () => {
+  assert.equal(q.enqueueNow('hover:1', () => Promise.reject(new Error('boom'))), 'started');
+  await new Promise((r) => setImmediate(r));
+  assert.equal(q.snapshot().running, 0);
+  assert.equal(q.has('hover:1'), false);
+});

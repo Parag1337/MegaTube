@@ -19,6 +19,9 @@ import { previewMaxConcurrent, previewMaxQueue } from './config';
 
 export type PreviewJobOutcome = 'completed' | 'failed' | 'cancelled';
 
+/** Immediate admission result for callers that do NOT wait for completion. */
+export type PreviewAdmission = 'started' | 'queued' | 'rejected';
+
 export class QueueFullError extends Error {
   constructor() {
     super('preview generation queue is full');
@@ -54,15 +57,45 @@ export class PreviewQueue {
   constructor(private maxConcurrent: number, private maxQueue: number) {}
 
   /**
-   * Enqueue (or join) a job. Resolves with the job outcome; never rejects
-   * except QueueFullError at admission time (before any work started).
+   * Enqueue (or join) a job and wait for its outcome. Used where the caller
+   * genuinely needs the result; the meta endpoint must NOT use this — it
+   * would block for the whole MEGA/ffmpeg run (see `enqueueNow`).
    */
   enqueue(key: string, runner: () => Promise<unknown>, signal?: AbortSignal | null): Promise<PreviewJobOutcome> {
+    const admitted = this.admit(key, runner, signal);
+    if (!admitted) return Promise.reject(new QueueFullError());
+    return admitted.promise;
+  }
+
+  /**
+   * Admit (or join) a job and return IMMEDIATELY with the admission state:
+   * the preview meta endpoint answers `generating` in milliseconds while the
+   * bounded queue runs the job in the background. The completion promise is
+   * intentionally not exposed; runners never reject (`start` converts
+   * failures to a resolved outcome), so ignoring it cannot leak rejections.
+   *
+   * `rejected` means the queue is full. Joining an existing single-flight
+   * job reports `started` while it is running and `queued` while it waits.
+   */
+  enqueueNow(key: string, runner: () => Promise<unknown>, signal?: AbortSignal | null): PreviewAdmission {
+    const admitted = this.admit(key, runner, signal);
+    if (!admitted) return 'rejected';
+    return admitted.queued ? 'queued' : 'started';
+  }
+
+  private admit(
+    key: string,
+    runner: () => Promise<unknown>,
+    signal?: AbortSignal | null,
+  ): { promise: Promise<PreviewJobOutcome>; queued: boolean } | null {
     const existing = this.pending.get(key);
-    if (existing) return existing.promise;
+    if (existing) {
+      // Single-flight join: report queued while the joined job waits.
+      return { promise: existing.promise, queued: existing.entry !== null };
+    }
 
     if (this.running >= this.maxConcurrent && this.queue.length >= this.maxQueue) {
-      return Promise.reject(new QueueFullError());
+      return null;
     }
 
     let resolve!: (outcome: PreviewJobOutcome) => void;
@@ -75,7 +108,7 @@ export class PreviewQueue {
     if (signal) {
       if (signal.aborted) {
         resolve('cancelled');
-        return promise;
+        return { promise, queued: false };
       }
       entry.onAbort = () => {
         // Only QUEUED jobs are cancellable; running jobs complete regardless.
@@ -91,10 +124,10 @@ export class PreviewQueue {
     this.pending.set(key, job);
     if (this.running < this.maxConcurrent) {
       this.start(entry, job);
-    } else {
-      this.queue.push(entry);
+      return { promise, queued: false };
     }
-    return promise;
+    this.queue.push(entry);
+    return { promise, queued: true };
   }
 
   private start(entry: QueueEntry, job: PendingJob): void {

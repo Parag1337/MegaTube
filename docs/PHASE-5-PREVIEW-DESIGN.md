@@ -216,7 +216,7 @@ no session material, no filesystem paths are ever exposed.
 
 | Endpoint | Response |
 |---|---|
-| `GET /api/preview/[videoId]/meta?want=hover,timeline` | JSON `{ status, hover?, timeline? }`; enqueues missing generations (bounded queue; queue-full ⇒ `status: "rejected"`); `Cache-Control: no-store` |
+| `GET /api/preview/[videoId]/meta?want=hover,timeline` | JSON `{ status, hover?, timeline? }`; enqueues missing generations (bounded queue; queue-full ⇒ `status: "rejected"`); returns `generating` in milliseconds and never waits for MEGA/ffmpeg; `Cache-Control: no-store` |
 | `GET /api/preview/[videoId]` | hover clip bytes (`video/mp4`, Range via `createCachedFileResponse`, refcount protection, `private, max-age=3600`, `ETag`); 404 JSON when not ready |
 | `GET /api/preview/[videoId]/timeline` | spritesheet JPEG (`image/jpeg`, `private, max-age=3600`, `ETag`) |
 | `GET /api/preview/[videoId]/timeline/vtt` | WebVTT (relative sprite URL, `private, max-age=3600`) |
@@ -237,6 +237,10 @@ the Phase 3–4 live pipeline).
   download), `PREVIEW_MAX_QUEUE = 8` waiting jobs, FIFO.
 - Duplicate protection: in-flight map keyed by videoId; concurrent meta
   calls join the same job (single-flight).
+- Non-blocking admission: meta uses `enqueueNow`, which returns
+  `started`/`queued`/`rejected` immediately after bounded admission. It never
+  awaits the job-completion promise; the response is `generating` in
+  milliseconds even when the MEGA window or ffmpeg run takes many seconds.
 - Cancellation: queued-but-not-started jobs are cancelled when their
   requester aborts; a RUNNING job completes (bounded ≤ 90 s) because its
   result is cached and reused by the next hover — this is the cheaper
@@ -252,15 +256,26 @@ the Phase 3–4 live pipeline).
 ## 10. Frontend behavior
 
 - `VideoCard`: thumbnail shows immediately; after `previewDelayMs` (400 ms,
-  existing knob) the card fetches `meta` (results cached client-side per
+  existing knob) the card fetches `meta` (ready results cached client-side per
   video for the page lifetime). `ready` ⇒ mount one `<video muted
   playsInline loop preload="auto">` over the thumbnail (no iframe, no full
   player); play on `canplay`; leave ⇒ pause + unmount + restore thumbnail.
-  `generating` ⇒ keep thumbnail, poll meta once more after ~2.5 s, else
-  keep thumbnail (no iframe spam). `unavailable/rejected` ⇒ fall back to
-  the existing MEGA-iframe preview for videos that have a mega embed URL
-  (public videos), otherwise no preview. Client meta cache means rapid
-  movement across cards issues at most one meta request per video.
+  `generating` ⇒ keep the thumbnail and poll the cheap meta endpoint every
+  ~2 s, for at most 30 s, while the pointer remains on the card. Polling stops
+  immediately on leave/card switch or any terminal state; if it expires, fall
+  back to the existing MEGA-iframe preview for videos that have a mega embed
+  URL (public videos), otherwise no preview. Cards that have a MEGA embed also
+  show that iframe after a short 2.5 s grace while cold generation continues;
+  the local clip replaces it as soon as it is ready. The first hover therefore
+  shows the clip as soon as a cold background generation finishes, instead of
+  requiring a second hover. Client meta cache means rapid movement across
+  cards issues at most one meta request per KNOWN-READY video.
+- Clicking a card navigates to `/video/<slug>` in the **current tab** via
+  Next.js client routing (`router.push`), never `window.open`. The same
+  behavior applies to every listing that renders `VideoCard` (home, search,
+  creator, library, watchlist) as well as the History/Saved/related links,
+  which are ordinary internal `<a>`/`<Link>` elements. External links are
+  untouched.
 - One preview at a time is enforced by the existing `preview-manager`.
 - Touch devices: the existing long-press interaction triggers the same
   preview; a `touchmove` cancels (unchanged).

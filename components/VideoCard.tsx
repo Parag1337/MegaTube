@@ -1,11 +1,12 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { tryMegaFileUrlToPreviewUrl } from '@/lib/mega/embed';
 import { acquirePreview, releasePreview } from '@/lib/preview-manager';
 import { previewDelayMs } from '@/lib/config';
-import { cachedCardPreviewMeta, repollCardHoverPreview, resolveCardHoverPreview } from '@/lib/preview-meta-client';
+import { cachedCardPreviewMeta, resolveCardHoverPreview, waitForCardHoverPreview } from '@/lib/preview-meta-client';
 import { formatDuration } from '@/components/format';
 import { FilmIcon } from '@/components/icons';
 import { PreviewVideo } from '@/components/PreviewVideo';
@@ -51,12 +52,17 @@ export function VideoCard({
 }: VideoCardProps) {
   const [preview, setPreview] = useState<PreviewState>('idle');
   const [previewView, setPreviewView] = useState<PreviewView>(null);
+  const router = useRouter();
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const touchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeRef = useRef(false);
   const suppressClickRef = useRef(false);
   const touchGuardUntilRef = useRef(0);
   const metaInFlightRef = useRef(false);
+  /** Short grace timer: show the legacy iframe while local generation runs. */
+  const iframeFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Invalidates async meta chains when the preview stops (leave/switch). */
+  const runIdRef = useRef(0);
 
   const previewSrc = megaUrl ? tryMegaFileUrlToPreviewUrl(megaUrl) : null;
 
@@ -71,6 +77,11 @@ export function VideoCard({
     }
     activeRef.current = false;
     metaInFlightRef.current = false;
+    runIdRef.current++;
+    if (iframeFallbackRef.current) {
+      clearTimeout(iframeFallbackRef.current);
+      iframeFallbackRef.current = null;
+    }
     setPreviewView(null);
     setPreview('idle');
   }, []);
@@ -108,9 +119,12 @@ export function VideoCard({
 
   /**
    * Activate the preview: the local hover clip wins whenever meta says it is
-   * ready (cached per page); otherwise ONE bounded meta resolution with a
-   * single re-poll for `generating`, then the MEGA-iframe fallback — the
-   * pre-Phase-5 behavior, fully preserved.
+   * ready (cached per page). Otherwise wait, bounded, for the background
+   * generation to finish — the meta endpoint admits the job and answers
+   * `generating` immediately, so this is a cheap poll, not a blocked fetch.
+   * If a legacy MEGA embed exists, it appears after a short 2.5 s grace and
+   * is replaced by the local clip when ready; terminal states/timeouts fall
+   * back immediately, preserving the pre-Phase-5 behavior.
    */
   const startPreview = useCallback(() => {
     activeRef.current = true;
@@ -123,18 +137,37 @@ export function VideoCard({
     }
     if (metaInFlightRef.current) return;
     metaInFlightRef.current = true;
+    const runId = ++runIdRef.current;
+    const stillActive = () => activeRef.current && runIdRef.current === runId;
     void (async () => {
       let url = await resolveCardHoverPreview(id);
-      if (!url) {
-        // `generating` on first hover: one bounded re-poll, then fallback.
-        url = await repollCardHoverPreview(id);
+      let iframeShown = false;
+
+      // Cold local generation: cards that already have a MEGA embed keep a
+      // short fallback path instead of waiting the whole 30 s poll window.
+      // Polling continues; if the local clip arrives it replaces the iframe.
+      if (!url && previewSrc && stillActive()) {
+        iframeFallbackRef.current = setTimeout(() => {
+          iframeFallbackRef.current = null;
+          if (!stillActive()) return;
+          iframeShown = true;
+          beginIframePreview();
+        }, 2500);
       }
-      metaInFlightRef.current = false;
-      if (!activeRef.current) return; // pointer left while meta resolved
+
+      if (!url && stillActive()) {
+        url = await waitForCardHoverPreview(id, stillActive);
+      }
+      if (iframeFallbackRef.current) {
+        clearTimeout(iframeFallbackRef.current);
+        iframeFallbackRef.current = null;
+      }
+      if (runIdRef.current === runId) metaInFlightRef.current = false;
+      if (!stillActive()) return; // pointer left / another card took over
       if (url) beginLocalPreview(url);
-      else beginIframePreview();
+      else if (!iframeShown) beginIframePreview();
     })();
-  }, [beginIframePreview, beginLocalPreview, id, stopSelf]);
+  }, [beginIframePreview, beginLocalPreview, id, previewSrc, stopSelf]);
 
   // Scheduling is unconditional now: a local preview exists for videos that
   // have no MEGA embed URL (private sources) too. Cards without either kind
@@ -182,7 +215,9 @@ export function VideoCard({
   }
 
   function openVideo() {
-    window.open(`/video/${slug}`, '_blank', 'noopener');
+    // Internal navigation: always the CURRENT tab. `window.open(..., '_blank')`
+    // here was the source of every card opening a duplicate tab/window.
+    router.push(`/video/${slug}`);
   }
 
   function handleClick(e: React.MouseEvent) {

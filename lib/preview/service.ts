@@ -55,7 +55,7 @@ import {
   probeBrightnessFrames,
   probeMedia,
 } from './ffmpeg';
-import { PreviewQueue, QueueFullError, previewQueueSingleton } from './queue';
+import { PreviewQueue, previewQueueSingleton } from './queue';
 import { buildSpriteVtt, candidatePositions, spritePlan } from './segment';
 import {
   createWorkDir,
@@ -495,24 +495,18 @@ function enqueueGeneration(
   kind: 'hover' | 'timeline',
   signal: AbortSignal | undefined,
   deps: PreviewServiceDeps,
-): Promise<'started' | 'queued' | 'rejected' | 'busy'> {
+): 'started' | 'queued' | 'rejected' {
   const key = `${kind}:${video.id}`;
-  if (deps.queue.has(key)) return Promise.resolve('started');
-  if (heapAdmissionRefused()) return Promise.resolve('rejected');
-  return deps.queue
-    .enqueue(
-      key,
-      () => (kind === 'hover' ? generateHover(video, deps) : generateTimeline(video, deps)),
-      signal ?? null,
-    )
-    .then(
-      () => 'started' as const,
-      (err: unknown) => {
-        if (err instanceof QueueFullError) return 'busy' as const;
-        console.warn(`${GENERATION_LOG_PREFIX} queue error ${key}: ${err instanceof Error ? err.message : err}`);
-        return 'busy' as const;
-      },
-    );
+  if (deps.queue.has(key)) return 'started';
+  if (heapAdmissionRefused()) return 'rejected';
+  // IMPORTANT: admit only. The meta endpoint must answer in milliseconds
+  // with `generating`; waiting for the job outcome made meta block for the
+  // entire MEGA download + ffmpeg run (and the browser fetch timed out).
+  return deps.queue.enqueueNow(
+    key,
+    () => (kind === 'hover' ? generateHover(video, deps) : generateTimeline(video, deps)),
+    signal ?? null,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -596,8 +590,8 @@ export async function handlePreviewMeta(
       hoverCooldown = true;
     } else {
       // Not ready (or a ready sidecar without bytes — stale): enqueue a run.
-      const outcome = await enqueueGeneration(video, 'hover', request.signal, deps);
-      hoverStatus = outcome === 'busy' || outcome === 'rejected' ? 'rejected' : 'generating';
+      const outcome = enqueueGeneration(video, 'hover', request.signal, deps);
+      hoverStatus = outcome === 'rejected' ? 'rejected' : 'generating';
     }
     base.status = hoverStatus;
   } else {
@@ -632,8 +626,8 @@ export async function handlePreviewMeta(
       timelineStatus = 'unavailable';
       reason = 'cooldown';
     } else {
-      const outcome = await enqueueGeneration(video, 'timeline', request.signal, deps);
-      if (outcome === 'busy' || outcome === 'rejected') {
+      const outcome = enqueueGeneration(video, 'timeline', request.signal, deps);
+      if (outcome === 'rejected') {
         timelineStatus = 'unavailable';
         reason = 'busy';
       } else {

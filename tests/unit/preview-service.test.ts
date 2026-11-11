@@ -18,13 +18,11 @@ process.env.DATABASE_URL ||= 'postgresql://megatube:megatube-dev-only@localhost:
 delete process.env.PREVIEW_DISABLED;
 
 let svc: typeof import('@/lib/preview/service');
-let queueMod: typeof import('@/lib/preview/queue');
 
 type PreviewSidecar = import('@/lib/preview/types').PreviewSidecar;
 
 before(async () => {
   svc = await import('@/lib/preview/service');
-  queueMod = await import('@/lib/preview/queue');
 });
 
 after(() => {
@@ -53,7 +51,11 @@ function videoRow(overrides: Partial<svc.PreviewVideoRow> = {}): svc.PreviewVide
 
 interface QueueStub {
   has: (key: string) => boolean;
-  enqueue: (key: string, runner: () => Promise<unknown>, signal?: AbortSignal | null) => Promise<string>;
+  enqueueNow: (
+    key: string,
+    runner: () => Promise<unknown>,
+    signal?: AbortSignal | null,
+  ) => 'started' | 'queued' | 'rejected';
   calls: Array<{ key: string; signal: AbortSignal | null }>;
 }
 
@@ -62,10 +64,9 @@ function stubQueue(opts?: { full?: boolean; inFlight?: boolean }): QueueStub {
   return {
     calls,
     has: () => opts?.inFlight ?? false,
-    enqueue: (key, _runner, signal) => {
+    enqueueNow: (key, _runner, signal) => {
       calls.push({ key, signal: signal ?? null });
-      if (opts?.full) return Promise.reject(new queueMod.QueueFullError());
-      return Promise.resolve('completed');
+      return opts?.full ? 'rejected' : 'started';
     },
   };
 }
@@ -195,6 +196,35 @@ test('meta: queue full → rejected (no work started)', async () => {
   const res = await svc.handlePreviewMeta(USER, '7', {}, makeDeps({ queue }));
   const body = (await res.json()) as { status: string };
   assert.equal(body.status, 'rejected');
+});
+
+test('meta: answers generating immediately; never waits for generation', async () => {
+  clean();
+  let release!: (outcome: string) => void;
+  const completion = new Promise<string>((resolve) => {
+    release = resolve;
+  });
+  const calls: Array<{ key: string }> = [];
+  const hangingQueue = {
+    has: () => false,
+    // If the service regresses to awaiting the completion promise (the old
+    // bug), this never resolves and the race below fails.
+    enqueue: () => completion,
+    enqueueNow: (key: string) => {
+      calls.push({ key });
+      return 'started' as const;
+    },
+  };
+  const res = await Promise.race([
+    svc.handlePreviewMeta(USER, '7', {}, makeDeps({ queue: hangingQueue as never })),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('meta blocked on generation')), 500),
+    ),
+  ]);
+  const body = (await (res as Response).json()) as { status: string };
+  assert.equal(body.status, 'generating');
+  assert.deepEqual(calls, [{ key: 'hover:7' }]);
+  release('completed');
 });
 
 test('meta: cooldown parks the video with zero enqueue', async () => {

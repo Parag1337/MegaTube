@@ -1,10 +1,15 @@
 /**
- * Phase 5: client-side hover-preview meta cache.
+ * Phase 5: client-side hover-preview meta cache + bounded readiness wait.
  *
  * Rapid movement across cards must issue at most one meta request per video
- * per page (design §10), and a known-ready hover URL is reused instantly on
- * repeat hovers. Page-lifetime module cache — no persistence, no invalidation
- * beyond reload (a stale clip URL simply 404s and the card falls back).
+ * per page for a KNOWN-READY clip (design §10). Cold videos are different:
+ * the first hover triggers background generation, so the card polls the
+ * (cheap) meta endpoint until the clip is ready while the pointer stays on
+ * the card. Polling is bounded — 30 s total — and stops immediately when the
+ * pointer leaves, the card switches, or the server reports a terminal state.
+ *
+ * Page-lifetime module cache — no persistence; a stale clip URL simply 404s
+ * and the card falls back.
  */
 
 export interface CardPreviewMeta {
@@ -15,13 +20,21 @@ export interface CardPreviewMeta {
 const cache = new Map<number, CardPreviewMeta>();
 
 const META_TIMEOUT_MS = 5000;
-const GENERATING_REPOLL_MS = 2500;
+
+/** Defaults for waiting out a cold background generation. */
+const GENERATING_POLL_INTERVAL_MS = 2000;
+const GENERATING_WAIT_MS = 30_000;
 
 export function cachedCardPreviewMeta(videoId: number): CardPreviewMeta | null {
   return cache.get(videoId) ?? null;
 }
 
-async function fetchMetaOnce(videoId: number): Promise<CardPreviewMeta | null> {
+interface MetaFetchResult {
+  status: string;
+  hoverUrl: string | null;
+}
+
+async function fetchMetaOnce(videoId: number): Promise<MetaFetchResult | null> {
   const timeout = AbortSignal.timeout(META_TIMEOUT_MS);
   try {
     const res = await fetch(`/api/preview/${videoId}/meta?want=hover`, { signal: timeout });
@@ -31,36 +44,57 @@ async function fetchMetaOnce(videoId: number): Promise<CardPreviewMeta | null> {
       hover?: { url?: string } | null;
     };
     const hoverUrl = data.hover?.url ?? null;
-    const meta: CardPreviewMeta = { hoverUrl };
-    if (hoverUrl) cache.set(videoId, meta);
-    return meta;
+    if (hoverUrl) cache.set(videoId, { hoverUrl });
+    return { status: data.status ?? 'unavailable', hoverUrl };
   } catch {
     return null;
   }
 }
 
 /**
- * Resolve the hover preview for a card the moment hover fires:
+ * Resolve the hover preview the moment hover fires:
  *  - known-ready from cache → immediate;
  *  - `ready` in meta → cached and returned;
- *  - `generating` → exactly one bounded re-poll (~2.5 s), then give up
- *    (the card keeps its thumbnail; a later hover tries again);
- *  - anything else → null (caller falls back to the iframe preview).
+ *  - anything else → null (the caller decides whether to wait/fall back).
  */
 export async function resolveCardHoverPreview(videoId: number): Promise<string | null> {
   const cached = cache.get(videoId);
   if (cached?.hoverUrl) return cached.hoverUrl;
   const meta = await fetchMetaOnce(videoId);
-  if (meta?.hoverUrl) return meta.hoverUrl;
-  return null;
+  return meta?.hoverUrl ?? null;
 }
 
-/** One bounded re-poll for `generating` states (design §10). */
-export async function repollCardHoverPreview(videoId: number): Promise<string | null> {
-  try {
-    await new Promise((r) => setTimeout(r, GENERATING_REPOLL_MS));
-  } catch {
-    return null;
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Wait (bounded) for a cold preview to finish generating. The meta endpoint
+ * admits the job and answers `generating` immediately; this loop polls until
+ * the clip is ready, the server reports a terminal state, the pointer leaves
+ * (`isActive` false), or the timeout expires. Returns the clip URL or null.
+ */
+export async function waitForCardHoverPreview(
+  videoId: number,
+  isActive: () => boolean,
+  opts?: { timeoutMs?: number; intervalMs?: number },
+): Promise<string | null> {
+  const timeoutMs = opts?.timeoutMs ?? GENERATING_WAIT_MS;
+  const intervalMs = opts?.intervalMs ?? GENERATING_POLL_INTERVAL_MS;
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    if (!isActive()) return null;
+    await sleep(Math.min(intervalMs, Math.max(0, deadline - Date.now())));
+    if (!isActive()) return null;
+
+    const cached = cache.get(videoId);
+    if (cached?.hoverUrl) return cached.hoverUrl;
+
+    const meta = await fetchMetaOnce(videoId);
+    if (!meta) return null; // network/auth failure → caller falls back
+    if (meta.hoverUrl) return meta.hoverUrl;
+    if (meta.status !== 'generating') return null; // terminal: unavailable/rejected
   }
-  return resolveCardHoverPreview(videoId);
+  return null;
 }
