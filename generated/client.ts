@@ -57,6 +57,16 @@ export type Video = Prisma.VideoModel
  */
 export type User = Prisma.UserModel
 /**
+ * Model PreviewGenerationJob
+ * Phase 5.1 durable preview-generation backlog.
+ * 
+ * One row per (video, hover preview, source fingerprint, generation
+ * version). The unique idempotency key makes sync/hover/manual enqueues
+ * safe to repeat: a duplicate insert is a no-op instead of a duplicate job.
+ * MEGA URLs, session material and file keys are never stored here.
+ */
+export type PreviewGenerationJob = Prisma.PreviewGenerationJobModel
+/**
  * Model MegaAccount
  * A MEGA account linked to a website user. One website user can link many
  * MEGA accounts; one MEGA account belongs to exactly one website user.

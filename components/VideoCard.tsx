@@ -1,12 +1,25 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { tryMegaFileUrlToPreviewUrl } from '@/lib/mega/embed';
-import { acquirePreview, releasePreview } from '@/lib/preview-manager';
+import {
+  acquirePreview,
+  releasePreview,
+  removeMobileCandidate,
+  reportMobileVisibility,
+  MOBILE_VISIBILITY_THRESHOLD,
+} from '@/lib/preview-manager';
 import { previewDelayMs } from '@/lib/config';
+import {
+  cachedCardPreviewMeta,
+  resolveCardHoverPreviewState,
+  waitForCardHoverPreviewDetailed,
+} from '@/lib/preview-meta-client';
 import { formatDuration } from '@/components/format';
 import { FilmIcon } from '@/components/icons';
+import { PreviewVideo } from '@/components/PreviewVideo';
 import { ThumbImage } from '@/components/ThumbImage';
 import { VideoCardMenu } from '@/components/VideoCardMenu';
 
@@ -31,6 +44,33 @@ interface VideoCardProps {
 
 type PreviewState = 'idle' | 'pending' | 'active';
 
+/** What the active preview renders: the local clip, or the iframe fallback. */
+type PreviewView = { kind: 'local'; url: string } | { kind: 'iframe' } | null;
+
+/**
+ * Safety bound for local clip startup. The clip is tiny and served locally,
+ * so a much longer wait means the media element is stuck; stop the loader and
+ * use the existing fallback instead of leaving a spinner on the card forever.
+ */
+const LOCAL_PREVIEW_START_TIMEOUT_MS = 10_000;
+
+/** Mobile autoplay: card must stay this visible for this long before playing. */
+const MOBILE_DWELL_MS = 500;
+
+/** Map a real server job state to the small corner indicator label. */
+function previewStatusLabel(status: string): string {
+  switch (status) {
+    case 'pending':
+      return 'Preparing preview';
+    case 'queued':
+      return 'Waiting for preview';
+    case 'generating':
+      return 'Loading preview';
+    default:
+      return 'Loading preview';
+  }
+}
+
 export function VideoCard({
   id,
   slug,
@@ -45,11 +85,22 @@ export function VideoCard({
   priority = false,
 }: VideoCardProps) {
   const [preview, setPreview] = useState<PreviewState>('idle');
+  const [previewView, setPreviewView] = useState<PreviewView>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewLabel, setPreviewLabel] = useState('Loading preview');
+  const router = useRouter();
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const mobileId = useId();
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const touchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeRef = useRef(false);
-  const suppressClickRef = useRef(false);
   const touchGuardUntilRef = useRef(0);
+  const metaInFlightRef = useRef(false);
+  /** Short grace timer: show the legacy iframe while local generation runs. */
+  const iframeFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Stops the loading indicator if a local clip never starts playing. */
+  const localStartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Invalidates async meta chains when the preview stops (leave/switch). */
+  const runIdRef = useRef(0);
 
   const previewSrc = megaUrl ? tryMegaFileUrlToPreviewUrl(megaUrl) : null;
 
@@ -58,11 +109,19 @@ export function VideoCard({
       clearTimeout(hoverTimerRef.current);
       hoverTimerRef.current = null;
     }
-    if (touchTimerRef.current) {
-      clearTimeout(touchTimerRef.current);
-      touchTimerRef.current = null;
-    }
     activeRef.current = false;
+    metaInFlightRef.current = false;
+    runIdRef.current++;
+    if (iframeFallbackRef.current) {
+      clearTimeout(iframeFallbackRef.current);
+      iframeFallbackRef.current = null;
+    }
+    if (localStartTimerRef.current) {
+      clearTimeout(localStartTimerRef.current);
+      localStartTimerRef.current = null;
+    }
+    setPreviewLoading(false);
+    setPreviewView(null);
     setPreview('idle');
   }, []);
 
@@ -78,23 +137,145 @@ export function VideoCard({
     };
   }, [stopSelf]);
 
+  const beginIframePreview = useCallback(() => {
+    if (!previewSrc) {
+      // Neither a local clip nor the MEGA embed is available: no preview.
+      stopSelf();
+      return;
+    }
+    activeRef.current = true;
+    acquirePreview(stopSelf);
+    setPreviewLoading(false);
+    setPreviewView({ kind: 'iframe' });
+    setPreview('active');
+  }, [previewSrc, stopSelf]);
+
+  /**
+   * A local clip failed before playback (media error, autoplay rejection, or
+   * startup watchdog). Stop its loader immediately; use the legacy embed when
+   * one exists, otherwise return to the thumbnail.
+   */
+  const failLocalPreview = useCallback(() => {
+    if (!activeRef.current) return;
+    setPreviewLoading(false);
+    if (previewSrc) beginIframePreview();
+    else stopSelf();
+  }, [beginIframePreview, previewSrc, stopSelf]);
+
+  const beginLocalPreview = useCallback((url: string) => {
+    activeRef.current = true;
+    acquirePreview(stopSelf);
+    setPreviewLabel('Loading preview');
+    setPreviewLoading(true);
+    setPreviewView({ kind: 'local', url });
+    setPreview('active');
+
+    // The indicator stays up until the clip actually plays. If the media
+    // element never reaches `playing`, fail over instead of spinning forever.
+    if (localStartTimerRef.current) {
+      clearTimeout(localStartTimerRef.current);
+    }
+    localStartTimerRef.current = setTimeout(() => {
+      localStartTimerRef.current = null;
+      failLocalPreview();
+    }, LOCAL_PREVIEW_START_TIMEOUT_MS);
+  }, [failLocalPreview, stopSelf]);
+
+  const handlePreviewPlaying = useCallback(() => {
+    if (!activeRef.current) return;
+    if (localStartTimerRef.current) {
+      clearTimeout(localStartTimerRef.current);
+      localStartTimerRef.current = null;
+    }
+    setPreviewLoading(false);
+  }, []);
+
+  const handlePreviewError = useCallback(() => {
+    if (localStartTimerRef.current) {
+      clearTimeout(localStartTimerRef.current);
+      localStartTimerRef.current = null;
+    }
+    failLocalPreview();
+  }, [failLocalPreview]);
+
+  /**
+   * Activate the preview: the local hover clip wins whenever meta says it is
+   * ready (cached per page). Otherwise wait, bounded, for the background
+   * generation to finish — the meta endpoint admits the job and answers
+   * `generating` immediately, so this is a cheap poll, not a blocked fetch.
+   * If a legacy MEGA embed exists, it appears after a short 2.5 s grace and
+   * is replaced by the local clip when ready; terminal states/timeouts fall
+   * back immediately, preserving the pre-Phase-5 behavior.
+   */
   const startPreview = useCallback(() => {
     activeRef.current = true;
     acquirePreview(stopSelf);
-    setPreview('active');
-  }, [stopSelf]);
 
+    const cached = cachedCardPreviewMeta(id);
+    if (cached?.hoverUrl) {
+      // Known-ready: mount immediately; the loader stays until `playing`.
+      beginLocalPreview(cached.hoverUrl);
+      return;
+    }
+    if (metaInFlightRef.current) return;
+    setPreviewLabel('Preparing preview');
+    setPreviewLoading(true);
+    metaInFlightRef.current = true;
+    const runId = ++runIdRef.current;
+    const stillActive = () => activeRef.current && runIdRef.current === runId;
+    void (async () => {
+      const first = await resolveCardHoverPreviewState(id);
+      let url = first.url;
+      let iframeShown = false;
+      if (!url && stillActive()) setPreviewLabel(previewStatusLabel(first.status));
+
+      // Cold local generation: cards that already have a MEGA embed keep a
+      // short fallback path instead of waiting the whole 30 s poll window.
+      // Polling continues; if the local clip arrives it replaces the iframe.
+      if (!url && previewSrc && stillActive()) {
+        iframeFallbackRef.current = setTimeout(() => {
+          iframeFallbackRef.current = null;
+          if (!stillActive()) return;
+          iframeShown = true;
+          beginIframePreview();
+        }, 2500);
+      }
+
+      if (!url && stillActive()) {
+        const waited = await waitForCardHoverPreviewDetailed(id, stillActive, {
+          onStatus: (status) => {
+            if (stillActive()) setPreviewLabel(previewStatusLabel(status));
+          },
+        });
+        url = waited.url;
+      }
+      if (iframeFallbackRef.current) {
+        clearTimeout(iframeFallbackRef.current);
+        iframeFallbackRef.current = null;
+      }
+      if (runIdRef.current === runId) metaInFlightRef.current = false;
+      if (!stillActive()) return; // pointer left / another card took over
+      if (url) {
+        beginLocalPreview(url);
+      } else if (iframeShown) {
+        setPreviewLoading(false);
+      } else {
+        // Failed / unsupported / timed out: never leave an endless spinner.
+        stopPreview();
+      }
+    })();
+  }, [beginIframePreview, beginLocalPreview, id, previewSrc, stopPreview, stopSelf]);
+
+  // Scheduling is unconditional now: a local preview exists for videos that
+  // have no MEGA embed URL (private sources) too. Cards without either kind
+  // of preview simply resolve meta once (cached) and show nothing.
   const scheduleHoverPreview = useCallback(() => {
-    if (activeRef.current || !previewSrc) return;
+    if (activeRef.current) return;
     hoverTimerRef.current = setTimeout(startPreview, previewDelayMs());
-  }, [startPreview, previewSrc]);
-
-  const scheduleTouchPreview = useCallback(() => {
-    if (activeRef.current || !previewSrc) return;
-    touchTimerRef.current = setTimeout(startPreview, previewDelayMs());
-  }, [startPreview, previewSrc]);
+  }, [startPreview]);
 
   function handleMouseEnter() {
+    // A tap on a touch device can synthesize mouseenter; ignore that window.
     if (Date.now() < touchGuardUntilRef.current) return;
     scheduleHoverPreview();
   }
@@ -105,39 +286,101 @@ export function VideoCard({
   function handlePointerDown(e: React.PointerEvent) {
     if (e.pointerType !== 'touch') return;
     touchGuardUntilRef.current = Date.now() + 1500;
-    scheduleTouchPreview();
-  }
-  function handlePointerUp(e: React.PointerEvent) {
-    if (e.pointerType !== 'touch') return;
-    if (activeRef.current) {
-      suppressClickRef.current = true;
-    }
-    touchGuardUntilRef.current = Date.now() + 1500;
-    stopPreview();
-  }
-  function handlePointerCancel(e: React.PointerEvent) {
-    if (e.pointerType !== 'touch') return;
-    touchGuardUntilRef.current = Date.now() + 1500;
-    stopPreview();
-  }
-  function handleTouchMove() {
-    if (touchTimerRef.current || activeRef.current) {
-      stopPreview();
-    }
   }
 
+  // Latest start/stop for the IntersectionObserver, which is installed once.
+  const mobileStartRef = useRef(startPreview);
+  const mobileStopRef = useRef(stopPreview);
+  useEffect(() => {
+    mobileStartRef.current = startPreview;
+    mobileStopRef.current = stopPreview;
+  }, [startPreview, stopPreview]);
+
+  /**
+   * Phase 5.1 mobile previews: when a card is at least ~60% visible and stays
+   * that way briefly, it becomes a candidate for the single autoplay slot.
+   * The coordinator picks the most prominent candidate, so scrolling a grid
+   * never plays several videos at once. Only installed on devices without a
+   * conventional hover pointer, and suppressed for reduced-motion/save-data.
+   */
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el || typeof window === 'undefined' || typeof IntersectionObserver === 'undefined') return;
+    if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const connection = (
+      navigator as Navigator & { connection?: { saveData?: boolean } }
+    ).connection;
+    if (connection?.saveData) return;
+
+    let dwellTimer: ReturnType<typeof setTimeout> | null = null;
+    let reported = false;
+
+    const clearDwell = () => {
+      if (dwellTimer) {
+        clearTimeout(dwellTimer);
+        dwellTimer = null;
+      }
+    };
+
+    const unregister = () => {
+      clearDwell();
+      if (reported) {
+        reported = false;
+        removeMobileCandidate(mobileId);
+      }
+    };
+
+    const handlers = {
+      activate: () => mobileStartRef.current(),
+      deactivate: () => {
+        reported = false;
+        mobileStopRef.current();
+      },
+    };
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[entries.length - 1];
+        if (!entry) return;
+        const ratio = entry.isIntersecting ? entry.intersectionRatio : 0;
+        if (ratio >= MOBILE_VISIBILITY_THRESHOLD) {
+          if (reported) {
+            reportMobileVisibility(mobileId, ratio, handlers);
+          } else if (!dwellTimer) {
+            dwellTimer = setTimeout(() => {
+              dwellTimer = null;
+              reported = true;
+              reportMobileVisibility(mobileId, ratio, handlers);
+            }, MOBILE_DWELL_MS);
+          }
+        } else {
+          unregister();
+          // Leaving the viewport stops this card's preview immediately; a
+          // durable generation job is never cancelled by the client.
+          if (activeRef.current) mobileStopRef.current();
+        }
+      },
+      { threshold: [0, MOBILE_VISIBILITY_THRESHOLD, 0.75, 1] },
+    );
+    observer.observe(el);
+
+    return () => {
+      unregister();
+      observer.disconnect();
+    };
+  }, [mobileId]);
+
   function openVideo() {
-    window.open(`/video/${slug}`, '_blank', 'noopener');
+    // Internal navigation: always the CURRENT tab. `window.open(..., '_blank')`
+    // here was the source of every card opening a duplicate tab/window.
+    router.push(`/video/${slug}`);
   }
 
   function handleClick(e: React.MouseEvent) {
     if ((e.target as HTMLElement).closest('a')) return;
     // The ⋮ action menu manages its own clicks - never open the video.
     if ((e.target as HTMLElement).closest('[data-card-menu]')) return;
-    if (suppressClickRef.current) {
-      suppressClickRef.current = false;
-      return;
-    }
     e.preventDefault();
     openVideo();
   }
@@ -148,13 +391,12 @@ export function VideoCard({
 
   return (
     <div
+      ref={cardRef}
       className="group relative cursor-pointer select-none"
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       onPointerDown={handlePointerDown}
-      onPointerUp={handlePointerUp}
-      onPointerCancel={handlePointerCancel}
-      onTouchMove={handleTouchMove}
+      onPointerCancel={handlePointerDown}
       onClick={handleClick}
       role="link"
       tabIndex={0}
@@ -191,7 +433,26 @@ export function VideoCard({
           </div>
         )}
 
-        {showPreview && previewSrc && (
+        {showPreview && previewView?.kind === 'local' && (
+          <>
+            <PreviewVideo
+              src={previewView.url}
+              className="absolute inset-0 h-full w-full bg-black object-contain"
+              onPlaying={handlePreviewPlaying}
+              onError={handlePreviewError}
+            />
+            <div
+              className="absolute inset-0 z-10"
+              aria-hidden
+              onClick={(e) => {
+                e.stopPropagation();
+                openVideo();
+              }}
+            />
+          </>
+        )}
+
+        {showPreview && previewView?.kind === 'iframe' && previewSrc && (
           <>
             <iframe
               key={id}
@@ -214,9 +475,18 @@ export function VideoCard({
           </>
         )}
 
-        {preview === 'pending' && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/50">
-            <span className="h-8 w-8 animate-spin rounded-full border-2 border-muted-light/40 border-t-accent" />
+        {previewLoading && (
+          <div
+            data-preview-loading
+            role="status"
+            aria-label="Loading preview"
+            className="pointer-events-none absolute right-12 top-2 z-20 flex items-center gap-1.5 rounded-full border border-white/15 bg-black/75 px-2 py-1 text-[10px] font-medium leading-none text-white shadow-[0_2px_10px_rgba(0,0,0,0.45)] backdrop-blur-[2px]"
+          >
+            <span
+              aria-hidden
+              className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-white/30 border-t-white"
+            />
+            <span className="whitespace-nowrap">{previewLabel}</span>
           </div>
         )}
 

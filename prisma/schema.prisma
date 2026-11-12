@@ -69,6 +69,7 @@ model Video {
   watchlistedBy      WatchlistItem[]
   savedBy            SavedVideo[]
   watchHistory       WatchHistory[]
+  previewJobs        PreviewGenerationJob[]
 
   @@unique([megaAccountId, megaNodeId])
   @@index([creatorId, createdAt])
@@ -96,6 +97,67 @@ model User {
   savedVideos  SavedVideo[]
   savedFolders SavedFolder[]
   watchHistory WatchHistory[]
+  /// Phase 5.1: non-blocking preview generation during MEGA sync (default on).
+  previewAutoGenerate Boolean @default(true)
+  /// Phase 5.1: administrator pause for bulk preview generation. Existing
+  /// pending jobs stay durable and resume when this is cleared.
+  previewPaused       Boolean @default(false)
+}
+
+/// Phase 5.1 durable preview-generation backlog.
+///
+/// One row per (video, hover preview, source fingerprint, generation
+/// version). The unique idempotency key makes sync/hover/manual enqueues
+/// safe to repeat: a duplicate insert is a no-op instead of a duplicate job.
+/// MEGA URLs, session material and file keys are never stored here.
+model PreviewGenerationJob {
+  id                 Int       @id @default(autoincrement())
+  videoId            Int
+  kind               String    @default("hover")
+  /// Identity of the source bytes: megaNodeId + fileSize.
+  sourceFingerprint  String
+  /// Fingerprint of the encoding/scene-selection configuration.
+  generationVersion  String
+  /// `${videoId}:${kind}:${sourceFingerprint}:${generationVersion}`
+  idempotencyKey     String    @unique
+  /// pending | queued | generating | completed | failed | unsupported
+  status             String    @default("pending")
+  /// acquiring | scene-selection | encoding | publishing | null
+  stage              String?
+  priority           Int       @default(0)
+  /// Successful worker claims. Incremented even when the worker dies before
+  /// any generation work starts, so crash-only churn is visible separately
+  /// from real generation attempts.
+  claimCount         Int       @default(0)
+  /// Actual generation attempts. Incremented once, via
+  /// beginPreviewGenerationAttempt(), when a worker starts source acquisition
+  /// for a claimed job. A claim-then-crash can never consume this budget.
+  attempts           Int       @default(0)
+  maxAttempts        Int       @default(3)
+  /// Expired-lease / abandoned-worker recovery events. Bounded separately by
+  /// PREVIEW_JOB_MAX_RECOVERIES; recovery does not silently reset attempts.
+  recoveryCount      Int       @default(0)
+  nextRetryAt        DateTime? @default(now())
+  lockedBy           String?
+  leaseExpiresAt     DateTime?
+  queuedAt           DateTime  @default(now())
+  startedAt          DateTime?
+  completedAt        DateTime?
+  /// Sanitized, bounded failure reason (never URLs/credentials).
+  lastError          String?
+  errorCode          String?
+  artifactBytes      Int?
+  /// Sanitized JSON metrics: MEGA bytes, acquisition/ffmpeg/total ms,
+  /// scene timestamps and output size.
+  metrics            String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  video              Video     @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextRetryAt, priority])
+  @@index([videoId, kind])
+  @@index([leaseExpiresAt])
+  @@index([status, completedAt])
 }
 
 /// A MEGA account linked to a website user. One website user can link many

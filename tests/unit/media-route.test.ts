@@ -40,7 +40,7 @@ import { encrypt } from 'megajs';
 import { encryptSecret } from '@/lib/mega/envelope';
 import { MegaError } from '@/lib/mega/account';
 import type { TemporaryDownloadUrl } from '@/lib/mega/account';
-import type { handleMediaRequest as HandleMediaRequestFn, MediaDeps } from '@/app/api/media/[videoId]/route';
+import type { handleMediaRequest as HandleMediaRequestFn, MediaDeps } from '@/app/api/media/[videoId]/handler';
 
 let handleMediaRequest: typeof HandleMediaRequestFn;
 let prisma: typeof import('@/lib/db')['prisma'];
@@ -157,7 +157,7 @@ async function makeVideo(accountId: number, slug: string) {
 before(async () => {
   ({ prisma } = await import('@/lib/db'));
   ({ createMegaAccount, MEGA_ACCOUNT_STATUSES } = await import('@/lib/megaAccounts'));
-  const route = await import('@/app/api/media/[videoId]/route');
+  const route = await import('@/app/api/media/[videoId]/handler');
   handleMediaRequest = route.handleMediaRequest;
   // Build a small real MPEG-TS fixture (ffmpeg + megajs encryption) for the
   // cold-pipeline tests. Skipped gracefully when ffmpeg is unavailable.
@@ -896,7 +896,7 @@ test('P1.2: successful fa:8 probe persists once, second play reuses it (no re-pr
 });
 
 test('P1.2: invalid durations are never persisted; valid values round + first-wins', async () => {
-  const { persistVideoDuration } = await import('@/app/api/media/[videoId]/route');
+  const { persistVideoDuration } = await import('@/app/api/media/[videoId]/handler');
   const u = await makeUser('durvalid');
   const acc = await makeAccount(u.id, 'durvalid@example.com');
   const v = await makeFaVideo(acc.id, 'durvalid-video', null);

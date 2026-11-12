@@ -42,7 +42,7 @@ import {
 import type {
   handleDownloadRequest as HandleDownloadRequestFn,
   DownloadDeps,
-} from '@/app/api/download/[videoId]/route';
+} from '@/app/api/download/[videoId]/handler';
 
 let handleDownloadRequest: typeof HandleDownloadRequestFn;
 let prisma: typeof import('@/lib/db')['prisma'];
@@ -256,7 +256,7 @@ async function makeVideo(accountId: number, slug: string, overrides: Record<stri
 before(async () => {
   ({ prisma } = await import('@/lib/db'));
   ({ createMegaAccount, MEGA_ACCOUNT_STATUSES } = await import('@/lib/megaAccounts'));
-  ({ handleDownloadRequest } = await import('@/app/api/download/[videoId]/route'));
+  ({ handleDownloadRequest } = await import('@/app/api/download/[videoId]/handler'));
 });
 
 test('unauthenticated request is rejected (401)', async () => {

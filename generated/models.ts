@@ -11,6 +11,7 @@
 export type * from './models/Creator'
 export type * from './models/Video'
 export type * from './models/User'
+export type * from './models/PreviewGenerationJob'
 export type * from './models/MegaAccount'
 export type * from './models/Session'
 export type * from './models/WatchlistItem'

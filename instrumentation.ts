@@ -31,5 +31,20 @@ export async function register() {
     // and deferred past startup - never in the playback startup path.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     require('./lib/media/cache').startMediaCacheMaintenance();
+    // Phase 5 (additive): preview-store LRU eviction + orphan temp-dir sweep
+    // (`<id>.tmp-*/` from crashed generation jobs). Same deferred pattern;
+    // never touches the media cache directory.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('./lib/preview/cache').startPreviewMaintenance();
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('./lib/preview/source').sweepOrphanWorkDirs().catch(() => {});
+    // Phase 5.1: resume the durable preview backlog. One guarded worker loop
+    // per Node server; claims jobs with SKIP LOCKED so multiple instances
+    // never generate the same preview twice. Never starts during a build.
+    // Dynamic import (not require): Turbopack's instrumentation CJS interop
+    // does not expose this module's named exports through require().
+    await import('./lib/preview/worker')
+      .then((m) => m.startPreviewWorker())
+      .catch(() => {});
   }
 }

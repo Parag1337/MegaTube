@@ -31,6 +31,8 @@ export type UserMinAggregateOutputType = {
   clerkUserId: string | null
   createdAt: Date | null
   updatedAt: Date | null
+  previewAutoGenerate: boolean | null
+  previewPaused: boolean | null
 }
 
 export type UserMaxAggregateOutputType = {
@@ -40,6 +42,8 @@ export type UserMaxAggregateOutputType = {
   clerkUserId: string | null
   createdAt: Date | null
   updatedAt: Date | null
+  previewAutoGenerate: boolean | null
+  previewPaused: boolean | null
 }
 
 export type UserCountAggregateOutputType = {
@@ -49,6 +53,8 @@ export type UserCountAggregateOutputType = {
   clerkUserId: number
   createdAt: number
   updatedAt: number
+  previewAutoGenerate: number
+  previewPaused: number
   _all: number
 }
 
@@ -60,6 +66,8 @@ export type UserMinAggregateInputType = {
   clerkUserId?: true
   createdAt?: true
   updatedAt?: true
+  previewAutoGenerate?: true
+  previewPaused?: true
 }
 
 export type UserMaxAggregateInputType = {
@@ -69,6 +77,8 @@ export type UserMaxAggregateInputType = {
   clerkUserId?: true
   createdAt?: true
   updatedAt?: true
+  previewAutoGenerate?: true
+  previewPaused?: true
 }
 
 export type UserCountAggregateInputType = {
@@ -78,6 +88,8 @@ export type UserCountAggregateInputType = {
   clerkUserId?: true
   createdAt?: true
   updatedAt?: true
+  previewAutoGenerate?: true
+  previewPaused?: true
   _all?: true
 }
 
@@ -160,6 +172,8 @@ export type UserGroupByOutputType = {
   clerkUserId: string | null
   createdAt: Date
   updatedAt: Date
+  previewAutoGenerate: boolean
+  previewPaused: boolean
   _count: UserCountAggregateOutputType | null
   _min: UserMinAggregateOutputType | null
   _max: UserMaxAggregateOutputType | null
@@ -190,6 +204,8 @@ export type UserWhereInput = {
   clerkUserId?: Prisma.StringNullableFilter<"User"> | string | null
   createdAt?: Prisma.DateTimeFilter<"User"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"User"> | Date | string
+  previewAutoGenerate?: Prisma.BoolFilter<"User"> | boolean
+  previewPaused?: Prisma.BoolFilter<"User"> | boolean
   megaAccounts?: Prisma.MegaAccountListRelationFilter
   sessions?: Prisma.SessionListRelationFilter
   creators?: Prisma.CreatorListRelationFilter
@@ -206,6 +222,8 @@ export type UserOrderByWithRelationInput = {
   clerkUserId?: Prisma.SortOrderInput | Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
+  previewAutoGenerate?: Prisma.SortOrder
+  previewPaused?: Prisma.SortOrder
   megaAccounts?: Prisma.MegaAccountOrderByRelationAggregateInput
   sessions?: Prisma.SessionOrderByRelationAggregateInput
   creators?: Prisma.CreatorOrderByRelationAggregateInput
@@ -225,6 +243,8 @@ export type UserWhereUniqueInput = Prisma.AtLeast<{
   passwordHash?: Prisma.StringFilter<"User"> | string
   createdAt?: Prisma.DateTimeFilter<"User"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"User"> | Date | string
+  previewAutoGenerate?: Prisma.BoolFilter<"User"> | boolean
+  previewPaused?: Prisma.BoolFilter<"User"> | boolean
   megaAccounts?: Prisma.MegaAccountListRelationFilter
   sessions?: Prisma.SessionListRelationFilter
   creators?: Prisma.CreatorListRelationFilter
@@ -241,6 +261,8 @@ export type UserOrderByWithAggregationInput = {
   clerkUserId?: Prisma.SortOrderInput | Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
+  previewAutoGenerate?: Prisma.SortOrder
+  previewPaused?: Prisma.SortOrder
   _count?: Prisma.UserCountOrderByAggregateInput
   _max?: Prisma.UserMaxOrderByAggregateInput
   _min?: Prisma.UserMinOrderByAggregateInput
@@ -256,6 +278,8 @@ export type UserScalarWhereWithAggregatesInput = {
   clerkUserId?: Prisma.StringNullableWithAggregatesFilter<"User"> | string | null
   createdAt?: Prisma.DateTimeWithAggregatesFilter<"User"> | Date | string
   updatedAt?: Prisma.DateTimeWithAggregatesFilter<"User"> | Date | string
+  previewAutoGenerate?: Prisma.BoolWithAggregatesFilter<"User"> | boolean
+  previewPaused?: Prisma.BoolWithAggregatesFilter<"User"> | boolean
 }
 
 export type UserCreateInput = {
@@ -265,6 +289,8 @@ export type UserCreateInput = {
   clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
+  previewAutoGenerate?: boolean
+  previewPaused?: boolean
   megaAccounts?: Prisma.MegaAccountCreateNestedManyWithoutUserInput
   sessions?: Prisma.SessionCreateNestedManyWithoutUserInput
   creators?: Prisma.CreatorCreateNestedManyWithoutUserInput
@@ -281,6 +307,8 @@ export type UserUncheckedCreateInput = {
   clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
+  previewAutoGenerate?: boolean
+  previewPaused?: boolean
   megaAccounts?: Prisma.MegaAccountUncheckedCreateNestedManyWithoutUserInput
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutUserInput
   creators?: Prisma.CreatorUncheckedCreateNestedManyWithoutUserInput
@@ -297,6 +325,8 @@ export type UserUpdateInput = {
   clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  previewAutoGenerate?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewPaused?: Prisma.BoolFieldUpdateOperationsInput | boolean
   megaAccounts?: Prisma.MegaAccountUpdateManyWithoutUserNestedInput
   sessions?: Prisma.SessionUpdateManyWithoutUserNestedInput
   creators?: Prisma.CreatorUpdateManyWithoutUserNestedInput
@@ -313,6 +343,8 @@ export type UserUncheckedUpdateInput = {
   clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  previewAutoGenerate?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewPaused?: Prisma.BoolFieldUpdateOperationsInput | boolean
   megaAccounts?: Prisma.MegaAccountUncheckedUpdateManyWithoutUserNestedInput
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutUserNestedInput
   creators?: Prisma.CreatorUncheckedUpdateManyWithoutUserNestedInput
@@ -329,6 +361,8 @@ export type UserCreateManyInput = {
   clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
+  previewAutoGenerate?: boolean
+  previewPaused?: boolean
 }
 
 export type UserUpdateManyMutationInput = {
@@ -338,6 +372,8 @@ export type UserUpdateManyMutationInput = {
   clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  previewAutoGenerate?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewPaused?: Prisma.BoolFieldUpdateOperationsInput | boolean
 }
 
 export type UserUncheckedUpdateManyInput = {
@@ -347,6 +383,8 @@ export type UserUncheckedUpdateManyInput = {
   clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  previewAutoGenerate?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewPaused?: Prisma.BoolFieldUpdateOperationsInput | boolean
 }
 
 export type UserScalarRelationFilter = {
@@ -361,6 +399,8 @@ export type UserCountOrderByAggregateInput = {
   clerkUserId?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
+  previewAutoGenerate?: Prisma.SortOrder
+  previewPaused?: Prisma.SortOrder
 }
 
 export type UserMaxOrderByAggregateInput = {
@@ -370,6 +410,8 @@ export type UserMaxOrderByAggregateInput = {
   clerkUserId?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
+  previewAutoGenerate?: Prisma.SortOrder
+  previewPaused?: Prisma.SortOrder
 }
 
 export type UserMinOrderByAggregateInput = {
@@ -379,6 +421,8 @@ export type UserMinOrderByAggregateInput = {
   clerkUserId?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
+  previewAutoGenerate?: Prisma.SortOrder
+  previewPaused?: Prisma.SortOrder
 }
 
 export type UserCreateNestedOneWithoutCreatorsInput = {
@@ -486,6 +530,8 @@ export type UserCreateWithoutCreatorsInput = {
   clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
+  previewAutoGenerate?: boolean
+  previewPaused?: boolean
   megaAccounts?: Prisma.MegaAccountCreateNestedManyWithoutUserInput
   sessions?: Prisma.SessionCreateNestedManyWithoutUserInput
   watchlist?: Prisma.WatchlistItemCreateNestedManyWithoutUserInput
@@ -501,6 +547,8 @@ export type UserUncheckedCreateWithoutCreatorsInput = {
   clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
+  previewAutoGenerate?: boolean
+  previewPaused?: boolean
   megaAccounts?: Prisma.MegaAccountUncheckedCreateNestedManyWithoutUserInput
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutUserInput
   watchlist?: Prisma.WatchlistItemUncheckedCreateNestedManyWithoutUserInput
@@ -532,6 +580,8 @@ export type UserUpdateWithoutCreatorsInput = {
   clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  previewAutoGenerate?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewPaused?: Prisma.BoolFieldUpdateOperationsInput | boolean
   megaAccounts?: Prisma.MegaAccountUpdateManyWithoutUserNestedInput
   sessions?: Prisma.SessionUpdateManyWithoutUserNestedInput
   watchlist?: Prisma.WatchlistItemUpdateManyWithoutUserNestedInput
@@ -547,6 +597,8 @@ export type UserUncheckedUpdateWithoutCreatorsInput = {
   clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  previewAutoGenerate?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewPaused?: Prisma.BoolFieldUpdateOperationsInput | boolean
   megaAccounts?: Prisma.MegaAccountUncheckedUpdateManyWithoutUserNestedInput
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutUserNestedInput
   watchlist?: Prisma.WatchlistItemUncheckedUpdateManyWithoutUserNestedInput
@@ -562,6 +614,8 @@ export type UserCreateWithoutMegaAccountsInput = {
   clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
+  previewAutoGenerate?: boolean
+  previewPaused?: boolean
   sessions?: Prisma.SessionCreateNestedManyWithoutUserInput
   creators?: Prisma.CreatorCreateNestedManyWithoutUserInput
   watchlist?: Prisma.WatchlistItemCreateNestedManyWithoutUserInput
@@ -577,6 +631,8 @@ export type UserUncheckedCreateWithoutMegaAccountsInput = {
   clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
+  previewAutoGenerate?: boolean
+  previewPaused?: boolean
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutUserInput
   creators?: Prisma.CreatorUncheckedCreateNestedManyWithoutUserInput
   watchlist?: Prisma.WatchlistItemUncheckedCreateNestedManyWithoutUserInput
@@ -608,6 +664,8 @@ export type UserUpdateWithoutMegaAccountsInput = {
   clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  previewAutoGenerate?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewPaused?: Prisma.BoolFieldUpdateOperationsInput | boolean
   sessions?: Prisma.SessionUpdateManyWithoutUserNestedInput
   creators?: Prisma.CreatorUpdateManyWithoutUserNestedInput
   watchlist?: Prisma.WatchlistItemUpdateManyWithoutUserNestedInput
@@ -623,6 +681,8 @@ export type UserUncheckedUpdateWithoutMegaAccountsInput = {
   clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  previewAutoGenerate?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewPaused?: Prisma.BoolFieldUpdateOperationsInput | boolean
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutUserNestedInput
   creators?: Prisma.CreatorUncheckedUpdateManyWithoutUserNestedInput
   watchlist?: Prisma.WatchlistItemUncheckedUpdateManyWithoutUserNestedInput
@@ -638,6 +698,8 @@ export type UserCreateWithoutSessionsInput = {
   clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
+  previewAutoGenerate?: boolean
+  previewPaused?: boolean
   megaAccounts?: Prisma.MegaAccountCreateNestedManyWithoutUserInput
   creators?: Prisma.CreatorCreateNestedManyWithoutUserInput
   watchlist?: Prisma.WatchlistItemCreateNestedManyWithoutUserInput
@@ -653,6 +715,8 @@ export type UserUncheckedCreateWithoutSessionsInput = {
   clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
+  previewAutoGenerate?: boolean
+  previewPaused?: boolean
   megaAccounts?: Prisma.MegaAccountUncheckedCreateNestedManyWithoutUserInput
   creators?: Prisma.CreatorUncheckedCreateNestedManyWithoutUserInput
   watchlist?: Prisma.WatchlistItemUncheckedCreateNestedManyWithoutUserInput
@@ -684,6 +748,8 @@ export type UserUpdateWithoutSessionsInput = {
   clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  previewAutoGenerate?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewPaused?: Prisma.BoolFieldUpdateOperationsInput | boolean
   megaAccounts?: Prisma.MegaAccountUpdateManyWithoutUserNestedInput
   creators?: Prisma.CreatorUpdateManyWithoutUserNestedInput
   watchlist?: Prisma.WatchlistItemUpdateManyWithoutUserNestedInput
@@ -699,6 +765,8 @@ export type UserUncheckedUpdateWithoutSessionsInput = {
   clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  previewAutoGenerate?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewPaused?: Prisma.BoolFieldUpdateOperationsInput | boolean
   megaAccounts?: Prisma.MegaAccountUncheckedUpdateManyWithoutUserNestedInput
   creators?: Prisma.CreatorUncheckedUpdateManyWithoutUserNestedInput
   watchlist?: Prisma.WatchlistItemUncheckedUpdateManyWithoutUserNestedInput
@@ -714,6 +782,8 @@ export type UserCreateWithoutWatchlistInput = {
   clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
+  previewAutoGenerate?: boolean
+  previewPaused?: boolean
   megaAccounts?: Prisma.MegaAccountCreateNestedManyWithoutUserInput
   sessions?: Prisma.SessionCreateNestedManyWithoutUserInput
   creators?: Prisma.CreatorCreateNestedManyWithoutUserInput
@@ -729,6 +799,8 @@ export type UserUncheckedCreateWithoutWatchlistInput = {
   clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
+  previewAutoGenerate?: boolean
+  previewPaused?: boolean
   megaAccounts?: Prisma.MegaAccountUncheckedCreateNestedManyWithoutUserInput
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutUserInput
   creators?: Prisma.CreatorUncheckedCreateNestedManyWithoutUserInput
@@ -760,6 +832,8 @@ export type UserUpdateWithoutWatchlistInput = {
   clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  previewAutoGenerate?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewPaused?: Prisma.BoolFieldUpdateOperationsInput | boolean
   megaAccounts?: Prisma.MegaAccountUpdateManyWithoutUserNestedInput
   sessions?: Prisma.SessionUpdateManyWithoutUserNestedInput
   creators?: Prisma.CreatorUpdateManyWithoutUserNestedInput
@@ -775,6 +849,8 @@ export type UserUncheckedUpdateWithoutWatchlistInput = {
   clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  previewAutoGenerate?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewPaused?: Prisma.BoolFieldUpdateOperationsInput | boolean
   megaAccounts?: Prisma.MegaAccountUncheckedUpdateManyWithoutUserNestedInput
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutUserNestedInput
   creators?: Prisma.CreatorUncheckedUpdateManyWithoutUserNestedInput
@@ -790,6 +866,8 @@ export type UserCreateWithoutSavedVideosInput = {
   clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
+  previewAutoGenerate?: boolean
+  previewPaused?: boolean
   megaAccounts?: Prisma.MegaAccountCreateNestedManyWithoutUserInput
   sessions?: Prisma.SessionCreateNestedManyWithoutUserInput
   creators?: Prisma.CreatorCreateNestedManyWithoutUserInput
@@ -805,6 +883,8 @@ export type UserUncheckedCreateWithoutSavedVideosInput = {
   clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
+  previewAutoGenerate?: boolean
+  previewPaused?: boolean
   megaAccounts?: Prisma.MegaAccountUncheckedCreateNestedManyWithoutUserInput
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutUserInput
   creators?: Prisma.CreatorUncheckedCreateNestedManyWithoutUserInput
@@ -836,6 +916,8 @@ export type UserUpdateWithoutSavedVideosInput = {
   clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  previewAutoGenerate?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewPaused?: Prisma.BoolFieldUpdateOperationsInput | boolean
   megaAccounts?: Prisma.MegaAccountUpdateManyWithoutUserNestedInput
   sessions?: Prisma.SessionUpdateManyWithoutUserNestedInput
   creators?: Prisma.CreatorUpdateManyWithoutUserNestedInput
@@ -851,6 +933,8 @@ export type UserUncheckedUpdateWithoutSavedVideosInput = {
   clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  previewAutoGenerate?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewPaused?: Prisma.BoolFieldUpdateOperationsInput | boolean
   megaAccounts?: Prisma.MegaAccountUncheckedUpdateManyWithoutUserNestedInput
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutUserNestedInput
   creators?: Prisma.CreatorUncheckedUpdateManyWithoutUserNestedInput
@@ -866,6 +950,8 @@ export type UserCreateWithoutSavedFoldersInput = {
   clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
+  previewAutoGenerate?: boolean
+  previewPaused?: boolean
   megaAccounts?: Prisma.MegaAccountCreateNestedManyWithoutUserInput
   sessions?: Prisma.SessionCreateNestedManyWithoutUserInput
   creators?: Prisma.CreatorCreateNestedManyWithoutUserInput
@@ -881,6 +967,8 @@ export type UserUncheckedCreateWithoutSavedFoldersInput = {
   clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
+  previewAutoGenerate?: boolean
+  previewPaused?: boolean
   megaAccounts?: Prisma.MegaAccountUncheckedCreateNestedManyWithoutUserInput
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutUserInput
   creators?: Prisma.CreatorUncheckedCreateNestedManyWithoutUserInput
@@ -912,6 +1000,8 @@ export type UserUpdateWithoutSavedFoldersInput = {
   clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  previewAutoGenerate?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewPaused?: Prisma.BoolFieldUpdateOperationsInput | boolean
   megaAccounts?: Prisma.MegaAccountUpdateManyWithoutUserNestedInput
   sessions?: Prisma.SessionUpdateManyWithoutUserNestedInput
   creators?: Prisma.CreatorUpdateManyWithoutUserNestedInput
@@ -927,6 +1017,8 @@ export type UserUncheckedUpdateWithoutSavedFoldersInput = {
   clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  previewAutoGenerate?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewPaused?: Prisma.BoolFieldUpdateOperationsInput | boolean
   megaAccounts?: Prisma.MegaAccountUncheckedUpdateManyWithoutUserNestedInput
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutUserNestedInput
   creators?: Prisma.CreatorUncheckedUpdateManyWithoutUserNestedInput
@@ -942,6 +1034,8 @@ export type UserCreateWithoutWatchHistoryInput = {
   clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
+  previewAutoGenerate?: boolean
+  previewPaused?: boolean
   megaAccounts?: Prisma.MegaAccountCreateNestedManyWithoutUserInput
   sessions?: Prisma.SessionCreateNestedManyWithoutUserInput
   creators?: Prisma.CreatorCreateNestedManyWithoutUserInput
@@ -957,6 +1051,8 @@ export type UserUncheckedCreateWithoutWatchHistoryInput = {
   clerkUserId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
+  previewAutoGenerate?: boolean
+  previewPaused?: boolean
   megaAccounts?: Prisma.MegaAccountUncheckedCreateNestedManyWithoutUserInput
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutUserInput
   creators?: Prisma.CreatorUncheckedCreateNestedManyWithoutUserInput
@@ -988,6 +1084,8 @@ export type UserUpdateWithoutWatchHistoryInput = {
   clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  previewAutoGenerate?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewPaused?: Prisma.BoolFieldUpdateOperationsInput | boolean
   megaAccounts?: Prisma.MegaAccountUpdateManyWithoutUserNestedInput
   sessions?: Prisma.SessionUpdateManyWithoutUserNestedInput
   creators?: Prisma.CreatorUpdateManyWithoutUserNestedInput
@@ -1003,6 +1101,8 @@ export type UserUncheckedUpdateWithoutWatchHistoryInput = {
   clerkUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  previewAutoGenerate?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewPaused?: Prisma.BoolFieldUpdateOperationsInput | boolean
   megaAccounts?: Prisma.MegaAccountUncheckedUpdateManyWithoutUserNestedInput
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutUserNestedInput
   creators?: Prisma.CreatorUncheckedUpdateManyWithoutUserNestedInput
@@ -1103,6 +1203,8 @@ export type UserSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = r
   clerkUserId?: boolean
   createdAt?: boolean
   updatedAt?: boolean
+  previewAutoGenerate?: boolean
+  previewPaused?: boolean
   megaAccounts?: boolean | Prisma.User$megaAccountsArgs<ExtArgs>
   sessions?: boolean | Prisma.User$sessionsArgs<ExtArgs>
   creators?: boolean | Prisma.User$creatorsArgs<ExtArgs>
@@ -1120,6 +1222,8 @@ export type UserSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Extensio
   clerkUserId?: boolean
   createdAt?: boolean
   updatedAt?: boolean
+  previewAutoGenerate?: boolean
+  previewPaused?: boolean
 }, ExtArgs["result"]["user"]>
 
 export type UserSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
@@ -1129,6 +1233,8 @@ export type UserSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensio
   clerkUserId?: boolean
   createdAt?: boolean
   updatedAt?: boolean
+  previewAutoGenerate?: boolean
+  previewPaused?: boolean
 }, ExtArgs["result"]["user"]>
 
 export type UserSelectScalar = {
@@ -1138,9 +1244,11 @@ export type UserSelectScalar = {
   clerkUserId?: boolean
   createdAt?: boolean
   updatedAt?: boolean
+  previewAutoGenerate?: boolean
+  previewPaused?: boolean
 }
 
-export type UserOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "email" | "passwordHash" | "clerkUserId" | "createdAt" | "updatedAt", ExtArgs["result"]["user"]>
+export type UserOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "email" | "passwordHash" | "clerkUserId" | "createdAt" | "updatedAt" | "previewAutoGenerate" | "previewPaused", ExtArgs["result"]["user"]>
 export type UserInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   megaAccounts?: boolean | Prisma.User$megaAccountsArgs<ExtArgs>
   sessions?: boolean | Prisma.User$sessionsArgs<ExtArgs>
@@ -1179,6 +1287,15 @@ export type $UserPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs =
     clerkUserId: string | null
     createdAt: Date
     updatedAt: Date
+    /**
+     * Phase 5.1: non-blocking preview generation during MEGA sync (default on).
+     */
+    previewAutoGenerate: boolean
+    /**
+     * Phase 5.1: administrator pause for bulk preview generation. Existing
+     * pending jobs stay durable and resume when this is cleared.
+     */
+    previewPaused: boolean
   }, ExtArgs["result"]["user"]>
   composites: {}
 }
@@ -1615,6 +1732,8 @@ export interface UserFieldRefs {
   readonly clerkUserId: Prisma.FieldRef<"User", 'String'>
   readonly createdAt: Prisma.FieldRef<"User", 'DateTime'>
   readonly updatedAt: Prisma.FieldRef<"User", 'DateTime'>
+  readonly previewAutoGenerate: Prisma.FieldRef<"User", 'Boolean'>
+  readonly previewPaused: Prisma.FieldRef<"User", 'Boolean'>
 }
     
 
