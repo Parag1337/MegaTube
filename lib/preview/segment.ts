@@ -76,6 +76,13 @@ export interface MontageScenePlan {
   durationSec: number;
   /** True when duration metadata was unavailable and a ladder was used. */
   estimated: boolean;
+  /**
+   * Relative source position (0–1) used when no reliable timestamp mapping
+   * exists. For TS unknown-duration sources the window is selected by byte
+   * fraction and the timeline position is explicitly estimated; it is never
+   * presented as an exact timestamp.
+   */
+  fraction: number | null;
 }
 
 export interface MontagePlan {
@@ -109,6 +116,7 @@ export function planMontage(
   const known = typeof durationSec === 'number' && Number.isFinite(durationSec) && durationSec > 0;
   if (!known) {
     const ladder = [10, 30, 50, 70, 90];
+    const fractions = [0.1, 0.3, 0.5, 0.7, 0.9];
     const count = Math.min(requested, ladder.length);
     const scenes = ladder.slice(0, count).map((target, index) => ({
       index,
@@ -116,6 +124,7 @@ export function planMontage(
       startSec: target,
       durationSec: baseScene,
       estimated: true,
+      fraction: fractions[index] ?? (index + 1) / (count + 1),
     }));
     return { scenes, sceneSeconds: baseScene, totalSeconds: count * baseScene, estimated: true };
   }
@@ -156,6 +165,7 @@ export function planMontage(
       startSec: start,
       durationSec: Math.min(perScene, Math.max(0.3, duration - start)),
       estimated: false,
+      fraction: duration > 0 ? Math.min(1, Math.max(0, start / duration)) : null,
     });
   }
   return {
@@ -283,13 +293,47 @@ export interface ByteWindow {
 }
 
 /**
- * Byte window for one candidate on a given source.
+ * Safe bounded window for a source whose timeline is unknown.
+ *
+ * Position is a fraction of the FILE, not a claimed timestamp. This is the
+ * honest fallback for TS sources with no duration metadata: a fixed
+ * `t * 64_000` byte-per-second guess is meaningless across bitrates, while a
+ * byte fraction still samples distinct parts of the file without downloading
+ * the whole video. Callers must mark the resulting scene as estimated and
+ * must not present the position as an exact timestamp.
+ */
+export function byteWindowAtFraction(
+  fraction: number,
+  sourceSize: number,
+  maxBytes: number,
+  align: number,
+): ByteWindow {
+  const size = Math.max(0, Math.floor(sourceSize));
+  if (size <= 0) return { byteStart: 0, byteLen: 0 };
+  // Without a duration there is no way to size "18 s" exactly. Use a bounded
+  // fraction of the file with a 4 MB floor (enough for a 1.2 s scene plus a
+  // keyframe margin on high-bitrate content) and the existing hard cap.
+  const floorBytes = Math.min(4 * 1024 * 1024, size);
+  const want = Math.min(Math.max(Math.ceil(size * 0.03), floorBytes), maxBytes, size);
+  const maxStart = Math.max(0, size - want);
+  const raw = Math.floor(Math.min(1, Math.max(0, fraction)) * size);
+  const start = Math.min(alignDown(raw, align), alignDown(maxStart, align));
+  return { byteStart: Math.max(0, start), byteLen: Math.min(want, size - Math.max(0, start)) };
+}
+
+/**
+ * Byte window for one candidate on a known-duration source.
  *
  * `coverageSeconds` is how much source content the window should ideally
  * contain (clip + keyframe-skip margin), `safetyFactor` covers bitrate
  * variance, and the result is clamped to [min(2 MB, source), maxBytes] and to
  * the actual file size. For MPEG-TS the window start also honours the 752
  * alignment; callers pass align=16 for MP4 sparse windows.
+ *
+ * When the duration is unknown this deliberately returns a bounded FIRST
+ * window and callers that have a fraction must use
+ * `byteWindowAtFraction()` instead. The old `t * 64_000` fixed-bitrate
+ * approximation has been removed.
  */
 export function byteWindowFor(
   t: number,
@@ -302,16 +346,16 @@ export function byteWindowFor(
 ): ByteWindow {
   const size = Math.max(0, Math.floor(sourceSize));
   if (size <= 0) return { byteStart: 0, byteLen: 0 };
-  const floorBytes = Math.min(2 * 1024 * 1024, size);
-  let want = floorBytes;
-  if (durationSec && durationSec > 0) {
-    want = Math.ceil((size * coverageSeconds * safetyFactor) / durationSec);
-    if (!Number.isFinite(want) || want <= 0) want = floorBytes;
+  if (!durationSec || durationSec <= 0 || !Number.isFinite(durationSec)) {
+    return byteWindowAtFraction(t > 0 && t <= 1 ? t : 0, size, maxBytes, align);
   }
+  const floorBytes = Math.min(2 * 1024 * 1024, size);
+  let want = Math.ceil((size * coverageSeconds * safetyFactor) / durationSec);
+  if (!Number.isFinite(want) || want <= 0) want = floorBytes;
   want = Math.min(Math.max(want, floorBytes), maxBytes);
   // Position the window so the clip can still be covered by the file end.
   const maxStart = Math.max(0, size - want);
-  const rawStart = durationSec && durationSec > 0 ? (t / durationSec) * size : t > 0 ? Math.min(t * 64_000, maxStart) : 0;
+  const rawStart = (t / durationSec) * size;
   const start = Math.min(alignDown(Math.floor(rawStart), align), alignDown(maxStart, align));
   const byteStart = Math.max(0, start);
   return { byteStart, byteLen: Math.min(want, size - byteStart) };

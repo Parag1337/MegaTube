@@ -17,6 +17,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { faststartVerdict } from './mp4-index';
+import { previewProcessKillGraceMs } from './config';
 
 export function ffmpegPath(): string {
   return process.env.FFMPEG_PATH && process.env.FFMPEG_PATH.length > 0 ? process.env.FFMPEG_PATH : 'ffmpeg';
@@ -30,6 +31,8 @@ export interface RunResult {
   code: number | null;
   signal: NodeJS.Signals | null;
   timedOut: boolean;
+  /** True when an external deadline/cancellation signal terminated the child. */
+  aborted: boolean;
   /** Last ~2 KB of stderr (diagnostics only; never logged at full length). */
   stderrTail: string;
   /** Stdout bytes when `captureStdout` was requested. */
@@ -38,13 +41,36 @@ export interface RunResult {
 
 const STDERR_TAIL_BYTES = 4096;
 
+/**
+ * Run one child process with a hard timeout and an optional external
+ * cancellation signal.
+ *
+ * Termination is graceful first: SIGTERM gets `PREVIEW_PROCESS_KILL_GRACE_MS`
+ * to let ffmpeg close its output, then SIGKILL. A force-settle timer covers
+ * the pathological case where a killed child never emits `close`, so a job
+ * deadline can never hang the worker indefinitely.
+ */
 export async function runProcess(
   cmd: string,
   args: string[],
   timeoutMs: number,
   captureStdout = false,
+  signal?: AbortSignal,
 ): Promise<RunResult> {
   return new Promise<RunResult>((resolve) => {
+    const empty = (aborted: boolean, timedOut: boolean): RunResult => ({
+      code: null,
+      signal: null,
+      timedOut,
+      aborted,
+      stderrTail: '',
+      stdout: captureStdout ? Buffer.alloc(0) : null,
+    });
+    if (signal?.aborted) {
+      resolve(empty(true, false));
+      return;
+    }
+
     const child = spawn(cmd, args, {
       stdio: ['ignore', captureStdout ? 'pipe' : 'ignore', 'pipe'],
     });
@@ -53,7 +79,10 @@ export async function runProcess(
     const stdoutChunks: Buffer[] = [];
     let stdoutLen = 0;
     let timedOut = false;
+    let aborted = false;
     let settled = false;
+    let killTimer: ReturnType<typeof setTimeout> | null = null;
+    let forceTimer: ReturnType<typeof setTimeout> | null = null;
 
     child.stderr.on('data', (chunk: Buffer) => {
       stderrChunks.push(chunk);
@@ -72,35 +101,84 @@ export async function runProcess(
       });
     }
 
+    const terminate = () => {
+      if (settled) return;
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        // already gone
+      }
+      if (!killTimer) {
+        killTimer = setTimeout(() => {
+          if (settled) return;
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            // already gone
+          }
+          if (!forceTimer) {
+            forceTimer = setTimeout(() => finish(null, 'SIGKILL'), 2_000);
+          }
+        }, previewProcessKillGraceMs());
+      }
+    };
+
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGKILL');
+      terminate();
     }, timeoutMs);
 
-    const finish = (code: number | null, signal: NodeJS.Signals | null) => {
+    const onAbort = () => {
+      aborted = true;
+      terminate();
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+
+    const finish = (code: number | null, signalName: NodeJS.Signals | null) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+      if (forceTimer) clearTimeout(forceTimer);
+      signal?.removeEventListener('abort', onAbort);
       resolve({
         code,
-        signal,
+        signal: signalName,
         timedOut,
+        aborted,
         stderrTail: Buffer.concat(stderrChunks).toString('utf8').slice(-STDERR_TAIL_BYTES),
         stdout: captureStdout ? Buffer.concat(stdoutChunks) : null,
       });
     };
 
     child.on('error', () => finish(null, null)); // spawn failure (ENOENT...)
-    child.on('close', (code, signal) => finish(code, signal));
+    child.on('close', (code, signalName) => finish(code, signalName));
   });
 }
 
-export async function runFfmpeg(args: string[], timeoutMs: number, captureStdout = false): Promise<RunResult> {
-  return runProcess(ffmpegPath(), ['-hide_banner', '-nostdin', '-v', 'error', ...args], timeoutMs, captureStdout);
+export async function runFfmpeg(
+  args: string[],
+  timeoutMs: number,
+  captureStdout = false,
+  signal?: AbortSignal,
+): Promise<RunResult> {
+  return runProcess(
+    ffmpegPath(),
+    ['-hide_banner', '-nostdin', '-v', 'error', ...args],
+    timeoutMs,
+    captureStdout,
+    signal,
+  );
 }
 
 export function summarizeRun(result: RunResult): string {
-  const reason = result.timedOut ? 'timeout' : result.code !== null ? `exit ${result.code}` : `signal ${result.signal}`;
+  const reason = result.timedOut
+    ? 'timeout'
+    : result.aborted
+      ? 'aborted'
+      : result.code !== null
+        ? `exit ${result.code}`
+        : `signal ${result.signal}`;
   const tail = result.stderrTail.replace(/\s+/g, ' ').trim().slice(0, 160);
   return tail.length > 0 ? `${reason}: ${tail}` : reason;
 }
@@ -120,6 +198,8 @@ export interface EncodeHoverOptions {
   height: number;
   outPath: string;
   timeoutMs: number;
+  /** Absolute job deadline/cancellation; kills the child (TERM, then KILL). */
+  signal?: AbortSignal;
 }
 
 /**
@@ -148,7 +228,7 @@ export async function encodeHoverClip(opts: EncodeHoverOptions): Promise<{ ok: b
     '-f', 'mp4',
     '-y', opts.outPath,
   );
-  const run = await runFfmpeg(args, opts.timeoutMs);
+  const run = await runFfmpeg(args, opts.timeoutMs, false, opts.signal);
   const ok = run.code === 0;
   return { ok, detail: ok ? 'encoded' : summarizeRun(run) };
 }
@@ -173,6 +253,7 @@ export interface EncodeMontageOptions {
   bitrateKbps: number;
   outPath: string;
   timeoutMs: number;
+  signal?: AbortSignal;
 }
 
 /**
@@ -210,7 +291,7 @@ export async function encodeMontage(opts: EncodeMontageOptions): Promise<{ ok: b
     '-f', 'mp4',
     '-y', opts.outPath,
   );
-  const run = await runFfmpeg(args, opts.timeoutMs);
+  const run = await runFfmpeg(args, opts.timeoutMs, false, opts.signal);
   const ok = run.code === 0;
   return { ok, detail: ok ? 'encoded' : summarizeRun(run) };
 }
@@ -233,7 +314,7 @@ export interface MontageValidation {
  */
 export async function validateMontageFile(
   absPath: string,
-  opts: { minDurationSec: number; maxBytes: number; timeoutMs: number },
+  opts: { minDurationSec: number; maxBytes: number; timeoutMs: number; signal?: AbortSignal },
 ): Promise<MontageValidation> {
   const fail = (reason: string): MontageValidation => ({
     ok: false,
@@ -254,8 +335,8 @@ export async function validateMontageFile(
   } catch {
     return fail('output missing');
   }
-  const probe = await probeMedia(absPath, opts.timeoutMs);
-  if (!probe) return fail('output probe failed');
+  const probe = await probeMedia(absPath, opts.timeoutMs, opts.signal);
+  if (!probe) return fail(opts.signal?.aborted ? 'output probe aborted' : 'output probe failed');
   if (probe.durationSec === null || probe.durationSec < opts.minDurationSec) {
     return fail(`output too short (${probe.durationSec?.toFixed(2) ?? '?'}s)`);
   }
@@ -309,7 +390,11 @@ function parseRate(raw: unknown): number | null {
 }
 
 /** ffprobe the first video stream (dims/fps/audio) and container duration. */
-export async function probeMedia(absPath: string, timeoutMs: number): Promise<MediaProbe | null> {
+export async function probeMedia(
+  absPath: string,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<MediaProbe | null> {
   const run = await runProcess(
     ffprobePath(),
     [
@@ -320,6 +405,7 @@ export async function probeMedia(absPath: string, timeoutMs: number): Promise<Me
     ],
     timeoutMs,
     true,
+    signal,
   );
   if (run.code !== 0 || !run.stdout) return null;
   try {
@@ -358,7 +444,13 @@ export async function probeMedia(absPath: string, timeoutMs: number): Promise<Me
  */
 export async function probeBrightnessFrames(
   inputPath: string,
-  opts: { seekSec?: number; frames?: number; stepSec?: number; timeoutMs: number },
+  opts: {
+    seekSec?: number;
+    frames?: number;
+    stepSec?: number;
+    timeoutMs: number;
+    signal?: AbortSignal;
+  },
 ): Promise<number[] | null> {
   const frames = Math.max(1, opts.frames ?? 3);
   const step = Math.max(0.5, opts.stepSec ?? 2.5);
@@ -372,7 +464,7 @@ export async function probeBrightnessFrames(
     '-pix_fmt', 'rgb24',
     '-',
   );
-  const run = await runFfmpeg(args, opts.timeoutMs, true);
+  const run = await runFfmpeg(args, opts.timeoutMs, true, opts.signal);
   if (!run.stdout || run.stdout.length === 0) return null;
   const bytesPerFrame = 32 * 32 * 3;
   const data = run.stdout;
@@ -400,7 +492,12 @@ export interface SceneSample {
  */
 export async function probeSceneSample(
   inputPath: string,
-  opts: { seekSec?: number; durationSec?: number; timeoutMs: number },
+  opts: {
+    seekSec?: number;
+    durationSec?: number;
+    timeoutMs: number;
+    signal?: AbortSignal;
+  },
 ): Promise<SceneSample | null> {
   const frames = 3;
   const args: string[] = [];
@@ -414,7 +511,7 @@ export async function probeSceneSample(
     '-pix_fmt', 'rgb24',
     '-',
   );
-  const run = await runFfmpeg(args, opts.timeoutMs, true);
+  const run = await runFfmpeg(args, opts.timeoutMs, true, opts.signal);
   if (!run.stdout || run.stdout.length === 0) return null;
   const bytesPerFrame = 32 * 32 * 3;
   const data = run.stdout;
@@ -480,6 +577,7 @@ export interface EncodeSpriteOptions {
   rows: number;
   outPath: string;
   timeoutMs: number;
+  signal?: AbortSignal;
 }
 
 /**
@@ -506,7 +604,7 @@ export async function encodeSprite(opts: EncodeSpriteOptions): Promise<{ ok: boo
     '-f', 'image2',
     '-y', opts.outPath,
   ];
-  const run = await runFfmpeg(args, opts.timeoutMs);
+  const run = await runFfmpeg(args, opts.timeoutMs, false, opts.signal);
   const ok = run.code === 0;
   return { ok, detail: ok ? 'encoded' : summarizeRun(run) };
 }

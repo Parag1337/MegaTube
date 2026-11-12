@@ -71,10 +71,13 @@ import {
 import {
   createWorkDir,
   defaultPreviewSourceDeps,
+  probeMontageSourceDuration,
   removeWorkDir,
   resolveMontageSources,
+  throwIfAborted,
   type MontageSceneRequest,
   type PreviewSourceDeps,
+  type SourceDurationProbe,
 } from './source';
 import {
   ensurePreviewJob,
@@ -262,7 +265,13 @@ function classifyGenerationError(input: unknown): {
   retryable: boolean;
   unsupported: boolean;
 } {
+  if (input instanceof Error && input.name === 'AbortError') {
+    return { code: 'job_timeout', retryable: true, unsupported: false };
+  }
   const text = (input instanceof Error ? input.message : String(input)).toLowerCase();
+  if (text.includes('preview job deadline exceeded') || text.includes('preview job aborted')) {
+    return { code: 'job_timeout', retryable: true, unsupported: false };
+  }
   if (text.includes('source size unknown')) return { code: 'source_size_unknown', retryable: false, unsupported: false };
   if (text.includes('unsupported') || text.includes('unknown decoder') || text.includes('invalid data')) {
     return { code: 'unsupported_codec', retryable: false, unsupported: true };
@@ -330,7 +339,17 @@ async function writeFailedSidecar(
 export async function generateHoverForWorker(
   video: PreviewVideoRow,
   deps: PreviewServiceDeps,
-  opts?: { onStage?: (stage: string) => void },
+  opts?: {
+    onStage?: (stage: string) => void;
+    /** Absolute per-job deadline/cancellation, threaded into every ffmpeg call. */
+    signal?: AbortSignal;
+    /**
+     * Fencing check immediately before the artifact rename. The durable
+     * worker verifies it still owns the current claim; a stale worker must
+     * never overwrite a newer artifact.
+     */
+    guardPublish?: () => Promise<boolean>;
+  },
 ): Promise<HoverGenerationOutcome> {
   const videoId = video.id;
   const timeoutMs = previewFfmpegTimeoutMs();
@@ -363,13 +382,31 @@ export async function generateHoverForWorker(
     }
     const fileKey = deps.decryptFileKey(video.fileKeyEncrypted);
     const cfg = previewGenerationConfig();
-    const plan = planMontage(video.duration, cfg.sceneCount, cfg.sceneSeconds);
+    const acquireStarted = deps.now();
+
+    // A database duration is trusted; otherwise resolve one from bounded
+    // metadata (warm-cache ffprobe / MP4 mvhd) before planning. TS sources
+    // without metadata keep the honest byte-fraction ladder.
+    let durationProbe: SourceDurationProbe | null = null;
+    if (!(video.duration !== null && video.duration > 0)) {
+      opts?.onStage?.('probing-duration');
+      durationProbe = await probeMontageSourceDuration(
+        owned,
+        workDir,
+        fileKey,
+        deps.sourceDeps,
+        opts?.signal,
+      );
+    }
+    const planDuration =
+      durationProbe?.durationSec ??
+      (video.duration !== null && video.duration > 0 ? video.duration : null);
+    const plan = planMontage(planDuration, cfg.sceneCount, cfg.sceneSeconds);
     if (plan.scenes.length === 0) {
       return { ok: false, detail: 'no usable scenes', errorCode: 'output_invalid', retryable: false };
     }
 
     opts?.onStage?.('acquiring');
-    const acquireStarted = deps.now();
     let source: Awaited<ReturnType<typeof resolveMontageSources>>;
     try {
       source = await resolveMontageSources(
@@ -378,10 +415,17 @@ export async function generateHoverForWorker(
           index: scene.index,
           startSec: scene.startSec,
           durationSec: scene.durationSec,
+          fraction: scene.fraction,
+          estimated: scene.estimated,
         })),
         workDir,
         fileKey,
         deps.sourceDeps,
+        {
+          durationSec: planDuration,
+          prefetchedTransferBytes: durationProbe?.transferBytes ?? 0,
+          signal: opts?.signal,
+        },
       );
     } catch (err) {
       const cls = classifyGenerationError(err);
@@ -408,7 +452,7 @@ export async function generateHoverForWorker(
     // (all scenes come from the same original). The canvas is never larger
     // than the source, so low-resolution videos are never upscaled.
     const probeStarted = deps.now();
-    const sourceProbe = await probeMedia(source.segments[0].path, timeoutMs);
+    const sourceProbe = await probeMedia(source.segments[0].path, timeoutMs, opts?.signal);
     ffmpegMs += deps.now() - probeStarted;
     if (!sourceProbe) {
       return {
@@ -434,13 +478,24 @@ export async function generateHoverForWorker(
       type SceneSample = NonNullable<Awaited<ReturnType<typeof probeSceneSample>>>;
       let usable: { input: MontageInput; sample: SceneSample } | null = null;
       let best: { input: MontageInput; sample: SceneSample } | null = null;
-      for (const alt of sceneAlternatives(scene, video.duration, previewSceneAlternatives())) {
-        const seek = Math.max(0, segment.seekSec + (alt - scene.startSec));
+      // Byte-fraction scenes have no exact source timestamp: offsets are
+      // applied inside the already-acquired window instead of pretending a
+      // timeline mapping exists.
+      const seeks = segment.estimated
+        ? [0, 1.5, -1.5, 3, -3]
+            .slice(0, 1 + previewSceneAlternatives())
+            .map((offset) => Math.max(0, segment.seekSec + offset))
+        : sceneAlternatives(scene, planDuration, previewSceneAlternatives()).map((alt) =>
+            Math.max(0, segment.seekSec + (alt - scene.startSec)),
+          );
+      for (const seek of seeks) {
+        throwIfAborted(opts?.signal);
         const t0 = deps.now();
         const sample = await probeSceneSample(segment.path, {
           seekSec: seek,
           durationSec: scene.durationSec,
           timeoutMs,
+          signal: opts?.signal,
         });
         ffmpegMs += deps.now() - t0;
         if (!sample) continue;
@@ -480,6 +535,7 @@ export async function generateHoverForWorker(
       bitrateKbps: cfg.bitrateKbps,
       outPath: tmpOut,
       timeoutMs,
+      signal: opts?.signal,
     });
     ffmpegMs += deps.now() - encodeStarted;
     if (!encoded.ok) {
@@ -499,6 +555,7 @@ export async function generateHoverForWorker(
       minDurationSec: Math.max(0.5, selectedDuration * 0.5),
       maxBytes: previewMontageMaxFileBytes(),
       timeoutMs,
+      signal: opts?.signal,
     });
     ffmpegMs += deps.now() - validateStarted;
     if (!validated.ok) {
@@ -513,13 +570,44 @@ export async function generateHoverForWorker(
     }
 
     opts?.onStage?.('publishing');
+    throwIfAborted(opts?.signal);
+    if (opts?.guardPublish) {
+      let stillOwned = false;
+      try {
+        stillOwned = await opts.guardPublish();
+      } catch {
+        stillOwned = false;
+      }
+      if (!stillOwned) {
+        // Fencing: never let a worker that lost its claim overwrite the
+        // artifact (and sidecar) published by the current owner.
+        return {
+          ok: false,
+          detail: 'preview job ownership lost before publication',
+          errorCode: 'lease_lost',
+          retryable: false,
+        };
+      }
+    }
     await fs.promises.rename(tmpOut, clipPath(videoId));
     const nowIso = new Date(deps.now()).toISOString();
-    const scenes = selected.map((s) => ({
-      startSec: s.scene.startSec,
-      durationSec: s.input.durationSec,
-      sourceSeekSec: s.input.seekSec,
-    }));
+    const scenes = selected.map((s) => {
+      const segment = source.segments.find((seg) => seg.index === s.scene.index);
+      return {
+        startSec: s.scene.startSec,
+        durationSec: s.input.durationSec,
+        sourceSeekSec: s.input.seekSec,
+        estimated: s.scene.estimated === true || segment?.estimated === true,
+        byteFraction: segment?.byteFraction ?? null,
+      };
+    });
+    const estimated =
+      plan.estimated || source.degradedSelection || scenes.some((s) => s.estimated);
+    const sourceDuration =
+      durationProbe?.durationSec ??
+      (video.duration !== null && video.duration > 0 ? video.duration : null) ??
+      sidecar?.durationSeconds ??
+      null;
     const metrics: PreviewJobMetrics = {
       transferBytes,
       acquisitionMs: Math.round(acquisitionMs),
@@ -535,7 +623,7 @@ export async function generateHoverForWorker(
       videoId,
       megaNodeId: owned.megaNodeId,
       sourceSize: owned.fileSize ?? sidecar?.sourceSize ?? 1,
-      durationSeconds: video.duration ?? sidecar?.durationSeconds ?? null,
+      durationSeconds: sourceDuration,
       status: 'ready',
       hover: {
         startSec: scenes[0]?.startSec ?? 0,
@@ -543,7 +631,7 @@ export async function generateHoverForWorker(
         width: validated.width,
         height: validated.height,
         bytes: validated.bytes,
-        estimated: plan.estimated,
+        estimated,
         generationVersion: version,
         scenes,
         faststart: validated.faststart,
@@ -572,7 +660,11 @@ export async function generateHoverForWorker(
     return { ok: true, detail: 'generated', metrics };
   } catch (err) {
     const cls = classifyGenerationError(err);
-    await writeFailedSidecar(video, sidecar, sanitizeFailureDetail(err), deps);
+    // A cancelled/stale run must not clobber a newer sidecar with a failure.
+    const aborted = (err instanceof Error && err.name === 'AbortError') || opts?.signal?.aborted === true;
+    if (!aborted) {
+      await writeFailedSidecar(video, sidecar, sanitizeFailureDetail(err), deps);
+    }
     return {
       ok: false,
       detail: sanitizeFailureDetail(err),

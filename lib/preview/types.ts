@@ -18,6 +18,10 @@ export interface HoverScene {
   durationSec: number;
   /** Actual input seek used for extraction (keyframe-aware). */
   sourceSeekSec: number;
+  /** True when this scene's position is estimated (no reliable timeline). */
+  estimated?: boolean;
+  /** File-relative selection used for unknown-duration sources. */
+  byteFraction?: number | null;
 }
 
 export interface HoverPreviewInfo {

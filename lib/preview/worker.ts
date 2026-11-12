@@ -8,6 +8,16 @@
  * long MEGA/ffmpeg run is active, and publishes the job state back to
  * PostgreSQL on success/failure.
  *
+ * Failure domains are deliberately separate:
+ *  - claimCount   = how many workers have picked the row up (fencing token);
+ *  - attempts     = real generation runs started (bounded work budget);
+ *  - recoveryCount= expired-lease recoveries, with bounded backoff.
+ *
+ * An absolute per-job deadline covers acquisition → ffmpeg → publication and
+ * is independent of lease heartbeats, so a live-but-stuck worker cannot keep
+ * a job forever. Losing the lease aborts the in-flight run, and publication
+ * requires a final fencing check.
+ *
  * Crash semantics: a killed worker leaves `generating` + `leaseExpiresAt`;
  * `recoverExpiredPreviewLeases` returns the job to the queue once the lease
  * expires. Nothing is ever marked completed without a validated artifact.
@@ -21,6 +31,8 @@ import {
 } from './service';
 import { previewQueueSingleton } from './queue';
 import {
+  assertPreviewJobOwnership,
+  beginPreviewGenerationAttempt,
   claimNextPreviewJob,
   completePreviewJob,
   failPreviewJob,
@@ -34,6 +46,7 @@ import {
 } from './jobs';
 import {
   previewGenerationVersion,
+  previewJobDeadlineMs,
   previewJobHeartbeatMs,
   previewJobLeaseMs,
   previewJobPollMs,
@@ -43,6 +56,7 @@ import {
 const globalForWorker = globalThis as unknown as {
   __megaPreviewWorkerStarted?: boolean;
   __megaPreviewWorkerId?: string;
+  __megaPreviewWorkerSignals?: boolean;
 };
 
 function workerId(): string {
@@ -53,7 +67,10 @@ function workerId(): string {
 }
 
 let running = false;
+let shuttingDown = false;
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
+let activeRun: { controller: AbortController; reason: 'deadline' | 'lease_lost' | 'shutdown' | null } | null =
+  null;
 
 /** Test/diagnostic: is the worker loop currently executing a job? */
 export function previewWorkerBusy(): boolean {
@@ -64,12 +81,31 @@ export function previewWorkerBusy(): boolean {
 export function stopPreviewWorkerForTests(): void {
   if (pollTimer) clearTimeout(pollTimer);
   pollTimer = null;
+  shuttingDown = false;
   globalForWorker.__megaPreviewWorkerStarted = false;
+}
+
+/**
+ * Graceful shutdown: stop claiming, cancel a queued run through the shared
+ * signal, and abort the active in-flight run (ffmpeg kills its child with
+ * SIGTERM then SIGKILL; MEGA reads observe the abort between phases).
+ */
+export function stopPreviewWorker(): void {
+  shuttingDown = true;
+  if (pollTimer) {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+  if (activeRun) {
+    activeRun.reason = 'shutdown';
+    activeRun.controller.abort(new Error('preview job aborted by worker shutdown'));
+  }
 }
 
 /** Wake the worker after an enqueue without waiting for the poll timer. */
 export function wakePreviewWorker(): void {
   if (previewWorkerDisabled()) return;
+  if (shuttingDown) return;
   if (typeof process.env.NEXT_PHASE !== 'undefined') return; // build-time
   void import('./worker').then(
     (m) => {
@@ -118,6 +154,9 @@ async function loadJobVideo(videoId: number): Promise<WorkerVideoRow | null> {
 
 function mapOutcomeError(detail: string): { code: PreviewJobErrorCode; retryable: boolean } {
   const text = detail.toLowerCase();
+  if (text.includes('deadline exceeded') || text.includes('aborted by worker shutdown')) {
+    return { code: 'job_timeout', retryable: true };
+  }
   if (text.includes('unsupported') || text.includes('unknown decoder') || text.includes('invalid data')) {
     return { code: 'unsupported_codec', retryable: false };
   }
@@ -137,26 +176,30 @@ function mapOutcomeError(detail: string): { code: PreviewJobErrorCode; retryable
 
 async function runJob(job: ClaimedJob): Promise<void> {
   const deps = defaultPreviewServiceDeps;
+  const fail = (
+    code: PreviewJobErrorCode,
+    message: string,
+    retryable = false,
+  ): Promise<{ status: string; willRetry: boolean }> =>
+    failPreviewJob(job.id, workerId(), code, message, {
+      retryable,
+      claimCount: job.claimCount,
+    });
+
   const video = await loadJobVideo(job.videoId);
   if (!video || !video.megaAccount || !video.megaNodeId || !video.fileKeyEncrypted) {
-    await failPreviewJob(job.id, workerId(), 'source_unavailable', 'Video or its MEGA source is no longer playable.', {
-      retryable: false,
-    });
+    await fail('source_unavailable', 'Video or its MEGA source is no longer playable.');
     return;
   }
   if (video.megaAccount.status === 'DISCONNECTED') {
-    await failPreviewJob(job.id, workerId(), 'source_unavailable', 'MEGA account is disconnected.', {
-      retryable: false,
-    });
+    await fail('source_unavailable', 'MEGA account is disconnected.');
     return;
   }
 
   const currentFingerprint = sourceFingerprintFor(video);
   const currentVersion = previewGenerationVersion();
   if (currentFingerprint !== job.sourceFingerprint || currentVersion !== job.generationVersion) {
-    await failPreviewJob(job.id, workerId(), 'source_changed', 'Source changed while the job was queued; a newer job owns it.', {
-      retryable: false,
-    });
+    await fail('source_changed', 'Source changed while the job was queued; a newer job owns it.');
     return;
   }
 
@@ -168,87 +211,166 @@ async function runJob(job: ClaimedJob): Promise<void> {
     // Another worker/process published it while we were waiting for a slot.
     const sidecar = await import('./cache').then((m) => m.readSidecar(job.videoId));
     const metrics = sidecar?.metrics;
-    await completePreviewJob(job.id, workerId(), sidecar?.hover?.bytes ?? 0, {
-      transferBytes: metrics?.transferBytes ?? 0,
-      acquisitionMs: metrics?.acquisitionMs ?? 0,
-      ffmpegMs: metrics?.ffmpegMs ?? 0,
-      totalMs: metrics?.totalMs ?? 0,
-      outputBytes: sidecar?.hover?.bytes ?? 0,
-      scenes: sidecar?.hover?.scenes ?? [],
-      sourceKind: metrics?.sourceKind ?? 'local',
-      generationVersion: job.generationVersion,
-    });
+    await completePreviewJob(
+      job.id,
+      workerId(),
+      sidecar?.hover?.bytes ?? 0,
+      {
+        transferBytes: metrics?.transferBytes ?? 0,
+        acquisitionMs: metrics?.acquisitionMs ?? 0,
+        ffmpegMs: metrics?.ffmpegMs ?? 0,
+        totalMs: metrics?.totalMs ?? 0,
+        outputBytes: sidecar?.hover?.bytes ?? 0,
+        scenes: sidecar?.hover?.scenes ?? [],
+        sourceKind: metrics?.sourceKind ?? 'local',
+        generationVersion: job.generationVersion,
+      },
+      job.claimCount,
+    );
     return;
   }
 
-  let outcome: HoverGenerationOutcome | null = null;
+  const controller = new AbortController();
+  const runState: { controller: AbortController; reason: 'deadline' | 'lease_lost' | 'shutdown' | null } = {
+    controller,
+    reason: null,
+  };
+  activeRun = runState;
+  const abortRun = (reason: 'deadline' | 'lease_lost' | 'shutdown'): void => {
+    if (runState.reason === null) runState.reason = reason;
+    if (!controller.signal.aborted) {
+      controller.abort(
+        new Error(
+          reason === 'deadline'
+            ? 'preview job deadline exceeded'
+            : reason === 'shutdown'
+              ? 'preview job aborted by worker shutdown'
+              : 'preview job lease lost',
+        ),
+      );
+    }
+  };
+
+  const deadlineTimer = setTimeout(() => abortRun('deadline'), previewJobDeadlineMs());
+  if (typeof deadlineTimer.unref === 'function') deadlineTimer.unref();
   let heartbeat: ReturnType<typeof setInterval> | null = null;
+  let outcome: HoverGenerationOutcome | null = null;
+
   try {
-    heartbeat = setInterval(() => {
-      void heartbeatPreviewJob(job.id, workerId(), previewJobLeaseMs()).catch(() => {});
-    }, Math.min(previewJobHeartbeatMs(), Math.max(5_000, Math.floor(previewJobLeaseMs() / 3))));
+    heartbeat = setInterval(
+      () => {
+        void heartbeatPreviewJob(job.id, workerId(), previewJobLeaseMs(), job.claimCount)
+          .then((alive) => {
+            if (!alive) abortRun('lease_lost');
+          })
+          .catch(() => {
+            // Transient DB error: the lease expiry/recovery path is the
+            // authority; keep the current run alive.
+          });
+      },
+      Math.min(previewJobHeartbeatMs(), Math.max(5_000, Math.floor(previewJobLeaseMs() / 3))),
+    );
 
-    const serviceDeps = deps;
-    const run = async (): Promise<unknown> => {
-      outcome = await generateHoverForWorker(video, serviceDeps, {
-        onStage: (stage) => {
-          void setPreviewJobStage(job.id, workerId(), stage).catch(() => {});
-        },
-      });
-      return outcome;
-    };
+    const queueOutcome = await previewQueueSingleton().enqueue(
+      `hover:${job.videoId}`,
+      async () => {
+        // Claiming does not consume a generation attempt; starting real work
+        // does. The claimCount fence makes this a no-op for a stale worker.
+        const attempts = await beginPreviewGenerationAttempt(
+          job.id,
+          workerId(),
+          job.claimCount,
+          previewJobLeaseMs(),
+        );
+        if (attempts === null) {
+          outcome = {
+            ok: false,
+            detail: 'preview job could not begin generation (ownership lost or attempt budget exhausted)',
+            errorCode: 'lease_lost',
+            retryable: false,
+          };
+          return outcome;
+        }
+        outcome = await generateHoverForWorker(video, deps, {
+          signal: controller.signal,
+          onStage: (stage) => {
+            void setPreviewJobStage(job.id, workerId(), stage, job.claimCount).catch(() => {});
+          },
+          guardPublish: () =>
+            assertPreviewJobOwnership(job.id, workerId(), job.claimCount, previewJobLeaseMs()),
+        });
+        return outcome;
+      },
+      controller.signal,
+    );
 
-    const admission = await previewQueueSingleton().enqueue(`hover:${job.videoId}`, run);
-    if (admission === 'failed') {
-      await failPreviewJob(job.id, workerId(), 'internal', 'Preview generation runner failed unexpectedly.');
+    if (queueOutcome === 'cancelled') {
+      const reason = runState.reason ?? 'deadline';
+      if (reason === 'shutdown') {
+        await fail('worker_shutdown', 'Worker stopped before the job started.', true);
+      } else if (reason === 'lease_lost') {
+        await fail('lease_lost', 'Lease was lost before the job started.');
+      } else {
+        await fail('job_timeout', 'Preview job exceeded its absolute deadline before starting.', true);
+      }
+      return;
+    }
+    if (queueOutcome === 'failed' && !outcome) {
+      await fail('internal', 'Preview generation runner failed unexpectedly.', true);
       return;
     }
     if (outcome && !outcome.ok) {
-      // Preserve the classified failure (unsupported codec vs. transient
-      // MEGA/ffmpeg error) instead of collapsing everything to one label.
-      await failPreviewJob(
-        job.id,
-        workerId(),
-        (outcome.errorCode as PreviewJobErrorCode | undefined) ?? 'internal',
-        outcome.detail,
-        { retryable: outcome.retryable, unsupported: outcome.unsupported },
-      );
+      const reason = runState.reason;
+      const code: PreviewJobErrorCode =
+        reason === 'shutdown'
+          ? 'worker_shutdown'
+          : reason === 'lease_lost'
+            ? 'lease_lost'
+            : ((outcome.errorCode as PreviewJobErrorCode | undefined) ?? 'internal');
+      const retryable = reason === 'shutdown' ? true : (outcome.retryable ?? false);
+      await fail(code, outcome.detail, retryable);
       return;
     }
     // Success still requires a real, readable, current artifact on disk.
     const sidecar = await import('./cache').then((m) => m.readSidecar(job.videoId));
     if (!sidecar || sidecar.status !== 'ready' || !sidecar.hover) {
-      await failPreviewJob(
-        job.id,
-        workerId(),
-        'encode_failed',
-        'Generation completed without a readable preview artifact.',
-        { retryable: true },
-      );
+      await fail('encode_failed', 'Generation completed without a readable preview artifact.', true);
       return;
     }
     const metrics = sidecar.metrics;
-    await completePreviewJob(job.id, workerId(), sidecar.hover.bytes, {
-      transferBytes: metrics?.transferBytes ?? 0,
-      acquisitionMs: metrics?.acquisitionMs ?? 0,
-      ffmpegMs: metrics?.ffmpegMs ?? 0,
-      totalMs: metrics?.totalMs ?? 0,
-      outputBytes: sidecar.hover.bytes,
-      scenes: sidecar.hover.scenes ?? [],
-      sourceKind: metrics?.sourceKind ?? 'local',
-      generationVersion: job.generationVersion,
-    });
+    const completed = await completePreviewJob(
+      job.id,
+      workerId(),
+      sidecar.hover.bytes,
+      {
+        transferBytes: metrics?.transferBytes ?? 0,
+        acquisitionMs: metrics?.acquisitionMs ?? 0,
+        ffmpegMs: metrics?.ffmpegMs ?? 0,
+        totalMs: metrics?.totalMs ?? 0,
+        outputBytes: sidecar.hover.bytes,
+        scenes: sidecar.hover.scenes ?? [],
+        sourceKind: metrics?.sourceKind ?? 'local',
+        generationVersion: job.generationVersion,
+      },
+      job.claimCount,
+    );
+    if (!completed && runState.reason === null) {
+      console.warn(`[preview] job ${job.id} finished but its claim was no longer current`);
+    }
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     const { code, retryable } = mapOutcomeError(detail);
-    await failPreviewJob(job.id, workerId(), code, detail, { retryable }).catch(() => {});
+    const finalCode: PreviewJobErrorCode = runState.reason === 'shutdown' ? 'worker_shutdown' : code;
+    await fail(finalCode, detail, retryable).catch(() => {});
   } finally {
+    clearTimeout(deadlineTimer);
     if (heartbeat) clearInterval(heartbeat);
+    if (activeRun === runState) activeRun = null;
   }
 }
 
 async function tick(): Promise<void> {
-  if (running) return;
+  if (running || shuttingDown) return;
   running = true;
   try {
     await recoverExpiredPreviewLeases().catch(() => {});
@@ -264,11 +386,13 @@ async function tick(): Promise<void> {
   } finally {
     running = false;
   }
+  if (shuttingDown) return;
   // Immediately look for more work; a timer covers the idle case.
   setImmediate(() => void tick());
 }
 
 function schedulePoll(): void {
+  if (shuttingDown) return;
   if (pollTimer) clearTimeout(pollTimer);
   pollTimer = setTimeout(() => {
     pollTimer = null;
@@ -286,9 +410,25 @@ export function startPreviewWorker(): void {
   if (previewWorkerDisabled()) return;
   if (typeof process.env.NEXT_PHASE !== 'undefined') return;
   if (globalForWorker.__megaPreviewWorkerStarted) return;
+  shuttingDown = false;
   globalForWorker.__megaPreviewWorkerStarted = true;
+  if (!globalForWorker.__megaPreviewWorkerSignals) {
+    globalForWorker.__megaPreviewWorkerSignals = true;
+    // Abort the active run/queue, then re-deliver the signal so the host
+    // (Next.js) or the default OS action still decides the process exit.
+    const forward = (signal: NodeJS.Signals): void => {
+      stopPreviewWorker();
+      process.removeListener(signal, forward);
+      try {
+        process.kill(process.pid, signal);
+      } catch {
+        // process is already gone
+      }
+    };
+    process.once('SIGTERM', forward);
+    process.once('SIGINT', forward);
+  }
   console.log(`[preview] durable worker started (${workerId()})`);
   void recoverExpiredPreviewLeases().catch(() => {});
   schedulePoll();
 }
-

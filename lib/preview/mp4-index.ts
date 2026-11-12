@@ -107,6 +107,59 @@ export function faststartVerdict(buf: Buffer): 'faststart' | 'not-faststart' | '
 }
 
 /**
+ * Read the movie duration from an `mvhd` child of a located, complete moov.
+ * This is the authoritative duration for MP4/M4V files even when the
+ * database row has no duration (MEGA sync does not always populate it).
+ * Returns null for a malformed/truncated index; callers keep the bounded
+ * unknown-duration fallback instead of inventing a timestamp.
+ */
+export function mvhdDurationSeconds(
+  buf: Buffer,
+  moov: MoovLocation,
+  baseOffset = 0,
+): number | null {
+  if (!moov.complete) return null;
+  const moovStart = moov.start - baseOffset;
+  const moovEnd = moov.end - baseOffset;
+  if (moovStart < 0 || moovEnd > buf.length || moovEnd - moovStart < 16) return null;
+  let off = moovStart + 8;
+  while (off + 8 <= moovEnd) {
+    const size = buf.readUInt32BE(off);
+    const type = buf.toString('latin1', off + 4, off + 8);
+    if (size < 8 || off + size > moovEnd) return null;
+    if (type === 'mvhd') {
+      if (off + 12 > buf.length) return null;
+      const version = buf.readUInt8(off + 8);
+      if (version === 1) {
+        if (off + 40 > buf.length) return null;
+        const timescale = buf.readUInt32BE(off + 28);
+        const duration = Number(buf.readBigUInt64BE(off + 32));
+        if (!Number.isFinite(duration) || duration <= 0 || timescale <= 0) return null;
+        return duration / timescale;
+      }
+      if (off + 28 > buf.length) return null;
+      const timescale = buf.readUInt32BE(off + 20);
+      const duration = buf.readUInt32BE(off + 24);
+      if (!Number.isFinite(duration) || duration <= 0 || timescale <= 0) return null;
+      return duration / timescale;
+    }
+    off += size;
+  }
+  return null;
+}
+
+/** Convenience: locate a complete moov in a head/tail chunk and read mvhd. */
+export function readMp4DurationSeconds(
+  buf: Buffer,
+  baseOffset = 0,
+  totalSize?: number,
+): number | null {
+  const moov = findMoovInChunk(buf, baseOffset, totalSize);
+  if (!moov) return null;
+  return mvhdDurationSeconds(buf, moov, baseOffset);
+}
+
+/**
  * Locate moov in a chunk that may begin mid-box. Tail chunks almost always
  * start inside the mdat payload, so the sequential walker cannot reach the
  * moov — scan for the `moov` type bytes instead and validate every candidate
