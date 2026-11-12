@@ -105,6 +105,10 @@ function createClient(): PrismaClient {
   const pool = new Pool({
     connectionString: databaseUrl,
     max: poolMax,
+    // Prisma maps TIMESTAMP columns to UTC dates. Pin every session to UTC so
+    // DB-side defaults/`now()` can never store local wall-clock time into
+    // those columns (a non-UTC server would otherwise skew leases/retries).
+    options: '-c timezone=UTC',
     ...(remote
       ? { idleTimeoutMillis: Math.max(keepaliveIntervalMs + 5_000, 65_000) }
       : {}),

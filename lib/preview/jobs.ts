@@ -13,15 +13,43 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { Prisma } from '@/generated/client';
 import { prisma } from '@/lib/db';
-import { clipPath, previewsDir, readSidecar, removePreviewAssets, spritePath } from './cache';
+import {
+  clipPath,
+  flushPreviewAccessTimes,
+  previewsDir,
+  readSidecar,
+  removePreviewAssets,
+  spritePath,
+} from './cache';
 import {
   previewGenerationVersion,
   previewJobMaxAttempts,
+  previewJobMaxRecoveries,
+  previewJobRecoveryBaseMs,
+  previewJobRecoveryJitterMs,
+  previewJobRecoveryMaxMs,
   previewJobRetryBaseMs,
   previewJobRetryMaxMs,
+  previewJobStarvationMs,
   previewPrioritySync,
+  previewStatsCacheTtlMs,
+  previewStatsMinRefreshMs,
 } from './config';
+import {
+  getCachedStats,
+  invalidatePreviewStatsCache,
+} from './stats-cache';
+
+/**
+ * PostgreSQL TIMESTAMP columns are read as UTC by Prisma. `now()` returns a
+ * timestamptz rendered in the session timezone, so writing it directly into
+ * a TIMESTAMP column silently skews every retry/lease deadline whenever the
+ * server timezone is not UTC (e.g. Asia/Kolkata +05:30). Normalize at the
+ * SQL boundary instead of relying on deployment configuration.
+ */
+const utcNow = Prisma.sql`(now() AT TIME ZONE 'UTC')`;
 
 export type PreviewJobStatus =
   | 'pending'
@@ -47,6 +75,10 @@ export type PreviewJobErrorCode =
   | 'artifact_missing'
   | 'publication_failed'
   | 'lease_expired'
+  | 'lease_lost'
+  | 'job_timeout'
+  | 'worker_shutdown'
+  | 'worker_recovery_exhausted'
   | 'max_attempts'
   | 'internal';
 
@@ -56,7 +88,13 @@ export interface PreviewJobMetrics {
   ffmpegMs: number;
   totalMs: number;
   outputBytes: number;
-  scenes: Array<{ startSec: number; durationSec: number; sourceSeekSec: number }>;
+  scenes: Array<{
+    startSec: number;
+    durationSec: number;
+    sourceSeekSec: number;
+    estimated?: boolean;
+    byteFraction?: number | null;
+  }>;
   sourceKind: string;
   generationVersion: string;
 }
@@ -118,22 +156,51 @@ export async function previewHoverArtifactValid(
   videoId: number,
   identity: { megaNodeId: string; sourceSize: number },
 ): Promise<boolean> {
+  return (await previewHoverArtifactInfo(videoId, identity)).valid;
+}
+
+/**
+ * One filesystem pass per video: read the sidecar and stat the clip once,
+ * returning both validity and the real on-disk size. Dashboard statistics
+ * use this to avoid the previous valid+bytes double stat.
+ */
+export async function previewHoverArtifactInfo(
+  videoId: number,
+  identity: { megaNodeId: string; sourceSize: number },
+): Promise<{ valid: boolean; bytes: number }> {
   const version = previewGenerationVersion();
   let sidecar: Awaited<ReturnType<typeof readSidecar>> = null;
   try {
     sidecar = await readSidecar(videoId);
   } catch {
-    return false;
+    return { valid: false, bytes: 0 };
   }
-  if (!sidecar || sidecar.generationVersion !== version) return false;
-  if (sidecar.megaNodeId !== identity.megaNodeId || sidecar.sourceSize !== identity.sourceSize) return false;
-  if (sidecar.status !== 'ready' || !sidecar.hover) return false;
+  if (!sidecar || sidecar.generationVersion !== version) return { valid: false, bytes: 0 };
+  if (sidecar.megaNodeId !== identity.megaNodeId || sidecar.sourceSize !== identity.sourceSize) {
+    return { valid: false, bytes: 0 };
+  }
+  if (sidecar.status !== 'ready' || !sidecar.hover) return { valid: false, bytes: 0 };
   try {
     const st = await fs.promises.stat(clipPath(videoId));
-    return st.isFile() && st.size > 0;
+    return st.isFile() && st.size > 0
+      ? { valid: true, bytes: st.size }
+      : { valid: false, bytes: 0 };
   } catch {
-    return false;
+    return { valid: false, bytes: 0 };
   }
+}
+
+/**
+ * Terminal infrastructure/retry-budget failures must not be resurrected by
+ * an ordinary hover or sync scan. They require an explicit administrator
+ * retry (or a full job reset because the artifact vanished).
+ */
+export function autoRetryBlockedError(errorCode: string | null | undefined): boolean {
+  return (
+    errorCode === 'max_attempts' ||
+    errorCode === 'worker_recovery_exhausted' ||
+    errorCode === 'unsupported_codec'
+  );
 }
 
 /**
@@ -146,13 +213,24 @@ export async function ensurePreviewJob(input: PreviewJobEnsureInput): Promise<Pr
   const key = previewJobKey(input.videoId, input.sourceFingerprint, version);
   const existing = await prisma.previewGenerationJob.findUnique({
     where: { idempotencyKey: key },
-    select: { id: true, status: true, attempts: true, maxAttempts: true, nextRetryAt: true },
+    select: {
+      id: true,
+      status: true,
+      attempts: true,
+      maxAttempts: true,
+      nextRetryAt: true,
+      errorCode: true,
+    },
   });
   if (existing) {
     const status = existing.status as PreviewJobStatus;
     const due = (existing.nextRetryAt?.getTime() ?? 0) <= Date.now();
     if (
-      (status === 'failed' && input.retryEligible && due) ||
+      (status === 'failed' &&
+        input.retryEligible &&
+        due &&
+        existing.attempts < existing.maxAttempts &&
+        !autoRetryBlockedError(existing.errorCode)) ||
       (status === 'completed' && input.artifactValid === false)
     ) {
       await prisma.previewGenerationJob.update({
@@ -161,6 +239,7 @@ export async function ensurePreviewJob(input: PreviewJobEnsureInput): Promise<Pr
           status: 'pending',
           stage: null,
           attempts: 0,
+          recoveryCount: 0,
           maxAttempts: input.maxAttempts ?? previewJobMaxAttempts(),
           nextRetryAt: new Date(),
           queuedAt: new Date(),
@@ -176,6 +255,7 @@ export async function ensurePreviewJob(input: PreviewJobEnsureInput): Promise<Pr
           updatedAt: new Date(),
         },
       });
+      invalidatePreviewStatsCache();
       return { key, jobId: existing.id, status: 'pending', enqueued: true };
     }
     return {
@@ -303,6 +383,7 @@ export async function ensureMissingPreviewJobs(options: EnsureManyOptions): Prom
       attempts: true,
       maxAttempts: true,
       nextRetryAt: true,
+      errorCode: true,
     },
   });
   const byKey = new Map(existing.map((j) => [j.idempotencyKey, j]));
@@ -353,7 +434,9 @@ export async function ensureMissingPreviewJobs(options: EnsureManyOptions): Prom
       }
       // failed
       const due = (job.nextRetryAt?.getTime() ?? 0) <= now;
-      if (options.forceTerminal || (options.retryEligibleFailed && due)) {
+      const blocked =
+        autoRetryBlockedError(job.errorCode) || job.attempts >= job.maxAttempts;
+      if (options.forceTerminal || (options.retryEligibleFailed && due && !blocked)) {
         failedKeys.push(key);
         result.enqueued++;
       } else {
@@ -414,6 +497,7 @@ export async function ensureMissingPreviewJobs(options: EnsureManyOptions): Prom
         status: 'pending',
         stage: null,
         attempts: 0,
+        recoveryCount: 0,
         maxAttempts: previewJobMaxAttempts(),
         nextRetryAt: nowDate,
         queuedAt: nowDate,
@@ -433,6 +517,7 @@ export async function ensureMissingPreviewJobs(options: EnsureManyOptions): Prom
         status: 'pending',
         stage: null,
         attempts: 0,
+        recoveryCount: 0,
         nextRetryAt: nowDate,
         queuedAt: nowDate,
         lockedBy: null,
@@ -451,6 +536,7 @@ export async function ensureMissingPreviewJobs(options: EnsureManyOptions): Prom
         status: 'pending',
         stage: null,
         attempts: 0,
+        recoveryCount: 0,
         nextRetryAt: nowDate,
         queuedAt: nowDate,
         lockedBy: null,
@@ -462,7 +548,10 @@ export async function ensureMissingPreviewJobs(options: EnsureManyOptions): Prom
       },
     });
   }
-  if (result.enqueued > 0) wakePreviewWorkerSafe();
+  if (result.enqueued > 0) {
+    invalidatePreviewStatsCache();
+    wakePreviewWorkerSafe();
+  }
   return result;
 }
 
@@ -515,78 +604,218 @@ export interface ClaimedJob {
   kind: string;
   sourceFingerprint: string;
   generationVersion: string;
+  claimCount: number;
   attempts: number;
+  recoveryCount: number;
 }
 
 /**
  * Atomically claim the next runnable job. `FOR UPDATE SKIP LOCKED` means
  * another process already owns the row if it is mid-lease, and expired
  * leases are recovered by the caller first.
+ *
+ * Claiming only increments `claimCount`. `attempts` is incremented later by
+ * `beginPreviewGenerationAttempt()`, so a worker that dies between claim and
+ * acquisition does not consume a generation attempt.
+ *
+ * Ordering gives a job that has waited longer than the starvation threshold
+ * precedence over newer work; within each group the existing priority and
+ * FIFO order apply. Hover jobs can therefore not starve the sync backlog.
  */
 export async function claimNextPreviewJob(workerId: string, leaseMs: number): Promise<ClaimedJob | null> {
+  const starvationMs = previewJobStarvationMs();
   const rows = await prisma.$queryRaw<ClaimedJob[]>`WITH next AS (
-      SELECT j."id", j."videoId", j."kind", j."sourceFingerprint", j."generationVersion", j."attempts"
+      SELECT j."id", j."videoId", j."kind", j."sourceFingerprint", j."generationVersion"
       FROM "PreviewGenerationJob" j
       JOIN "Video" v ON v."id" = j."videoId"
       JOIN "MegaAccount" a ON a."id" = v."megaAccountId"
       JOIN "User" u ON u."id" = a."userId"
       WHERE j."status" IN ('pending', 'queued')
-        AND j."nextRetryAt" <= now()
+        AND j."nextRetryAt" <= ${utcNow}
         AND u."previewPaused" = false
-      ORDER BY j."priority" DESC, j."createdAt" ASC, j."id" ASC
+      ORDER BY
+        CASE WHEN j."queuedAt" < ${utcNow} - (${starvationMs} * interval '1 millisecond')
+             THEN 1 ELSE 0 END DESC,
+        j."priority" DESC,
+        j."createdAt" ASC,
+        j."id" ASC
       LIMIT 1
       FOR UPDATE OF j SKIP LOCKED
     )
     UPDATE "PreviewGenerationJob" j
     SET "status" = 'generating',
-        "stage" = 'acquiring',
+        "stage" = 'claimed',
+        "claimCount" = j."claimCount" + 1,
         "lockedBy" = ${workerId},
-        "leaseExpiresAt" = now() + (${leaseMs} * interval '1 millisecond'),
-        "startedAt" = COALESCE(j."startedAt", now()),
-        "attempts" = j."attempts" + 1,
-        "updatedAt" = now()
+        "leaseExpiresAt" = ${utcNow} + (${leaseMs} * interval '1 millisecond'),
+        "updatedAt" = ${utcNow}
     FROM next
     WHERE j."id" = next."id"
-    RETURNING j."id", j."videoId", j."kind", j."sourceFingerprint", j."generationVersion", j."attempts"`;
-  return rows[0] ?? null;
+    RETURNING j."id", j."videoId", j."kind", j."sourceFingerprint", j."generationVersion",
+              j."claimCount", j."attempts", j."recoveryCount"`;
+  if (rows.length === 0) return null;
+  const job = rows[0];
+  return {
+    ...job,
+    claimCount: Number(job.claimCount),
+    attempts: Number(job.attempts),
+    recoveryCount: Number(job.recoveryCount),
+  };
 }
 
 /**
- * Recover jobs whose worker died mid-run. Attempts stay counted; a job that
- * exhausted its budget becomes terminal instead of retrying forever.
+ * Mark the moment real generation work starts. This is the only place that
+ * increments `attempts`, and it is atomic with the claim-owner/fencing
+ * check, so a stale worker cannot start work after another worker reclaimed
+ * the job.
+ */
+export async function beginPreviewGenerationAttempt(
+  jobId: number,
+  workerId: string,
+  claimCount: number,
+  leaseMs: number,
+): Promise<number | null> {
+  const rows = await prisma.$queryRaw<Array<{ attempts: number }>>`UPDATE "PreviewGenerationJob" j
+    SET "attempts" = j."attempts" + 1,
+        "stage" = 'acquiring',
+        "startedAt" = COALESCE(j."startedAt", ${utcNow}),
+        "leaseExpiresAt" = ${utcNow} + (${leaseMs} * interval '1 millisecond'),
+        "updatedAt" = ${utcNow}
+    WHERE j."id" = ${jobId}
+      AND j."status" = 'generating'
+      AND j."lockedBy" = ${workerId}
+      AND j."claimCount" = ${claimCount}
+      AND j."attempts" < j."maxAttempts"
+    RETURNING j."attempts"`;
+  if (rows.length === 0) return null;
+  invalidatePreviewStatsCache();
+  return Number(rows[0].attempts);
+}
+
+/**
+ * Recover jobs whose worker died mid-run. `attempts` stay counted; a job
+ * that exhausted its generation budget becomes terminal instead of retrying
+ * forever. Recovery itself is bounded separately and backed off
+ * exponentially (1, 2, 4, 8 … minutes, capped, plus jitter), so a repeatedly
+ * crashing worker cannot cause an immediate reclaim loop. Recovery does NOT
+ * reset `attempts`.
  */
 export async function recoverExpiredPreviewLeases(): Promise<number> {
+  const maxRecoveries = previewJobMaxRecoveries();
+  const baseMs = previewJobRecoveryBaseMs();
+  const maxMs = previewJobRecoveryMaxMs();
+  const jitterMs = previewJobRecoveryJitterMs();
+  const maxFactor = Math.max(1, Math.ceil(maxMs / Math.max(1, baseMs)));
   const result = await prisma.$executeRaw`UPDATE "PreviewGenerationJob" j
-    SET "status" = CASE WHEN j."attempts" >= j."maxAttempts" THEN 'failed' ELSE 'pending' END,
-        "errorCode" = CASE WHEN j."attempts" >= j."maxAttempts" THEN 'max_attempts' ELSE 'lease_expired' END,
-        "lastError" = CASE WHEN j."attempts" >= j."maxAttempts" THEN 'Preview generation exhausted its attempt budget.' ELSE 'Worker lease expired; job returned to the queue.' END,
-        "nextRetryAt" = CASE WHEN j."attempts" >= j."maxAttempts" THEN now() + (least(2 ^ j."attempts", 16) * interval '1 minute') ELSE now() END,
+    SET "status" = CASE
+          WHEN j."attempts" >= j."maxAttempts" THEN 'failed'
+          WHEN j."recoveryCount" + 1 >= ${maxRecoveries} THEN 'failed'
+          ELSE 'pending'
+        END,
+        "recoveryCount" = j."recoveryCount" + 1,
+        "errorCode" = CASE
+          WHEN j."attempts" >= j."maxAttempts" THEN 'max_attempts'
+          WHEN j."recoveryCount" + 1 >= ${maxRecoveries} THEN 'worker_recovery_exhausted'
+          ELSE 'lease_expired'
+        END,
+        "lastError" = CASE
+          WHEN j."attempts" >= j."maxAttempts" THEN 'Preview generation exhausted its attempt budget.'
+          WHEN j."recoveryCount" + 1 >= ${maxRecoveries} THEN 'Worker recovery budget exhausted; administrative retry required.'
+          ELSE 'Worker lease expired; job returned to the queue with backoff.'
+        END,
+        "nextRetryAt" = CASE
+          WHEN j."attempts" >= j."maxAttempts" OR j."recoveryCount" + 1 >= ${maxRecoveries}
+            THEN ${utcNow}
+          ELSE ${utcNow} + (
+            (least(pow(2, j."recoveryCount"), ${maxFactor}) * ${baseMs}
+              + floor(random() * ${jitterMs})) * interval '1 millisecond'
+          )
+        END,
         "lockedBy" = NULL,
         "leaseExpiresAt" = NULL,
         "stage" = NULL,
-        "updatedAt" = now()
+        "updatedAt" = ${utcNow}
     WHERE j."status" = 'generating'
       AND j."leaseExpiresAt" IS NOT NULL
-      AND j."leaseExpiresAt" < now()`;
-  if (result > 0) console.log(`[preview] recovered ${result} abandoned preview job(s)`);
+      AND j."leaseExpiresAt" < ${utcNow}`;
+  if (result > 0) {
+    invalidatePreviewStatsCache();
+    console.log(`[preview] recovered ${result} abandoned preview job(s)`);
+  }
   return result;
 }
 
-export async function heartbeatPreviewJob(jobId: number, workerId: string, leaseMs: number): Promise<void> {
-  await prisma.previewGenerationJob.updateMany({
-    where: { id: jobId, status: 'generating', lockedBy: workerId },
+/**
+ * Renew a live lease. Returns false when the row is no longer ours (expired
+ * and recovered, cancelled, or claimed by another worker); the caller must
+ * then abort the in-flight job instead of continuing blind.
+ */
+export async function heartbeatPreviewJob(
+  jobId: number,
+  workerId: string,
+  leaseMs: number,
+  claimCount?: number,
+): Promise<boolean> {
+  const result = await prisma.previewGenerationJob.updateMany({
+    where: {
+      id: jobId,
+      status: 'generating',
+      lockedBy: workerId,
+      ...(claimCount === undefined ? {} : { claimCount }),
+    },
     data: {
       leaseExpiresAt: new Date(Date.now() + leaseMs),
       updatedAt: new Date(),
     },
   });
+  return result.count > 0;
 }
 
-export async function setPreviewJobStage(jobId: number, workerId: string, stage: string): Promise<void> {
-  await prisma.previewGenerationJob.updateMany({
-    where: { id: jobId, status: 'generating', lockedBy: workerId },
+export async function setPreviewJobStage(
+  jobId: number,
+  workerId: string,
+  stage: string,
+  claimCount?: number,
+): Promise<boolean> {
+  const result = await prisma.previewGenerationJob.updateMany({
+    where: {
+      id: jobId,
+      status: 'generating',
+      lockedBy: workerId,
+      ...(claimCount === undefined ? {} : { claimCount }),
+    },
     data: { stage, updatedAt: new Date() },
   });
+  return result.count > 0;
+}
+
+/**
+ * Fencing check immediately before artifact publication. It both verifies
+ * that this worker still owns the current claim and extends the lease, so a
+ * worker that lost its lease (expired, recovered, reclaimed) can never
+ * rename its temp artifact over a newer one.
+ */
+export async function assertPreviewJobOwnership(
+  jobId: number,
+  workerId: string,
+  claimCount: number,
+  leaseMs: number,
+): Promise<boolean> {
+  const result = await prisma.previewGenerationJob.updateMany({
+    where: {
+      id: jobId,
+      status: 'generating',
+      lockedBy: workerId,
+      claimCount,
+      leaseExpiresAt: { gt: new Date() },
+    },
+    data: {
+      stage: 'publishing',
+      leaseExpiresAt: new Date(Date.now() + leaseMs),
+      updatedAt: new Date(),
+    },
+  });
+  return result.count > 0;
 }
 
 export async function completePreviewJob(
@@ -594,9 +823,15 @@ export async function completePreviewJob(
   workerId: string,
   artifactBytes: number,
   metrics: PreviewJobMetrics,
+  expectedClaimCount?: number,
 ): Promise<boolean> {
   const result = await prisma.previewGenerationJob.updateMany({
-    where: { id: jobId, status: 'generating', lockedBy: workerId },
+    where: {
+      id: jobId,
+      status: 'generating',
+      lockedBy: workerId,
+      ...(expectedClaimCount === undefined ? {} : { claimCount: expectedClaimCount }),
+    },
     data: {
       status: 'completed',
       stage: null,
@@ -611,6 +846,7 @@ export async function completePreviewJob(
       updatedAt: new Date(),
     },
   });
+  if (result.count > 0) invalidatePreviewStatsCache();
   return result.count > 0;
 }
 
@@ -618,6 +854,8 @@ export interface FailPreviewJobOptions {
   retryable?: boolean;
   unsupported?: boolean;
   now?: () => number;
+  /** Fencing token from the claim that owns this execution. */
+  claimCount?: number;
 }
 
 export async function failPreviewJob(
@@ -630,9 +868,20 @@ export async function failPreviewJob(
   const now = opts.now?.() ?? Date.now();
   const job = await prisma.previewGenerationJob.findUnique({
     where: { id: jobId },
-    select: { attempts: true, maxAttempts: true, status: true, lockedBy: true },
+    select: {
+      attempts: true,
+      maxAttempts: true,
+      status: true,
+      lockedBy: true,
+      claimCount: true,
+    },
   });
-  if (!job || job.status !== 'generating' || (job.lockedBy && job.lockedBy !== workerId)) {
+  if (
+    !job ||
+    job.status !== 'generating' ||
+    (job.lockedBy && job.lockedBy !== workerId) ||
+    (opts.claimCount !== undefined && job.claimCount !== opts.claimCount)
+  ) {
     return { status: job?.status as PreviewJobStatus, willRetry: false };
   }
   const exhausted = job.attempts >= job.maxAttempts;
@@ -643,8 +892,13 @@ export async function failPreviewJob(
       ? 'pending'
       : 'failed';
   const nextRetry = new Date(now + retryDelayMs(job.attempts));
-  await prisma.previewGenerationJob.update({
-    where: { id: jobId },
+  const result = await prisma.previewGenerationJob.updateMany({
+    where: {
+      id: jobId,
+      status: 'generating',
+      lockedBy: workerId,
+      ...(opts.claimCount === undefined ? {} : { claimCount: opts.claimCount }),
+    },
     data: {
       status: finalStatus,
       stage: null,
@@ -657,6 +911,7 @@ export async function failPreviewJob(
       updatedAt: new Date(now),
     },
   });
+  if (result.count > 0) invalidatePreviewStatsCache();
   return { status: finalStatus, willRetry };
 }
 
@@ -668,6 +923,7 @@ export async function requeueMissingPreviewJob(jobId: number): Promise<boolean> 
       status: 'pending',
       stage: null,
       attempts: 0,
+      recoveryCount: 0,
       maxAttempts: previewJobMaxAttempts(),
       nextRetryAt: new Date(),
       queuedAt: new Date(),
@@ -680,7 +936,10 @@ export async function requeueMissingPreviewJob(jobId: number): Promise<boolean> 
       updatedAt: new Date(),
     },
   });
-  if (result.count > 0) wakePreviewWorkerSafe();
+  if (result.count > 0) {
+    invalidatePreviewStatsCache();
+    wakePreviewWorkerSafe();
+  }
   return result.count > 0;
 }
 
@@ -720,6 +979,7 @@ export async function retryPreviewJobs(opts: {
       status: 'pending',
       stage: null,
       attempts: 0,
+      recoveryCount: 0,
       nextRetryAt: new Date(),
       queuedAt: new Date(),
       lockedBy: null,
@@ -731,6 +991,10 @@ export async function retryPreviewJobs(opts: {
       updatedAt: new Date(),
     },
   });
+  if (rows.length > 0) {
+    invalidatePreviewStatsCache();
+    wakePreviewWorkerSafe();
+  }
   return { retried: rows.length, skipped: 0 };
 }
 
@@ -772,14 +1036,37 @@ interface JobStatusCount {
   _count: number | { _all: number };
 }
 
+/** Number of Prisma read calls a cold statistics refresh performs. */
+export const PREVIEW_STATS_DB_CALLS_PER_REFRESH = 5;
+
 /**
  * Real library + disk statistics. Job counts come from PostgreSQL; the
  * completed/missing split is verified against the actual sidecar/clip files
  * so an ephemeral cache directory can never make the dashboard claim
  * "completed" for vanished artifacts.
+ *
+ * The expensive filesystem pass is wrapped in a short-lived, single-flight
+ * cache: the ~5 s Settings poll normally reads memory, while each TTL window
+ * still re-verifies the disk. Artifact publication/removal/eviction marks
+ * the cache stale so the next refresh cannot keep a vanished file "ready".
  */
 export async function getPreviewLibraryStats(userId: string): Promise<PreviewLibraryStats> {
   const version = previewGenerationVersion();
+  const key = `library:${userId}:${version}`;
+  return getCachedStats(
+    key,
+    { ttlMs: previewStatsCacheTtlMs(), minRefreshMs: previewStatsMinRefreshMs() },
+    () => loadPreviewLibraryStats(userId, version),
+  );
+}
+
+async function loadPreviewLibraryStats(
+  userId: string,
+  version: string,
+): Promise<PreviewLibraryStats> {
+  // Periodic access-metadata flush: touchPreview() is memory-only, so this
+  // is the bounded point where LRU timestamps become durable again.
+  await flushPreviewAccessTimes().catch(() => {});
   const [videos, statusCounts] = await Promise.all([
     prisma.video.findMany({
       where: { megaAccount: { userId }, megaNodeId: { not: null } },
@@ -802,17 +1089,13 @@ export async function getPreviewLibraryStats(userId: string): Promise<PreviewLib
   let previewBytes = 0;
   await runBounded(videos, 8, async (video) => {
     if (video.megaNodeId === null || video.fileSize === null) return;
-    if (await previewHoverArtifactValid(video.id, {
+    const info = await previewHoverArtifactInfo(video.id, {
       megaNodeId: video.megaNodeId,
       sourceSize: Number(video.fileSize),
-    })) {
+    });
+    if (info.valid) {
       completed++;
-      try {
-        const st = await fs.promises.stat(clipPath(video.id));
-        if (st.isFile()) previewBytes += st.size;
-      } catch {
-        // raced deletion; completed count stays false on the next scan
-      }
+      previewBytes += info.bytes;
     }
   });
 
@@ -959,3 +1242,9 @@ export function previewSpritePath(videoId: number): string {
 export function previewArtifactPath(videoId: number): string {
   return path.join(previewsDir(), `${videoId}.preview.mp4`);
 }
+
+export {
+  invalidatePreviewStatsCache,
+  previewStatsCacheMetrics,
+  __resetPreviewStatsCacheForTests,
+} from './stats-cache';

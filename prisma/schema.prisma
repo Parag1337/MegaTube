@@ -117,8 +117,18 @@ model PreviewGenerationJob {
   /// acquiring | scene-selection | encoding | publishing | null
   stage              String?
   priority           Int       @default(0)
+  /// Successful worker claims. Incremented even when the worker dies before
+  /// any generation work starts, so crash-only churn is visible separately
+  /// from real generation attempts.
+  claimCount         Int       @default(0)
+  /// Actual generation attempts. Incremented once, via
+  /// beginPreviewGenerationAttempt(), when a worker starts source acquisition
+  /// for a claimed job. A claim-then-crash can never consume this budget.
   attempts           Int       @default(0)
   maxAttempts        Int       @default(3)
+  /// Expired-lease / abandoned-worker recovery events. Bounded separately by
+  /// PREVIEW_JOB_MAX_RECOVERIES; recovery does not silently reset attempts.
+  recoveryCount      Int       @default(0)
   nextRetryAt        DateTime? @default(now())
   lockedBy           String?
   leaseExpiresAt     DateTime?

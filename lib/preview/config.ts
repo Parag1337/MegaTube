@@ -117,6 +117,61 @@ export function previewJobLeaseMs(): number {
   return Math.floor(numEnv('PREVIEW_JOB_LEASE_MS', 180_000, 30_000, 30 * 60_000));
 }
 
+/**
+ * Absolute wall-clock deadline for one preview job (acquisition → scene
+ * selection → every ffmpeg invocation → validation → publication). This is
+ * independent of lease renewal: a live-but-stuck worker cannot extend it by
+ * heartbeating. Default 10 minutes is ~7× the measured fixture workflow and
+ * still bounds the worst-case ~20 sequential ffmpeg invocations at the 90 s
+ * per-invocation timeout.
+ */
+export function previewJobDeadlineMs(): number {
+  return Math.floor(numEnv('PREVIEW_JOB_DEADLINE_MS', 10 * 60_000, 30_000, 60 * 60_000));
+}
+
+/**
+ * Bounded infrastructure-recovery policy. Recovery is counted separately
+ * from generation attempts: repeated claim-only crashes cannot exhaust the
+ * generation budget, but they also cannot retry forever.
+ */
+export function previewJobMaxRecoveries(): number {
+  return Math.floor(numEnv('PREVIEW_JOB_MAX_RECOVERIES', 4, 1, 10));
+}
+
+/** First expired-lease backoff (1 min by default), doubled per recovery. */
+export function previewJobRecoveryBaseMs(): number {
+  return Math.floor(numEnv('PREVIEW_JOB_RECOVERY_BASE_MS', 60_000, 1_000, 10 * 60_000));
+}
+
+/** Cap for expired-lease exponential backoff. */
+export function previewJobRecoveryMaxMs(): number {
+  return Math.floor(numEnv('PREVIEW_JOB_RECOVERY_MAX_MS', 8 * 60_000, 10_000, 24 * 3600_000));
+}
+
+/** Additive jitter upper bound, to avoid synchronized retries across workers. */
+export function previewJobRecoveryJitterMs(): number {
+  return Math.floor(numEnv('PREVIEW_JOB_RECOVERY_JITTER_MS', 15_000, 0, 5 * 60_000));
+}
+
+/** Grace period between SIGTERM and SIGKILL for an aborted child process. */
+export function previewProcessKillGraceMs(): number {
+  return Math.floor(numEnv('PREVIEW_PROCESS_KILL_GRACE_MS', 5_000, 100, 60_000));
+}
+
+/**
+ * Short-lived dashboard statistics cache. The Settings UI polls every ~5 s;
+ * a 20 s TTL means four of five polls are served from memory. A minimum
+ * refresh interval still protects against explicit invalidation storms while
+ * a bulk backlog completes jobs.
+ */
+export function previewStatsCacheTtlMs(): number {
+  return Math.floor(numEnv('PREVIEW_STATS_CACHE_TTL_MS', 20_000, 5_000, 300_000));
+}
+
+export function previewStatsMinRefreshMs(): number {
+  return Math.floor(numEnv('PREVIEW_STATS_MIN_REFRESH_MS', 15_000, 1_000, 300_000));
+}
+
 export function previewJobHeartbeatMs(): number {
   return Math.floor(numEnv('PREVIEW_JOB_HEARTBEAT_MS', 30_000, 5_000, 5 * 60_000));
 }
@@ -124,6 +179,16 @@ export function previewJobHeartbeatMs(): number {
 /** Idle worker poll interval. */
 export function previewJobPollMs(): number {
   return Math.floor(numEnv('PREVIEW_JOB_POLL_MS', 3_000, 500, 60_000));
+}
+
+/**
+ * Claim-order fairness: once a job has waited this long it outranks newer
+ * work even if the newer job has a higher priority. A continuous stream of
+ * hover jobs (priority 100) can therefore not starve the older sync backlog
+ * (priority 10) indefinitely.
+ */
+export function previewJobStarvationMs(): number {
+  return Math.floor(numEnv('PREVIEW_JOB_STARVATION_MS', 15 * 60_000, 10_000, 24 * 3600_000));
 }
 
 /** Bounded exponential retry delay. */

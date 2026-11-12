@@ -35,8 +35,10 @@ export type PreviewGenerationJobAvgAggregateOutputType = {
   id: number | null
   videoId: number | null
   priority: number | null
+  claimCount: number | null
   attempts: number | null
   maxAttempts: number | null
+  recoveryCount: number | null
   artifactBytes: number | null
 }
 
@@ -44,8 +46,10 @@ export type PreviewGenerationJobSumAggregateOutputType = {
   id: number | null
   videoId: number | null
   priority: number | null
+  claimCount: number | null
   attempts: number | null
   maxAttempts: number | null
+  recoveryCount: number | null
   artifactBytes: number | null
 }
 
@@ -59,8 +63,10 @@ export type PreviewGenerationJobMinAggregateOutputType = {
   status: string | null
   stage: string | null
   priority: number | null
+  claimCount: number | null
   attempts: number | null
   maxAttempts: number | null
+  recoveryCount: number | null
   nextRetryAt: Date | null
   lockedBy: string | null
   leaseExpiresAt: Date | null
@@ -85,8 +91,10 @@ export type PreviewGenerationJobMaxAggregateOutputType = {
   status: string | null
   stage: string | null
   priority: number | null
+  claimCount: number | null
   attempts: number | null
   maxAttempts: number | null
+  recoveryCount: number | null
   nextRetryAt: Date | null
   lockedBy: string | null
   leaseExpiresAt: Date | null
@@ -111,8 +119,10 @@ export type PreviewGenerationJobCountAggregateOutputType = {
   status: number
   stage: number
   priority: number
+  claimCount: number
   attempts: number
   maxAttempts: number
+  recoveryCount: number
   nextRetryAt: number
   lockedBy: number
   leaseExpiresAt: number
@@ -133,8 +143,10 @@ export type PreviewGenerationJobAvgAggregateInputType = {
   id?: true
   videoId?: true
   priority?: true
+  claimCount?: true
   attempts?: true
   maxAttempts?: true
+  recoveryCount?: true
   artifactBytes?: true
 }
 
@@ -142,8 +154,10 @@ export type PreviewGenerationJobSumAggregateInputType = {
   id?: true
   videoId?: true
   priority?: true
+  claimCount?: true
   attempts?: true
   maxAttempts?: true
+  recoveryCount?: true
   artifactBytes?: true
 }
 
@@ -157,8 +171,10 @@ export type PreviewGenerationJobMinAggregateInputType = {
   status?: true
   stage?: true
   priority?: true
+  claimCount?: true
   attempts?: true
   maxAttempts?: true
+  recoveryCount?: true
   nextRetryAt?: true
   lockedBy?: true
   leaseExpiresAt?: true
@@ -183,8 +199,10 @@ export type PreviewGenerationJobMaxAggregateInputType = {
   status?: true
   stage?: true
   priority?: true
+  claimCount?: true
   attempts?: true
   maxAttempts?: true
+  recoveryCount?: true
   nextRetryAt?: true
   lockedBy?: true
   leaseExpiresAt?: true
@@ -209,8 +227,10 @@ export type PreviewGenerationJobCountAggregateInputType = {
   status?: true
   stage?: true
   priority?: true
+  claimCount?: true
   attempts?: true
   maxAttempts?: true
+  recoveryCount?: true
   nextRetryAt?: true
   lockedBy?: true
   leaseExpiresAt?: true
@@ -322,8 +342,10 @@ export type PreviewGenerationJobGroupByOutputType = {
   status: string
   stage: string | null
   priority: number
+  claimCount: number
   attempts: number
   maxAttempts: number
+  recoveryCount: number
   nextRetryAt: Date | null
   lockedBy: string | null
   leaseExpiresAt: Date | null
@@ -371,8 +393,10 @@ export type PreviewGenerationJobWhereInput = {
   status?: Prisma.StringFilter<"PreviewGenerationJob"> | string
   stage?: Prisma.StringNullableFilter<"PreviewGenerationJob"> | string | null
   priority?: Prisma.IntFilter<"PreviewGenerationJob"> | number
+  claimCount?: Prisma.IntFilter<"PreviewGenerationJob"> | number
   attempts?: Prisma.IntFilter<"PreviewGenerationJob"> | number
   maxAttempts?: Prisma.IntFilter<"PreviewGenerationJob"> | number
+  recoveryCount?: Prisma.IntFilter<"PreviewGenerationJob"> | number
   nextRetryAt?: Prisma.DateTimeNullableFilter<"PreviewGenerationJob"> | Date | string | null
   lockedBy?: Prisma.StringNullableFilter<"PreviewGenerationJob"> | string | null
   leaseExpiresAt?: Prisma.DateTimeNullableFilter<"PreviewGenerationJob"> | Date | string | null
@@ -398,8 +422,10 @@ export type PreviewGenerationJobOrderByWithRelationInput = {
   status?: Prisma.SortOrder
   stage?: Prisma.SortOrderInput | Prisma.SortOrder
   priority?: Prisma.SortOrder
+  claimCount?: Prisma.SortOrder
   attempts?: Prisma.SortOrder
   maxAttempts?: Prisma.SortOrder
+  recoveryCount?: Prisma.SortOrder
   nextRetryAt?: Prisma.SortOrderInput | Prisma.SortOrder
   lockedBy?: Prisma.SortOrderInput | Prisma.SortOrder
   leaseExpiresAt?: Prisma.SortOrderInput | Prisma.SortOrder
@@ -428,8 +454,10 @@ export type PreviewGenerationJobWhereUniqueInput = Prisma.AtLeast<{
   status?: Prisma.StringFilter<"PreviewGenerationJob"> | string
   stage?: Prisma.StringNullableFilter<"PreviewGenerationJob"> | string | null
   priority?: Prisma.IntFilter<"PreviewGenerationJob"> | number
+  claimCount?: Prisma.IntFilter<"PreviewGenerationJob"> | number
   attempts?: Prisma.IntFilter<"PreviewGenerationJob"> | number
   maxAttempts?: Prisma.IntFilter<"PreviewGenerationJob"> | number
+  recoveryCount?: Prisma.IntFilter<"PreviewGenerationJob"> | number
   nextRetryAt?: Prisma.DateTimeNullableFilter<"PreviewGenerationJob"> | Date | string | null
   lockedBy?: Prisma.StringNullableFilter<"PreviewGenerationJob"> | string | null
   leaseExpiresAt?: Prisma.DateTimeNullableFilter<"PreviewGenerationJob"> | Date | string | null
@@ -455,8 +483,10 @@ export type PreviewGenerationJobOrderByWithAggregationInput = {
   status?: Prisma.SortOrder
   stage?: Prisma.SortOrderInput | Prisma.SortOrder
   priority?: Prisma.SortOrder
+  claimCount?: Prisma.SortOrder
   attempts?: Prisma.SortOrder
   maxAttempts?: Prisma.SortOrder
+  recoveryCount?: Prisma.SortOrder
   nextRetryAt?: Prisma.SortOrderInput | Prisma.SortOrder
   lockedBy?: Prisma.SortOrderInput | Prisma.SortOrder
   leaseExpiresAt?: Prisma.SortOrderInput | Prisma.SortOrder
@@ -489,8 +519,10 @@ export type PreviewGenerationJobScalarWhereWithAggregatesInput = {
   status?: Prisma.StringWithAggregatesFilter<"PreviewGenerationJob"> | string
   stage?: Prisma.StringNullableWithAggregatesFilter<"PreviewGenerationJob"> | string | null
   priority?: Prisma.IntWithAggregatesFilter<"PreviewGenerationJob"> | number
+  claimCount?: Prisma.IntWithAggregatesFilter<"PreviewGenerationJob"> | number
   attempts?: Prisma.IntWithAggregatesFilter<"PreviewGenerationJob"> | number
   maxAttempts?: Prisma.IntWithAggregatesFilter<"PreviewGenerationJob"> | number
+  recoveryCount?: Prisma.IntWithAggregatesFilter<"PreviewGenerationJob"> | number
   nextRetryAt?: Prisma.DateTimeNullableWithAggregatesFilter<"PreviewGenerationJob"> | Date | string | null
   lockedBy?: Prisma.StringNullableWithAggregatesFilter<"PreviewGenerationJob"> | string | null
   leaseExpiresAt?: Prisma.DateTimeNullableWithAggregatesFilter<"PreviewGenerationJob"> | Date | string | null
@@ -513,8 +545,10 @@ export type PreviewGenerationJobCreateInput = {
   status?: string
   stage?: string | null
   priority?: number
+  claimCount?: number
   attempts?: number
   maxAttempts?: number
+  recoveryCount?: number
   nextRetryAt?: Date | string | null
   lockedBy?: string | null
   leaseExpiresAt?: Date | string | null
@@ -540,8 +574,10 @@ export type PreviewGenerationJobUncheckedCreateInput = {
   status?: string
   stage?: string | null
   priority?: number
+  claimCount?: number
   attempts?: number
   maxAttempts?: number
+  recoveryCount?: number
   nextRetryAt?: Date | string | null
   lockedBy?: string | null
   leaseExpiresAt?: Date | string | null
@@ -564,8 +600,10 @@ export type PreviewGenerationJobUpdateInput = {
   status?: Prisma.StringFieldUpdateOperationsInput | string
   stage?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   priority?: Prisma.IntFieldUpdateOperationsInput | number
+  claimCount?: Prisma.IntFieldUpdateOperationsInput | number
   attempts?: Prisma.IntFieldUpdateOperationsInput | number
   maxAttempts?: Prisma.IntFieldUpdateOperationsInput | number
+  recoveryCount?: Prisma.IntFieldUpdateOperationsInput | number
   nextRetryAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   lockedBy?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   leaseExpiresAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -591,8 +629,10 @@ export type PreviewGenerationJobUncheckedUpdateInput = {
   status?: Prisma.StringFieldUpdateOperationsInput | string
   stage?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   priority?: Prisma.IntFieldUpdateOperationsInput | number
+  claimCount?: Prisma.IntFieldUpdateOperationsInput | number
   attempts?: Prisma.IntFieldUpdateOperationsInput | number
   maxAttempts?: Prisma.IntFieldUpdateOperationsInput | number
+  recoveryCount?: Prisma.IntFieldUpdateOperationsInput | number
   nextRetryAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   lockedBy?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   leaseExpiresAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -617,8 +657,10 @@ export type PreviewGenerationJobCreateManyInput = {
   status?: string
   stage?: string | null
   priority?: number
+  claimCount?: number
   attempts?: number
   maxAttempts?: number
+  recoveryCount?: number
   nextRetryAt?: Date | string | null
   lockedBy?: string | null
   leaseExpiresAt?: Date | string | null
@@ -641,8 +683,10 @@ export type PreviewGenerationJobUpdateManyMutationInput = {
   status?: Prisma.StringFieldUpdateOperationsInput | string
   stage?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   priority?: Prisma.IntFieldUpdateOperationsInput | number
+  claimCount?: Prisma.IntFieldUpdateOperationsInput | number
   attempts?: Prisma.IntFieldUpdateOperationsInput | number
   maxAttempts?: Prisma.IntFieldUpdateOperationsInput | number
+  recoveryCount?: Prisma.IntFieldUpdateOperationsInput | number
   nextRetryAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   lockedBy?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   leaseExpiresAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -667,8 +711,10 @@ export type PreviewGenerationJobUncheckedUpdateManyInput = {
   status?: Prisma.StringFieldUpdateOperationsInput | string
   stage?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   priority?: Prisma.IntFieldUpdateOperationsInput | number
+  claimCount?: Prisma.IntFieldUpdateOperationsInput | number
   attempts?: Prisma.IntFieldUpdateOperationsInput | number
   maxAttempts?: Prisma.IntFieldUpdateOperationsInput | number
+  recoveryCount?: Prisma.IntFieldUpdateOperationsInput | number
   nextRetryAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   lockedBy?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   leaseExpiresAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -703,8 +749,10 @@ export type PreviewGenerationJobCountOrderByAggregateInput = {
   status?: Prisma.SortOrder
   stage?: Prisma.SortOrder
   priority?: Prisma.SortOrder
+  claimCount?: Prisma.SortOrder
   attempts?: Prisma.SortOrder
   maxAttempts?: Prisma.SortOrder
+  recoveryCount?: Prisma.SortOrder
   nextRetryAt?: Prisma.SortOrder
   lockedBy?: Prisma.SortOrder
   leaseExpiresAt?: Prisma.SortOrder
@@ -723,8 +771,10 @@ export type PreviewGenerationJobAvgOrderByAggregateInput = {
   id?: Prisma.SortOrder
   videoId?: Prisma.SortOrder
   priority?: Prisma.SortOrder
+  claimCount?: Prisma.SortOrder
   attempts?: Prisma.SortOrder
   maxAttempts?: Prisma.SortOrder
+  recoveryCount?: Prisma.SortOrder
   artifactBytes?: Prisma.SortOrder
 }
 
@@ -738,8 +788,10 @@ export type PreviewGenerationJobMaxOrderByAggregateInput = {
   status?: Prisma.SortOrder
   stage?: Prisma.SortOrder
   priority?: Prisma.SortOrder
+  claimCount?: Prisma.SortOrder
   attempts?: Prisma.SortOrder
   maxAttempts?: Prisma.SortOrder
+  recoveryCount?: Prisma.SortOrder
   nextRetryAt?: Prisma.SortOrder
   lockedBy?: Prisma.SortOrder
   leaseExpiresAt?: Prisma.SortOrder
@@ -764,8 +816,10 @@ export type PreviewGenerationJobMinOrderByAggregateInput = {
   status?: Prisma.SortOrder
   stage?: Prisma.SortOrder
   priority?: Prisma.SortOrder
+  claimCount?: Prisma.SortOrder
   attempts?: Prisma.SortOrder
   maxAttempts?: Prisma.SortOrder
+  recoveryCount?: Prisma.SortOrder
   nextRetryAt?: Prisma.SortOrder
   lockedBy?: Prisma.SortOrder
   leaseExpiresAt?: Prisma.SortOrder
@@ -784,8 +838,10 @@ export type PreviewGenerationJobSumOrderByAggregateInput = {
   id?: Prisma.SortOrder
   videoId?: Prisma.SortOrder
   priority?: Prisma.SortOrder
+  claimCount?: Prisma.SortOrder
   attempts?: Prisma.SortOrder
   maxAttempts?: Prisma.SortOrder
+  recoveryCount?: Prisma.SortOrder
   artifactBytes?: Prisma.SortOrder
 }
 
@@ -839,8 +895,10 @@ export type PreviewGenerationJobCreateWithoutVideoInput = {
   status?: string
   stage?: string | null
   priority?: number
+  claimCount?: number
   attempts?: number
   maxAttempts?: number
+  recoveryCount?: number
   nextRetryAt?: Date | string | null
   lockedBy?: string | null
   leaseExpiresAt?: Date | string | null
@@ -864,8 +922,10 @@ export type PreviewGenerationJobUncheckedCreateWithoutVideoInput = {
   status?: string
   stage?: string | null
   priority?: number
+  claimCount?: number
   attempts?: number
   maxAttempts?: number
+  recoveryCount?: number
   nextRetryAt?: Date | string | null
   lockedBy?: string | null
   leaseExpiresAt?: Date | string | null
@@ -919,8 +979,10 @@ export type PreviewGenerationJobScalarWhereInput = {
   status?: Prisma.StringFilter<"PreviewGenerationJob"> | string
   stage?: Prisma.StringNullableFilter<"PreviewGenerationJob"> | string | null
   priority?: Prisma.IntFilter<"PreviewGenerationJob"> | number
+  claimCount?: Prisma.IntFilter<"PreviewGenerationJob"> | number
   attempts?: Prisma.IntFilter<"PreviewGenerationJob"> | number
   maxAttempts?: Prisma.IntFilter<"PreviewGenerationJob"> | number
+  recoveryCount?: Prisma.IntFilter<"PreviewGenerationJob"> | number
   nextRetryAt?: Prisma.DateTimeNullableFilter<"PreviewGenerationJob"> | Date | string | null
   lockedBy?: Prisma.StringNullableFilter<"PreviewGenerationJob"> | string | null
   leaseExpiresAt?: Prisma.DateTimeNullableFilter<"PreviewGenerationJob"> | Date | string | null
@@ -944,8 +1006,10 @@ export type PreviewGenerationJobCreateManyVideoInput = {
   status?: string
   stage?: string | null
   priority?: number
+  claimCount?: number
   attempts?: number
   maxAttempts?: number
+  recoveryCount?: number
   nextRetryAt?: Date | string | null
   lockedBy?: string | null
   leaseExpiresAt?: Date | string | null
@@ -968,8 +1032,10 @@ export type PreviewGenerationJobUpdateWithoutVideoInput = {
   status?: Prisma.StringFieldUpdateOperationsInput | string
   stage?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   priority?: Prisma.IntFieldUpdateOperationsInput | number
+  claimCount?: Prisma.IntFieldUpdateOperationsInput | number
   attempts?: Prisma.IntFieldUpdateOperationsInput | number
   maxAttempts?: Prisma.IntFieldUpdateOperationsInput | number
+  recoveryCount?: Prisma.IntFieldUpdateOperationsInput | number
   nextRetryAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   lockedBy?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   leaseExpiresAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -993,8 +1059,10 @@ export type PreviewGenerationJobUncheckedUpdateWithoutVideoInput = {
   status?: Prisma.StringFieldUpdateOperationsInput | string
   stage?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   priority?: Prisma.IntFieldUpdateOperationsInput | number
+  claimCount?: Prisma.IntFieldUpdateOperationsInput | number
   attempts?: Prisma.IntFieldUpdateOperationsInput | number
   maxAttempts?: Prisma.IntFieldUpdateOperationsInput | number
+  recoveryCount?: Prisma.IntFieldUpdateOperationsInput | number
   nextRetryAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   lockedBy?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   leaseExpiresAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -1018,8 +1086,10 @@ export type PreviewGenerationJobUncheckedUpdateManyWithoutVideoInput = {
   status?: Prisma.StringFieldUpdateOperationsInput | string
   stage?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   priority?: Prisma.IntFieldUpdateOperationsInput | number
+  claimCount?: Prisma.IntFieldUpdateOperationsInput | number
   attempts?: Prisma.IntFieldUpdateOperationsInput | number
   maxAttempts?: Prisma.IntFieldUpdateOperationsInput | number
+  recoveryCount?: Prisma.IntFieldUpdateOperationsInput | number
   nextRetryAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   lockedBy?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   leaseExpiresAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -1046,8 +1116,10 @@ export type PreviewGenerationJobSelect<ExtArgs extends runtime.Types.Extensions.
   status?: boolean
   stage?: boolean
   priority?: boolean
+  claimCount?: boolean
   attempts?: boolean
   maxAttempts?: boolean
+  recoveryCount?: boolean
   nextRetryAt?: boolean
   lockedBy?: boolean
   leaseExpiresAt?: boolean
@@ -1073,8 +1145,10 @@ export type PreviewGenerationJobSelectCreateManyAndReturn<ExtArgs extends runtim
   status?: boolean
   stage?: boolean
   priority?: boolean
+  claimCount?: boolean
   attempts?: boolean
   maxAttempts?: boolean
+  recoveryCount?: boolean
   nextRetryAt?: boolean
   lockedBy?: boolean
   leaseExpiresAt?: boolean
@@ -1100,8 +1174,10 @@ export type PreviewGenerationJobSelectUpdateManyAndReturn<ExtArgs extends runtim
   status?: boolean
   stage?: boolean
   priority?: boolean
+  claimCount?: boolean
   attempts?: boolean
   maxAttempts?: boolean
+  recoveryCount?: boolean
   nextRetryAt?: boolean
   lockedBy?: boolean
   leaseExpiresAt?: boolean
@@ -1127,8 +1203,10 @@ export type PreviewGenerationJobSelectScalar = {
   status?: boolean
   stage?: boolean
   priority?: boolean
+  claimCount?: boolean
   attempts?: boolean
   maxAttempts?: boolean
+  recoveryCount?: boolean
   nextRetryAt?: boolean
   lockedBy?: boolean
   leaseExpiresAt?: boolean
@@ -1143,7 +1221,7 @@ export type PreviewGenerationJobSelectScalar = {
   updatedAt?: boolean
 }
 
-export type PreviewGenerationJobOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "videoId" | "kind" | "sourceFingerprint" | "generationVersion" | "idempotencyKey" | "status" | "stage" | "priority" | "attempts" | "maxAttempts" | "nextRetryAt" | "lockedBy" | "leaseExpiresAt" | "queuedAt" | "startedAt" | "completedAt" | "lastError" | "errorCode" | "artifactBytes" | "metrics" | "createdAt" | "updatedAt", ExtArgs["result"]["previewGenerationJob"]>
+export type PreviewGenerationJobOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "videoId" | "kind" | "sourceFingerprint" | "generationVersion" | "idempotencyKey" | "status" | "stage" | "priority" | "claimCount" | "attempts" | "maxAttempts" | "recoveryCount" | "nextRetryAt" | "lockedBy" | "leaseExpiresAt" | "queuedAt" | "startedAt" | "completedAt" | "lastError" | "errorCode" | "artifactBytes" | "metrics" | "createdAt" | "updatedAt", ExtArgs["result"]["previewGenerationJob"]>
 export type PreviewGenerationJobInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   video?: boolean | Prisma.VideoDefaultArgs<ExtArgs>
 }
@@ -1184,8 +1262,24 @@ export type $PreviewGenerationJobPayload<ExtArgs extends runtime.Types.Extension
      */
     stage: string | null
     priority: number
+    /**
+     * Successful worker claims. Incremented even when the worker dies before
+     * any generation work starts, so crash-only churn is visible separately
+     * from real generation attempts.
+     */
+    claimCount: number
+    /**
+     * Actual generation attempts. Incremented once, via
+     * beginPreviewGenerationAttempt(), when a worker starts source acquisition
+     * for a claimed job. A claim-then-crash can never consume this budget.
+     */
     attempts: number
     maxAttempts: number
+    /**
+     * Expired-lease / abandoned-worker recovery events. Bounded separately by
+     * PREVIEW_JOB_MAX_RECOVERIES; recovery does not silently reset attempts.
+     */
+    recoveryCount: number
     nextRetryAt: Date | null
     lockedBy: string | null
     leaseExpiresAt: Date | null
@@ -1638,8 +1732,10 @@ export interface PreviewGenerationJobFieldRefs {
   readonly status: Prisma.FieldRef<"PreviewGenerationJob", 'String'>
   readonly stage: Prisma.FieldRef<"PreviewGenerationJob", 'String'>
   readonly priority: Prisma.FieldRef<"PreviewGenerationJob", 'Int'>
+  readonly claimCount: Prisma.FieldRef<"PreviewGenerationJob", 'Int'>
   readonly attempts: Prisma.FieldRef<"PreviewGenerationJob", 'Int'>
   readonly maxAttempts: Prisma.FieldRef<"PreviewGenerationJob", 'Int'>
+  readonly recoveryCount: Prisma.FieldRef<"PreviewGenerationJob", 'Int'>
   readonly nextRetryAt: Prisma.FieldRef<"PreviewGenerationJob", 'DateTime'>
   readonly lockedBy: Prisma.FieldRef<"PreviewGenerationJob", 'String'>
   readonly leaseExpiresAt: Prisma.FieldRef<"PreviewGenerationJob", 'DateTime'>
