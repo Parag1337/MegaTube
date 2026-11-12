@@ -181,3 +181,32 @@ test('previewStoreStats reports entry sizes', async () => {
   assert.equal(stats.entries, 2);
   assert.equal(stats.entryBytes, 100 + 50 + 100);
 });
+
+test('touchPreview: memory-only, throttled, flushed with one sidecar write', async () => {
+  clean();
+  writeEntry(7, { lastAccessedAt: '2020-01-01T00:00:00.000Z' });
+  cache.__resetPreviewStoreStateForTests();
+  const before = fs.readFileSync(path.join(dir, '7.json'), 'utf8');
+  await cache.touchPreview(7);
+  assert.equal(cache.pendingPreviewTouchCount(), 1);
+  const firstTouch = cache.pendingPreviewTouchAt(7);
+  assert.ok(firstTouch !== null);
+  assert.equal(fs.readFileSync(path.join(dir, '7.json'), 'utf8'), before, 'no write on access');
+
+  // Within the throttle window a second access updates nothing.
+  process.env.PREVIEW_TOUCH_INTERVAL_MS = '60000';
+  try {
+    await cache.touchPreview(7);
+    assert.equal(cache.pendingPreviewTouchAt(7), firstTouch);
+  } finally {
+    process.env.PREVIEW_TOUCH_INTERVAL_MS = '0';
+  }
+
+  const written = await cache.flushPreviewAccessTimes();
+  assert.equal(written, 1);
+  assert.equal(cache.pendingPreviewTouchCount(), 0);
+  const after = JSON.parse(fs.readFileSync(path.join(dir, '7.json'), 'utf8')) as {
+    lastAccessedAt: string;
+  };
+  assert.ok(Date.parse(after.lastAccessedAt) > Date.parse('2020-01-01T00:00:00.000Z'));
+});

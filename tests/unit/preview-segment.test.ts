@@ -58,6 +58,39 @@ test('byteWindowFor: clamped to the byte cap and the file size', () => {
   assert.deepEqual(empty, { byteStart: 0, byteLen: 0 });
 });
 
+test('byteWindowAtFraction: samples distinct file positions, not a bitrate guess', () => {
+  const size = 900 * 1024 * 1024;
+  const cap = 12 * 1024 * 1024;
+  const first = seg.byteWindowAtFraction(0.1, size, cap, seg.TS_WINDOW_ALIGN);
+  const middle = seg.byteWindowAtFraction(0.5, size, cap, seg.TS_WINDOW_ALIGN);
+  const last = seg.byteWindowAtFraction(0.9, size, cap, seg.TS_WINDOW_ALIGN);
+  assert.ok(first.byteStart < middle.byteStart && middle.byteStart < last.byteStart);
+  assert.ok(last.byteStart > size * 0.8, 'last window lands near the end of the file');
+  for (const w of [first, middle, last]) {
+    assert.equal(w.byteStart % seg.TS_WINDOW_ALIGN, 0);
+    assert.ok(w.byteLen > 0 && w.byteLen <= cap);
+    assert.ok(w.byteStart + w.byteLen <= size);
+  }
+  // Fraction 1 is clamped so the whole window still fits.
+  const end = seg.byteWindowAtFraction(1, size, cap, seg.TS_WINDOW_ALIGN);
+  assert.ok(end.byteStart + end.byteLen <= size);
+  assert.equal(end.byteStart % seg.TS_WINDOW_ALIGN, 0);
+});
+
+test('byteWindowFor: unknown duration never invents bytes from a fixed bitrate', () => {
+  const size = 500 * 1024 * 1024;
+  const cap = 12 * 1024 * 1024;
+  // A fractional position is accepted as a file fraction and bounded.
+  const atFraction = seg.byteWindowFor(0.75, null, size, cap, seg.TS_WINDOW_ALIGN);
+  assert.ok(atFraction.byteStart > size * 0.5);
+  assert.ok(atFraction.byteLen > 0 && atFraction.byteLen <= cap);
+  // A timeline-looking value (10 s) is NOT multiplied by 64 KB/s; without a
+  // fraction it falls back to the bounded first window.
+  const atSeconds = seg.byteWindowFor(10, null, size, cap, seg.TS_WINDOW_ALIGN);
+  assert.equal(atSeconds.byteStart, 0);
+  assert.ok(atSeconds.byteLen <= cap);
+});
+
 test('spritePlan: interval never below the floor, count never beyond duration', () => {
   // 10-min video: interval = max(4, 600/100=6) = 6, count = 100
   const long = seg.spritePlan(600, 160, 10, 100, 4);

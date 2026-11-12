@@ -162,6 +162,53 @@ test('signature scan ignores a moov whose declared size overruns the file', () =
   assert.equal(loc, null);
 });
 
+function mvhdV0(timescale: number, duration: number): Buffer {
+  const payload = Buffer.alloc(20);
+  payload.writeUInt32BE(timescale, 12);
+  payload.writeUInt32BE(duration, 16);
+  return box('mvhd', payload);
+}
+
+function mvhdV1(timescale: number, duration: bigint): Buffer {
+  const payload = Buffer.alloc(32);
+  payload.writeUInt8(1, 0); // version 1: 64-bit creation/modification/duration
+  payload.writeUInt32BE(timescale, 20);
+  payload.writeBigUInt64BE(duration, 24);
+  return box('mvhd', payload);
+}
+
+test('mvhdDurationSeconds: version 0 and version 1 movie durations', () => {
+  const v0 = box('moov', mvhdV0(1000, 123_456));
+  const v0Loc = idx.findMoov(v0, 0);
+  assert.ok(v0Loc);
+  assert.equal(idx.mvhdDurationSeconds(v0, v0Loc), 123.456);
+
+  const v1 = box('moov', mvhdV1(90_000, 90_000n * 42n));
+  const v1Loc = idx.findMoov(v1, 0);
+  assert.ok(v1Loc);
+  assert.equal(idx.mvhdDurationSeconds(v1, v1Loc), 42);
+
+  // Malformed/zero timescale is rejected instead of producing Infinity.
+  const bad = box('moov', mvhdV0(0, 10_000));
+  const badLoc = idx.findMoov(bad, 0);
+  assert.ok(badLoc);
+  assert.equal(idx.mvhdDurationSeconds(bad, badLoc), null);
+  assert.equal(idx.readMp4DurationSeconds(bad, 0), null);
+});
+
+test('readMp4DurationSeconds: finds mvhd in a tail chunk at an absolute base offset', () => {
+  const ftyp = box('ftyp', Buffer.alloc(8));
+  const mdat = box('mdat', Buffer.alloc(4096, 0x77));
+  const moov = box('moov', mvhdV0(1000, 654_321));
+  const whole = Buffer.concat([ftyp, mdat, moov]);
+  const tailStart = ftyp.length + 1000;
+  assert.equal(idx.findMoov(whole.subarray(tailStart), tailStart), null);
+  assert.equal(
+    idx.readMp4DurationSeconds(whole.subarray(tailStart), tailStart, whole.length),
+    654.321,
+  );
+});
+
 test('signature scan reports incomplete when the chunk ends inside moov', () => {
   const ftyp = box('ftyp', Buffer.alloc(8));
   const mdat = box('mdat', Buffer.alloc(2048, 0x55));

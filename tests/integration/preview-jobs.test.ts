@@ -23,6 +23,11 @@ process.env.PREVIEW_CACHE_DIR = previewDir;
 process.env.PG_KEEPALIVE_MIN = '0';
 // Enqueue helpers wake the real worker; this test drives the queue directly.
 process.env.PREVIEW_WORKER_DISABLED = '1';
+// Deterministic recovery-backoff bounds for the accounting test.
+process.env.PREVIEW_JOB_RECOVERY_BASE_MS = '1000';
+process.env.PREVIEW_JOB_RECOVERY_MAX_MS = '10000';
+process.env.PREVIEW_JOB_RECOVERY_JITTER_MS = '0';
+process.env.PREVIEW_JOB_MAX_RECOVERIES = '4';
 
 let prisma: typeof import('@/lib/db').prisma;
 let jobs: typeof import('@/lib/preview/jobs');
@@ -79,6 +84,11 @@ after(async () => {
 // uncaught "terminating connection" noise after the test file finished.
 process.once('exit', () => db.close());
 
+test('database sessions use UTC so TIMESTAMP deadlines stay comparable', async () => {
+  const rows = await prisma.$queryRaw<Array<{ tz: string }>>`SELECT current_setting('TimeZone') AS tz`;
+  assert.equal(rows[0]?.tz, 'UTC');
+});
+
 test('idempotent insertion: duplicate ensures and sync events converge on one job', async () => {
   const fingerprint = `node-0:1000`;
   const first = await jobs.ensurePreviewJob({
@@ -129,8 +139,16 @@ test('claims are atomic and never hand the same job to two workers', async () =>
   const firstRow = await prisma.previewGenerationJob.findUnique({ where: { id: first.id } });
   assert.equal(firstRow?.lockedBy, 'worker-a');
   assert.equal(firstRow?.status, 'generating');
-  assert.equal(firstRow?.stage, 'acquiring');
-  assert.equal(firstRow?.attempts, 1);
+  assert.equal(firstRow?.stage, 'claimed');
+  assert.equal(firstRow?.claimCount, 1, 'claiming is counted separately from generation attempts');
+  assert.equal(firstRow?.attempts, 0, 'a claim must not consume a generation attempt');
+
+  const attempts = await jobs.beginPreviewGenerationAttempt(first.id, 'worker-a', first.claimCount, 60_000);
+  assert.equal(attempts, 1);
+  const afterBegin = await prisma.previewGenerationJob.findUnique({ where: { id: first.id } });
+  assert.equal(afterBegin?.stage, 'acquiring');
+  assert.equal(afterBegin?.attempts, 1);
+  assert.equal(afterBegin?.claimCount, 1);
 });
 
 test('completion requires the worker that owns the lease', async () => {
@@ -376,4 +394,113 @@ test('dashboard statistics come from the database and the disk', async () => {
   assert.equal(stats.autoGenerate, true);
   assert.equal(stats.paused, false);
   assert.ok(stats.previewBytes > 0, 'artifact bytes are counted');
+});
+
+test('dashboard statistics are served from the single-flight cache', async () => {
+  jobs.__resetPreviewStatsCacheForTests();
+  await jobs.getPreviewLibraryStats(userId);
+  await jobs.getPreviewLibraryStats(userId);
+  const metrics = jobs.previewStatsCacheMetrics();
+  assert.equal(metrics.refreshes, 1, 'the second poll is a memory hit');
+  assert.ok(metrics.hits >= 1);
+  // Normal job/artifact mutations invalidate the snapshot without throwing.
+  jobs.invalidatePreviewStatsCache();
+  await jobs.getPreviewLibraryStats(userId);
+});
+
+function jobMetrics(): Parameters<typeof jobs.completePreviewJob>[3] {
+  return {
+    transferBytes: 0,
+    acquisitionMs: 0,
+    ffmpegMs: 0,
+    totalMs: 0,
+    outputBytes: 0,
+    scenes: [],
+    sourceKind: 'test',
+    generationVersion: config.previewGenerationVersion(),
+  };
+}
+
+test('claimCount fences stale workers from heartbeat, completion and failure', async () => {
+  const ensured = await jobs.ensurePreviewJob({
+    videoId: videoIds[2],
+    sourceFingerprint: `fence-${Date.now()}`,
+  });
+  assert.ok(ensured.jobId);
+  const jobId = ensured.jobId;
+  await prisma.previewGenerationJob.update({
+    where: { id: jobId },
+    data: {
+      status: 'generating',
+      lockedBy: 'worker-fence',
+      claimCount: 2,
+      leaseExpiresAt: new Date(Date.now() + 60_000),
+    },
+  });
+
+  // A worker holding claim #1 lost the row when claim #2 was taken.
+  assert.equal(await jobs.heartbeatPreviewJob(jobId, 'worker-fence', 60_000, 1), false);
+  assert.equal(await jobs.setPreviewJobStage(jobId, 'worker-fence', 'encoding', 1), false);
+  assert.equal(await jobs.assertPreviewJobOwnership(jobId, 'worker-fence', 1, 60_000), false);
+  assert.equal(await jobs.completePreviewJob(jobId, 'worker-fence', 1, jobMetrics(), 1), false);
+  const staleFail = await jobs.failPreviewJob(jobId, 'worker-fence', 'internal', 'stale worker', {
+    claimCount: 1,
+  });
+  assert.equal(staleFail.willRetry, false);
+  const stillGenerating = await prisma.previewGenerationJob.findUnique({ where: { id: jobId } });
+  assert.equal(stillGenerating?.status, 'generating', 'stale failure did not mutate the row');
+
+  // The current claim can still renew and publish.
+  assert.equal(await jobs.assertPreviewJobOwnership(jobId, 'worker-fence', 2, 60_000), true);
+  assert.equal(await jobs.completePreviewJob(jobId, 'worker-fence', 0, jobMetrics(), 2), true);
+});
+
+test('expired-lease recovery is counted separately and backs off exponentially', async () => {
+  const ensured = await jobs.ensurePreviewJob({
+    videoId: videoIds[2],
+    sourceFingerprint: `recovery-${Date.now()}`,
+  });
+  assert.ok(ensured.jobId);
+  const jobId = ensured.jobId;
+  const expire = (recoveryCount: number): Promise<unknown> =>
+    prisma.previewGenerationJob.update({
+      where: { id: jobId },
+      data: {
+        status: 'generating',
+        lockedBy: 'dead-worker',
+        leaseExpiresAt: new Date(Date.now() - 1_000),
+        attempts: 1,
+        recoveryCount,
+      },
+    });
+
+  await expire(0);
+  const firstAt = Date.now();
+  await jobs.recoverExpiredPreviewLeases();
+  const first = await prisma.previewGenerationJob.findUnique({ where: { id: jobId } });
+  assert.equal(first?.status, 'pending');
+  assert.equal(first?.recoveryCount, 1);
+  assert.equal(first?.attempts, 1, 'recovery does not consume or reset generation attempts');
+  assert.equal(first?.errorCode, 'lease_expired');
+  const firstDelay = (first?.nextRetryAt?.getTime() ?? 0) - firstAt;
+  assert.ok(firstDelay >= 900 && firstDelay <= 5_000, `first backoff ${firstDelay}ms`);
+
+  await expire(1);
+  const secondAt = Date.now();
+  await jobs.recoverExpiredPreviewLeases();
+  const second = await prisma.previewGenerationJob.findUnique({ where: { id: jobId } });
+  assert.equal(second?.recoveryCount, 2);
+  const secondDelay = (second?.nextRetryAt?.getTime() ?? 0) - secondAt;
+  assert.ok(secondDelay >= 1_900 && secondDelay <= 7_000, `second backoff ${secondDelay}ms`);
+  assert.ok(secondDelay > firstDelay, 'backoff grows');
+
+  // One more expiry exhausts the recovery budget: terminal, never reclaimed.
+  await expire(3);
+  await jobs.recoverExpiredPreviewLeases();
+  const exhausted = await prisma.previewGenerationJob.findUnique({ where: { id: jobId } });
+  assert.equal(exhausted?.status, 'failed');
+  assert.equal(exhausted?.errorCode, 'worker_recovery_exhausted');
+  assert.equal(exhausted?.recoveryCount, 4);
+  assert.equal(exhausted?.attempts, 1);
+  assert.equal(jobs.autoRetryBlockedError(exhausted?.errorCode), true);
 });

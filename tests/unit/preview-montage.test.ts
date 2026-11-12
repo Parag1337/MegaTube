@@ -67,6 +67,22 @@ test('planMontage: unknown duration uses the estimated ladder and flags it', () 
     [10, 30, 50, 70, 90],
   );
   assert.ok(plan.scenes.every((s) => s.estimated));
+  assert.deepEqual(
+    plan.scenes.map((s) => s.fraction),
+    [0.1, 0.3, 0.5, 0.7, 0.9],
+    'unknown-duration scenes carry an explicit file fraction',
+  );
+});
+
+test('planMontage: known-duration scenes carry exact fractions and are not estimated', () => {
+  const plan = planMontage(600, 5, 1.2);
+  assert.equal(plan.estimated, false);
+  assert.ok(plan.scenes.every((s) => !s.estimated));
+  for (const scene of plan.scenes) {
+    assert.ok(scene.fraction !== null);
+    assert.ok(scene.fraction! >= 0 && scene.fraction! <= 1);
+    assert.ok(Math.abs(scene.fraction! - scene.startSec / 600) < 1e-9);
+  }
 });
 
 test('planMontage: a 1-scene request keeps a centered scene', () => {
