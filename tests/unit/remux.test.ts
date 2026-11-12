@@ -172,6 +172,26 @@ test('findFragmentedMp4InitEnd: init ends where the first moof starts', () => {
   assert.equal(findFragmentedMp4InitEnd(box('moof', 50)), -1);
 });
 
+test('findFragmentedMp4InitEnd: size=0 first moof at the init boundary still publishes (ffmpeg 8.1.3 quirk)', () => {
+  // Reproduction of the Phase 4 moof boundary issue: ffmpeg wrote the first
+  // moof with placeholder size=0 when the fragment exceeded its AVIOContext
+  // patch-back buffer. The init (ftyp+moov) is complete and everything after
+  // streams byte-exactly, so the init end is the size-0 moof header itself.
+  const init = Buffer.concat([box('ftyp', 16), box('moov', 100)]);
+  const brokenMoof = Buffer.alloc(8);
+  brokenMoof.writeUInt32BE(0, 0);
+  brokenMoof.write('moof', 4, 4, 'latin1');
+  const stream = Buffer.concat([init, brokenMoof, box('mdat', 200)]);
+  assert.equal(findFragmentedMp4InitEnd(stream), init.length);
+  // Same while init bytes are still trickling in (partial moov + zero moof).
+  assert.equal(findFragmentedMp4InitEnd(stream.subarray(0, init.length)), -1);
+  // A size<8 box whose type is still ftyp/moov remains "need more/corrupt".
+  const badMoov = Buffer.alloc(8);
+  badMoov.writeUInt32BE(4, 0);
+  badMoov.write('moov', 4, 4, 'latin1');
+  assert.equal(findFragmentedMp4InitEnd(Buffer.concat([box('ftyp', 16), badMoov])), -1);
+});
+
 // ---------------------------------------------------------------------------
 // createLiveResponse: bounded start-0 range satisfied from live bytes
 // ---------------------------------------------------------------------------

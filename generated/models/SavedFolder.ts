@@ -625,7 +625,7 @@ export type $SavedFolderPayload<ExtArgs extends runtime.Types.Extensions.Interna
 export type SavedFolderGetPayload<S extends boolean | null | undefined | SavedFolderDefaultArgs> = runtime.Types.Result.GetResult<Prisma.$SavedFolderPayload, S>
 
 export type SavedFolderCountArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> =
-  Omit<SavedFolderFindManyArgs, 'select' | 'include' | 'distinct' | 'omit'> & {
+  Omit<SavedFolderFindManyArgs, 'select' | 'include' | 'distinct' | 'omit' | 'relationLoadStrategy'> & {
     select?: SavedFolderCountAggregateInputType | true
   }
 
@@ -1071,6 +1071,7 @@ export type SavedFolderFindUniqueArgs<ExtArgs extends runtime.Types.Extensions.I
    * Filter, which SavedFolder to fetch.
    */
   where: Prisma.SavedFolderWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1093,6 +1094,7 @@ export type SavedFolderFindUniqueOrThrowArgs<ExtArgs extends runtime.Types.Exten
    * Filter, which SavedFolder to fetch.
    */
   where: Prisma.SavedFolderWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1145,6 +1147,7 @@ export type SavedFolderFindFirstArgs<ExtArgs extends runtime.Types.Extensions.In
    * Filter by unique combinations of SavedFolders.
    */
   distinct?: Prisma.SavedFolderScalarFieldEnum | Prisma.SavedFolderScalarFieldEnum[]
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1197,6 +1200,7 @@ export type SavedFolderFindFirstOrThrowArgs<ExtArgs extends runtime.Types.Extens
    * Filter by unique combinations of SavedFolders.
    */
   distinct?: Prisma.SavedFolderScalarFieldEnum | Prisma.SavedFolderScalarFieldEnum[]
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1249,6 +1253,7 @@ export type SavedFolderFindManyArgs<ExtArgs extends runtime.Types.Extensions.Int
    * Filter by unique combinations of SavedFolders.
    */
   distinct?: Prisma.SavedFolderScalarFieldEnum | Prisma.SavedFolderScalarFieldEnum[]
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1271,6 +1276,7 @@ export type SavedFolderCreateArgs<ExtArgs extends runtime.Types.Extensions.Inter
    * The data needed to create a SavedFolder.
    */
   data: Prisma.XOR<Prisma.SavedFolderCreateInput, Prisma.SavedFolderUncheckedCreateInput>
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1331,6 +1337,7 @@ export type SavedFolderUpdateArgs<ExtArgs extends runtime.Types.Extensions.Inter
    * Choose, which SavedFolder to update.
    */
   where: Prisma.SavedFolderWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1409,6 +1416,7 @@ export type SavedFolderUpsertArgs<ExtArgs extends runtime.Types.Extensions.Inter
    * In case the SavedFolder was found with the provided `where` argument, update it with this data.
    */
   update: Prisma.XOR<Prisma.SavedFolderUpdateInput, Prisma.SavedFolderUncheckedUpdateInput>
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1431,6 +1439,7 @@ export type SavedFolderDeleteArgs<ExtArgs extends runtime.Types.Extensions.Inter
    * Filter which SavedFolder to delete.
    */
   where: Prisma.SavedFolderWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**

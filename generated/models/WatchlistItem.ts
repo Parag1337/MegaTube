@@ -633,7 +633,7 @@ export type $WatchlistItemPayload<ExtArgs extends runtime.Types.Extensions.Inter
 export type WatchlistItemGetPayload<S extends boolean | null | undefined | WatchlistItemDefaultArgs> = runtime.Types.Result.GetResult<Prisma.$WatchlistItemPayload, S>
 
 export type WatchlistItemCountArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> =
-  Omit<WatchlistItemFindManyArgs, 'select' | 'include' | 'distinct' | 'omit'> & {
+  Omit<WatchlistItemFindManyArgs, 'select' | 'include' | 'distinct' | 'omit' | 'relationLoadStrategy'> & {
     select?: WatchlistItemCountAggregateInputType | true
   }
 
@@ -1079,6 +1079,7 @@ export type WatchlistItemFindUniqueArgs<ExtArgs extends runtime.Types.Extensions
    * Filter, which WatchlistItem to fetch.
    */
   where: Prisma.WatchlistItemWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1101,6 +1102,7 @@ export type WatchlistItemFindUniqueOrThrowArgs<ExtArgs extends runtime.Types.Ext
    * Filter, which WatchlistItem to fetch.
    */
   where: Prisma.WatchlistItemWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1153,6 +1155,7 @@ export type WatchlistItemFindFirstArgs<ExtArgs extends runtime.Types.Extensions.
    * Filter by unique combinations of WatchlistItems.
    */
   distinct?: Prisma.WatchlistItemScalarFieldEnum | Prisma.WatchlistItemScalarFieldEnum[]
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1205,6 +1208,7 @@ export type WatchlistItemFindFirstOrThrowArgs<ExtArgs extends runtime.Types.Exte
    * Filter by unique combinations of WatchlistItems.
    */
   distinct?: Prisma.WatchlistItemScalarFieldEnum | Prisma.WatchlistItemScalarFieldEnum[]
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1257,6 +1261,7 @@ export type WatchlistItemFindManyArgs<ExtArgs extends runtime.Types.Extensions.I
    * Filter by unique combinations of WatchlistItems.
    */
   distinct?: Prisma.WatchlistItemScalarFieldEnum | Prisma.WatchlistItemScalarFieldEnum[]
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1279,6 +1284,7 @@ export type WatchlistItemCreateArgs<ExtArgs extends runtime.Types.Extensions.Int
    * The data needed to create a WatchlistItem.
    */
   data: Prisma.XOR<Prisma.WatchlistItemCreateInput, Prisma.WatchlistItemUncheckedCreateInput>
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1339,6 +1345,7 @@ export type WatchlistItemUpdateArgs<ExtArgs extends runtime.Types.Extensions.Int
    * Choose, which WatchlistItem to update.
    */
   where: Prisma.WatchlistItemWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1417,6 +1424,7 @@ export type WatchlistItemUpsertArgs<ExtArgs extends runtime.Types.Extensions.Int
    * In case the WatchlistItem was found with the provided `where` argument, update it with this data.
    */
   update: Prisma.XOR<Prisma.WatchlistItemUpdateInput, Prisma.WatchlistItemUncheckedUpdateInput>
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1439,6 +1447,7 @@ export type WatchlistItemDeleteArgs<ExtArgs extends runtime.Types.Extensions.Int
    * Filter which WatchlistItem to delete.
    */
   where: Prisma.WatchlistItemWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**

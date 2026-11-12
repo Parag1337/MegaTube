@@ -648,6 +648,24 @@ export async function syncMegaAccount(
     }
   }
 
+  // Phase 5.1: enqueue missing hover-preview jobs for this account after the
+  // video rows are committed. Fire-and-forget: sync completion never waits
+  // for ffmpeg or MEGA preview acquisition, and a preview failure can never
+  // fail the sync. Respects the user's automatic-generation preference and
+  // uses idempotent DB inserts, so repeated syncs create no duplicate jobs.
+  if (result && account.userId) {
+    const userId = account.userId;
+    try {
+      void import('../preview/jobs')
+        .then((m) => m.enqueueSyncPreviewJobs(userId, accountId))
+        .catch(() => {
+          // Advisory only: preview enqueueing never affects sync outcome.
+        });
+    } catch {
+      // Preview enqueueing is strictly best-effort.
+    }
+  }
+
   clearSyncProgress(accountId);
   return result;
 }

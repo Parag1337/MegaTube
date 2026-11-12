@@ -12,7 +12,30 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import { perfTraceEnabled, startPerfTrace } from './observe';
 
-const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
+const globalForPrisma = globalThis as unknown as {
+  prisma?: PrismaClient;
+  /**
+   * Opt-in per-query counter hook (benchmark harnesses / diagnostics).
+   * Called synchronously from the pg pool's query wrapper — one call per
+   * SQL statement, covering model operations, raw $queryRaw/$executeRaw and
+   * implicit transaction statements. Set it from test/bench code, never in
+   * request paths.
+   */
+  __dbQueryCounterHook?: (info: { sql: string }) => void;
+};
+
+/** Temporarily install the per-query counter (bench harnesses). Returns unset. */
+export function withDbQueryCounter<T>(
+  fn: (info: { sql: string }) => void,
+  run: () => Promise<T>,
+): Promise<T> {
+  const key = '__dbQueryCounterHook' as const;
+  const prev = globalForPrisma[key];
+  globalForPrisma[key] = fn;
+  return run().finally(() => {
+    globalForPrisma[key] = prev;
+  });
+}
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -105,6 +128,10 @@ function createClient(): PrismaClient {
   const pool = new Pool({
     connectionString: databaseUrl,
     max: poolMax,
+    // Prisma maps TIMESTAMP columns to UTC dates. Pin every session to UTC so
+    // DB-side defaults/`now()` can never store local wall-clock time into
+    // those columns (a non-UTC server would otherwise skew leases/retries).
+    options: '-c timezone=UTC',
     ...(remote
       ? { idleTimeoutMillis: Math.max(keepaliveIntervalMs + 5_000, 65_000) }
       : {}),
@@ -121,6 +148,26 @@ function createClient(): PrismaClient {
         'For local development create .env.local with a local PostgreSQL URL.',
     );
   }
+
+  const globalRef = globalForPrisma as unknown as {
+    __dbQueryCounterHook?: (info: { sql: string }) => void;
+  };
+  // Phase 3 instrumentation: count queries where they actually execute —
+  // the pg pool. Every Prisma query (model operations AND raw
+  // $queryRaw/$executeRaw, plus implicit transaction statements) goes
+  // through pool.query, so this counts synchronously and reliably, unlike
+  // the engine's async 'query' log events which can land after the
+  // measuring window (observed under-counting on concurrent waves).
+  // Overhead when no hook is installed: one property read per query.
+  const poolQuery = pool.query.bind(pool);
+  (pool as unknown as { query: typeof pool.query }).query = ((...args: Parameters<typeof pool.query>) => {
+    const hook = globalRef.__dbQueryCounterHook;
+    if (hook) {
+      const first = args[0] as string | { text?: string } | undefined;
+      hook({ sql: typeof first === 'string' ? first : (first?.text ?? '') });
+    }
+    return poolQuery(...args);
+  }) as typeof pool.query;
 
   const adapter = new PrismaPg(pool);
   const client = new PrismaClient({ adapter });

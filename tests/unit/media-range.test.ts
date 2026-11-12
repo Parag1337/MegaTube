@@ -26,11 +26,11 @@ process.env.MEGA_SESSION_ENCRYPTION_KEY = process.env.MEGA_SESSION_ENCRYPTION_KE
 
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
-import type { parseRange as ParseRangeFn } from '@/app/api/media/[videoId]/route';
+import type { parseRange as ParseRangeFn } from '@/app/api/media/[videoId]/handler';
 
 let parseRange: typeof ParseRangeFn;
 before(async () => {
-  ({ parseRange } = await import('@/app/api/media/[videoId]/route'));
+  ({ parseRange } = await import('@/app/api/media/[videoId]/handler'));
 });
 
 const SIZE = 1000;

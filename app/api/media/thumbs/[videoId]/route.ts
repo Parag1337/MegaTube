@@ -14,6 +14,17 @@ export const dynamic = 'force-dynamic';
 const THUMBS_DIR = path.resolve(process.cwd(), 'data/thumbs');
 
 /**
+ * Phase 3: one on-demand heal per video at a time. A cold homepage burst can
+ * issue many concurrent requests for thumbnails that are missing on disk but
+ * flagged available — without single-flight each request independently opened
+ * a MEGA session leg and re-fetched the same attribute (the pre-Phase-2
+ * session-resume shape that the single-flight of withMegaSession already
+ * fixed at the session level). Entries are keyed by video id and deleted when
+ * the heal settles, so a failed heal is retried by the next request.
+ */
+const healInflight = new Map<number, Promise<'png' | 'jpg' | null>>();
+
+/**
  * Private MEGA video thumbnail (owner only).
  *
  * Private thumbnails are synced to data/thumbs/<videoId>.<ext> and served
@@ -100,9 +111,14 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   // transiently and sync never retries it (new videos only). Self-heal
   // on demand: MEGA still has the attribute (owner session, same flow as
   // sync), so fetch, store, and serve it now instead of 404ing forever.
-  const healed = await healThumbnail(video);
-  if (healed) {
-    return withTiming(serveThumbFile(videoId, healed), [...timing, mark('heal', tFs)], tAll);
+  let healed = healInflight.get(videoId);
+  if (!healed) {
+    healed = healThumbnail(video).finally(() => healInflight.delete(videoId));
+    healInflight.set(videoId, healed);
+  }
+  const ext = await healed;
+  if (ext) {
+    return withTiming(serveThumbFile(videoId, ext), [...timing, mark('heal', tFs)], tAll);
   }
 
   // thumbnailAvailable but the file is missing (e.g. fetch failed during

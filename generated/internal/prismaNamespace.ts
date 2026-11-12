@@ -400,6 +400,7 @@ export const ModelName = {
   Creator: 'Creator',
   Video: 'Video',
   User: 'User',
+  PreviewGenerationJob: 'PreviewGenerationJob',
   MegaAccount: 'MegaAccount',
   Session: 'Session',
   WatchlistItem: 'WatchlistItem',
@@ -421,7 +422,7 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
     omit: GlobalOmitOptions
   }
   meta: {
-    modelProps: "creator" | "video" | "user" | "megaAccount" | "session" | "watchlistItem" | "savedVideo" | "savedFolder" | "watchHistory"
+    modelProps: "creator" | "video" | "user" | "previewGenerationJob" | "megaAccount" | "session" | "watchlistItem" | "savedVideo" | "savedFolder" | "watchHistory"
     txIsolationLevel: TransactionIsolationLevel
   }
   model: {
@@ -644,6 +645,80 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         count: {
           args: Prisma.UserCountArgs<ExtArgs>
           result: runtime.Types.Utils.Optional<Prisma.UserCountAggregateOutputType> | number
+        }
+      }
+    }
+    PreviewGenerationJob: {
+      payload: Prisma.$PreviewGenerationJobPayload<ExtArgs>
+      fields: Prisma.PreviewGenerationJobFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.PreviewGenerationJobFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$PreviewGenerationJobPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.PreviewGenerationJobFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$PreviewGenerationJobPayload>
+        }
+        findFirst: {
+          args: Prisma.PreviewGenerationJobFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$PreviewGenerationJobPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.PreviewGenerationJobFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$PreviewGenerationJobPayload>
+        }
+        findMany: {
+          args: Prisma.PreviewGenerationJobFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$PreviewGenerationJobPayload>[]
+        }
+        create: {
+          args: Prisma.PreviewGenerationJobCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$PreviewGenerationJobPayload>
+        }
+        createMany: {
+          args: Prisma.PreviewGenerationJobCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.PreviewGenerationJobCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$PreviewGenerationJobPayload>[]
+        }
+        delete: {
+          args: Prisma.PreviewGenerationJobDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$PreviewGenerationJobPayload>
+        }
+        update: {
+          args: Prisma.PreviewGenerationJobUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$PreviewGenerationJobPayload>
+        }
+        deleteMany: {
+          args: Prisma.PreviewGenerationJobDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.PreviewGenerationJobUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.PreviewGenerationJobUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$PreviewGenerationJobPayload>[]
+        }
+        upsert: {
+          args: Prisma.PreviewGenerationJobUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$PreviewGenerationJobPayload>
+        }
+        aggregate: {
+          args: Prisma.PreviewGenerationJobAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregatePreviewGenerationJob>
+        }
+        groupBy: {
+          args: Prisma.PreviewGenerationJobGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.PreviewGenerationJobGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.PreviewGenerationJobCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.PreviewGenerationJobCountAggregateOutputType> | number
         }
       }
     }
@@ -1144,6 +1219,14 @@ export const CreatorScalarFieldEnum = {
 export type CreatorScalarFieldEnum = (typeof CreatorScalarFieldEnum)[keyof typeof CreatorScalarFieldEnum]
 
 
+export const RelationLoadStrategy = {
+  query: 'query',
+  join: 'join'
+} as const
+
+export type RelationLoadStrategy = (typeof RelationLoadStrategy)[keyof typeof RelationLoadStrategy]
+
+
 export const VideoScalarFieldEnum = {
   id: 'id',
   megaAccountId: 'megaAccountId',
@@ -1182,10 +1265,43 @@ export const UserScalarFieldEnum = {
   passwordHash: 'passwordHash',
   clerkUserId: 'clerkUserId',
   createdAt: 'createdAt',
-  updatedAt: 'updatedAt'
+  updatedAt: 'updatedAt',
+  previewAutoGenerate: 'previewAutoGenerate',
+  previewPaused: 'previewPaused'
 } as const
 
 export type UserScalarFieldEnum = (typeof UserScalarFieldEnum)[keyof typeof UserScalarFieldEnum]
+
+
+export const PreviewGenerationJobScalarFieldEnum = {
+  id: 'id',
+  videoId: 'videoId',
+  kind: 'kind',
+  sourceFingerprint: 'sourceFingerprint',
+  generationVersion: 'generationVersion',
+  idempotencyKey: 'idempotencyKey',
+  status: 'status',
+  stage: 'stage',
+  priority: 'priority',
+  claimCount: 'claimCount',
+  attempts: 'attempts',
+  maxAttempts: 'maxAttempts',
+  recoveryCount: 'recoveryCount',
+  nextRetryAt: 'nextRetryAt',
+  lockedBy: 'lockedBy',
+  leaseExpiresAt: 'leaseExpiresAt',
+  queuedAt: 'queuedAt',
+  startedAt: 'startedAt',
+  completedAt: 'completedAt',
+  lastError: 'lastError',
+  errorCode: 'errorCode',
+  artifactBytes: 'artifactBytes',
+  metrics: 'metrics',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type PreviewGenerationJobScalarFieldEnum = (typeof PreviewGenerationJobScalarFieldEnum)[keyof typeof PreviewGenerationJobScalarFieldEnum]
 
 
 export const MegaAccountScalarFieldEnum = {
@@ -1524,6 +1640,7 @@ export type GlobalOmitConfig = {
   creator?: Prisma.CreatorOmit
   video?: Prisma.VideoOmit
   user?: Prisma.UserOmit
+  previewGenerationJob?: Prisma.PreviewGenerationJobOmit
   megaAccount?: Prisma.MegaAccountOmit
   session?: Prisma.SessionOmit
   watchlistItem?: Prisma.WatchlistItemOmit

@@ -52,12 +52,14 @@ async function main() {
   }
   {
     const runs = [];
-    for (let i = 0; i < RUNS; i++) runs.push(await req('/api/media/thumbs/481'));
-    report('GET /api/media/thumbs/481', runs);
+    const thumbBase = Number(argVal('--thumb-base', '481')) || 481;
+    for (let i = 0; i < RUNS; i++) runs.push(await req(`/api/media/thumbs/${thumbBase}`));
+    report(`GET /api/media/thumbs/${thumbBase}`, runs);
   }
   {
     const t = performance.now();
-    const ids = Array.from({ length: 24 }, (_, i) => i + 481);
+    const thumbBase2 = Number(argVal('--thumb-base', '481')) || 481;
+    const ids = Array.from({ length: 24 }, (_, i) => i + thumbBase2);
     const burst = await Promise.all(ids.map((id) => req(`/api/media/thumbs/${id}`)));
     console.log(JSON.stringify({ name: 'thumb-burst-24', wallMs: Math.round(performance.now() - t), statuses: burst.map((b) => b.status).join('') }));
   }

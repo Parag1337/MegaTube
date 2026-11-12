@@ -38,5 +38,13 @@ export async function register() {
     require('./lib/preview/cache').startPreviewMaintenance();
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     require('./lib/preview/source').sweepOrphanWorkDirs().catch(() => {});
+    // Phase 5.1: resume the durable preview backlog. One guarded worker loop
+    // per Node server; claims jobs with SKIP LOCKED so multiple instances
+    // never generate the same preview twice. Never starts during a build.
+    // Dynamic import (not require): Turbopack's instrumentation CJS interop
+    // does not expose this module's named exports through require().
+    await import('./lib/preview/worker')
+      .then((m) => m.startPreviewWorker())
+      .catch(() => {});
   }
 }

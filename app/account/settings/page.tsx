@@ -3,7 +3,9 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { getCurrentUser } from '@/lib/auth';
 import { ManageAccountButton } from '@/components/ManageAccountButton';
+import { PreviewManagement } from '@/components/PreviewManagement';
 import { ThemeSelector } from '@/components/ThemeSelector';
+import { canManagePreviews } from '@/lib/preview/admin';
 
 export const metadata: Metadata = { title: 'Settings' };
 
@@ -12,6 +14,10 @@ export const dynamic = 'force-dynamic';
 export default async function AccountSettingsPage() {
   const user = await getCurrentUser();
   if (!user) redirect('/sign-in');
+
+  // The routes re-check this server-side; the gate here only avoids showing
+  // administrative controls to a user the server would reject anyway.
+  const showPreviewAdmin = canManagePreviews(user);
 
   return (
     <div className="px-4 py-6 md:px-6">
@@ -48,6 +54,8 @@ export default async function AccountSettingsPage() {
             .
           </p>
         </section>
+
+        {showPreviewAdmin && <PreviewManagement />}
 
         <section aria-labelledby="data-heading" className="rounded-2xl border border-border bg-surface p-5 sm:p-6">
           <h2 id="data-heading" className="text-[15px] font-semibold">Your data</h2>

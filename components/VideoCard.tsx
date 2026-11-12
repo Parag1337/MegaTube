@@ -2,11 +2,21 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { tryMegaFileUrlToPreviewUrl } from '@/lib/mega/embed';
-import { acquirePreview, releasePreview } from '@/lib/preview-manager';
+import {
+  acquirePreview,
+  releasePreview,
+  removeMobileCandidate,
+  reportMobileVisibility,
+  MOBILE_VISIBILITY_THRESHOLD,
+} from '@/lib/preview-manager';
 import { previewDelayMs } from '@/lib/config';
-import { cachedCardPreviewMeta, resolveCardHoverPreview, waitForCardHoverPreview } from '@/lib/preview-meta-client';
+import {
+  cachedCardPreviewMeta,
+  resolveCardHoverPreviewState,
+  waitForCardHoverPreviewDetailed,
+} from '@/lib/preview-meta-client';
 import { formatDuration } from '@/components/format';
 import { FilmIcon } from '@/components/icons';
 import { PreviewVideo } from '@/components/PreviewVideo';
@@ -44,6 +54,23 @@ type PreviewView = { kind: 'local'; url: string } | { kind: 'iframe' } | null;
  */
 const LOCAL_PREVIEW_START_TIMEOUT_MS = 10_000;
 
+/** Mobile autoplay: card must stay this visible for this long before playing. */
+const MOBILE_DWELL_MS = 500;
+
+/** Map a real server job state to the small corner indicator label. */
+function previewStatusLabel(status: string): string {
+  switch (status) {
+    case 'pending':
+      return 'Preparing preview';
+    case 'queued':
+      return 'Waiting for preview';
+    case 'generating':
+      return 'Loading preview';
+    default:
+      return 'Loading preview';
+  }
+}
+
 export function VideoCard({
   id,
   slug,
@@ -60,11 +87,12 @@ export function VideoCard({
   const [preview, setPreview] = useState<PreviewState>('idle');
   const [previewView, setPreviewView] = useState<PreviewView>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewLabel, setPreviewLabel] = useState('Loading preview');
   const router = useRouter();
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const mobileId = useId();
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const touchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeRef = useRef(false);
-  const suppressClickRef = useRef(false);
   const touchGuardUntilRef = useRef(0);
   const metaInFlightRef = useRef(false);
   /** Short grace timer: show the legacy iframe while local generation runs. */
@@ -80,10 +108,6 @@ export function VideoCard({
     if (hoverTimerRef.current) {
       clearTimeout(hoverTimerRef.current);
       hoverTimerRef.current = null;
-    }
-    if (touchTimerRef.current) {
-      clearTimeout(touchTimerRef.current);
-      touchTimerRef.current = null;
     }
     activeRef.current = false;
     metaInFlightRef.current = false;
@@ -141,6 +165,8 @@ export function VideoCard({
   const beginLocalPreview = useCallback((url: string) => {
     activeRef.current = true;
     acquirePreview(stopSelf);
+    setPreviewLabel('Loading preview');
+    setPreviewLoading(true);
     setPreviewView({ kind: 'local', url });
     setPreview('active');
 
@@ -187,19 +213,21 @@ export function VideoCard({
 
     const cached = cachedCardPreviewMeta(id);
     if (cached?.hoverUrl) {
-      // Known-ready: mount immediately and never flash the cold loader.
-      setPreviewLoading(false);
+      // Known-ready: mount immediately; the loader stays until `playing`.
       beginLocalPreview(cached.hoverUrl);
       return;
     }
     if (metaInFlightRef.current) return;
+    setPreviewLabel('Preparing preview');
     setPreviewLoading(true);
     metaInFlightRef.current = true;
     const runId = ++runIdRef.current;
     const stillActive = () => activeRef.current && runIdRef.current === runId;
     void (async () => {
-      let url = await resolveCardHoverPreview(id);
+      const first = await resolveCardHoverPreviewState(id);
+      let url = first.url;
       let iframeShown = false;
+      if (!url && stillActive()) setPreviewLabel(previewStatusLabel(first.status));
 
       // Cold local generation: cards that already have a MEGA embed keep a
       // short fallback path instead of waiting the whole 30 s poll window.
@@ -214,7 +242,12 @@ export function VideoCard({
       }
 
       if (!url && stillActive()) {
-        url = await waitForCardHoverPreview(id, stillActive);
+        const waited = await waitForCardHoverPreviewDetailed(id, stillActive, {
+          onStatus: (status) => {
+            if (stillActive()) setPreviewLabel(previewStatusLabel(status));
+          },
+        });
+        url = waited.url;
       }
       if (iframeFallbackRef.current) {
         clearTimeout(iframeFallbackRef.current);
@@ -222,10 +255,16 @@ export function VideoCard({
       }
       if (runIdRef.current === runId) metaInFlightRef.current = false;
       if (!stillActive()) return; // pointer left / another card took over
-      if (url) beginLocalPreview(url);
-      else if (!iframeShown) beginIframePreview();
+      if (url) {
+        beginLocalPreview(url);
+      } else if (iframeShown) {
+        setPreviewLoading(false);
+      } else {
+        // Failed / unsupported / timed out: never leave an endless spinner.
+        stopPreview();
+      }
     })();
-  }, [beginIframePreview, beginLocalPreview, id, previewSrc, stopSelf]);
+  }, [beginIframePreview, beginLocalPreview, id, previewSrc, stopPreview, stopSelf]);
 
   // Scheduling is unconditional now: a local preview exists for videos that
   // have no MEGA embed URL (private sources) too. Cards without either kind
@@ -235,12 +274,8 @@ export function VideoCard({
     hoverTimerRef.current = setTimeout(startPreview, previewDelayMs());
   }, [startPreview]);
 
-  const scheduleTouchPreview = useCallback(() => {
-    if (activeRef.current) return;
-    touchTimerRef.current = setTimeout(startPreview, previewDelayMs());
-  }, [startPreview]);
-
   function handleMouseEnter() {
+    // A tap on a touch device can synthesize mouseenter; ignore that window.
     if (Date.now() < touchGuardUntilRef.current) return;
     scheduleHoverPreview();
   }
@@ -251,26 +286,90 @@ export function VideoCard({
   function handlePointerDown(e: React.PointerEvent) {
     if (e.pointerType !== 'touch') return;
     touchGuardUntilRef.current = Date.now() + 1500;
-    scheduleTouchPreview();
   }
-  function handlePointerUp(e: React.PointerEvent) {
-    if (e.pointerType !== 'touch') return;
-    if (activeRef.current) {
-      suppressClickRef.current = true;
-    }
-    touchGuardUntilRef.current = Date.now() + 1500;
-    stopPreview();
-  }
-  function handlePointerCancel(e: React.PointerEvent) {
-    if (e.pointerType !== 'touch') return;
-    touchGuardUntilRef.current = Date.now() + 1500;
-    stopPreview();
-  }
-  function handleTouchMove() {
-    if (touchTimerRef.current || activeRef.current) {
-      stopPreview();
-    }
-  }
+
+  // Latest start/stop for the IntersectionObserver, which is installed once.
+  const mobileStartRef = useRef(startPreview);
+  const mobileStopRef = useRef(stopPreview);
+  useEffect(() => {
+    mobileStartRef.current = startPreview;
+    mobileStopRef.current = stopPreview;
+  }, [startPreview, stopPreview]);
+
+  /**
+   * Phase 5.1 mobile previews: when a card is at least ~60% visible and stays
+   * that way briefly, it becomes a candidate for the single autoplay slot.
+   * The coordinator picks the most prominent candidate, so scrolling a grid
+   * never plays several videos at once. Only installed on devices without a
+   * conventional hover pointer, and suppressed for reduced-motion/save-data.
+   */
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el || typeof window === 'undefined' || typeof IntersectionObserver === 'undefined') return;
+    if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const connection = (
+      navigator as Navigator & { connection?: { saveData?: boolean } }
+    ).connection;
+    if (connection?.saveData) return;
+
+    let dwellTimer: ReturnType<typeof setTimeout> | null = null;
+    let reported = false;
+
+    const clearDwell = () => {
+      if (dwellTimer) {
+        clearTimeout(dwellTimer);
+        dwellTimer = null;
+      }
+    };
+
+    const unregister = () => {
+      clearDwell();
+      if (reported) {
+        reported = false;
+        removeMobileCandidate(mobileId);
+      }
+    };
+
+    const handlers = {
+      activate: () => mobileStartRef.current(),
+      deactivate: () => {
+        reported = false;
+        mobileStopRef.current();
+      },
+    };
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[entries.length - 1];
+        if (!entry) return;
+        const ratio = entry.isIntersecting ? entry.intersectionRatio : 0;
+        if (ratio >= MOBILE_VISIBILITY_THRESHOLD) {
+          if (reported) {
+            reportMobileVisibility(mobileId, ratio, handlers);
+          } else if (!dwellTimer) {
+            dwellTimer = setTimeout(() => {
+              dwellTimer = null;
+              reported = true;
+              reportMobileVisibility(mobileId, ratio, handlers);
+            }, MOBILE_DWELL_MS);
+          }
+        } else {
+          unregister();
+          // Leaving the viewport stops this card's preview immediately; a
+          // durable generation job is never cancelled by the client.
+          if (activeRef.current) mobileStopRef.current();
+        }
+      },
+      { threshold: [0, MOBILE_VISIBILITY_THRESHOLD, 0.75, 1] },
+    );
+    observer.observe(el);
+
+    return () => {
+      unregister();
+      observer.disconnect();
+    };
+  }, [mobileId]);
 
   function openVideo() {
     // Internal navigation: always the CURRENT tab. `window.open(..., '_blank')`
@@ -282,10 +381,6 @@ export function VideoCard({
     if ((e.target as HTMLElement).closest('a')) return;
     // The ⋮ action menu manages its own clicks - never open the video.
     if ((e.target as HTMLElement).closest('[data-card-menu]')) return;
-    if (suppressClickRef.current) {
-      suppressClickRef.current = false;
-      return;
-    }
     e.preventDefault();
     openVideo();
   }
@@ -296,13 +391,12 @@ export function VideoCard({
 
   return (
     <div
+      ref={cardRef}
       className="group relative cursor-pointer select-none"
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       onPointerDown={handlePointerDown}
-      onPointerUp={handlePointerUp}
-      onPointerCancel={handlePointerCancel}
-      onTouchMove={handleTouchMove}
+      onPointerCancel={handlePointerDown}
       onClick={handleClick}
       role="link"
       tabIndex={0}
@@ -392,7 +486,7 @@ export function VideoCard({
               aria-hidden
               className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-white/30 border-t-white"
             />
-            <span className="whitespace-nowrap">Loading preview</span>
+            <span className="whitespace-nowrap">{previewLabel}</span>
           </div>
         )}
 

@@ -21,9 +21,11 @@ import {
   previewCacheMaxBytes,
   previewEvictionGraceMs,
   previewEvictionIntervalMs,
+  previewGenerationVersion,
   previewTouchIntervalMs,
 } from './config';
 import { isPreviewSidecar, type PreviewSidecar } from './types';
+import { invalidatePreviewStatsCache } from './stats-cache';
 
 function previewsDirOverride(): string | null {
   const override = process.env.PREVIEW_CACHE_DIR;
@@ -57,12 +59,62 @@ export async function writeSidecarAtomic(sidecar: PreviewSidecar): Promise<void>
   await fs.promises.rename(tmp, target);
 }
 
+/**
+ * Phase 5 v1 sidecars (single-scene hover clips, optional timeline sprite)
+ * are migrated on read so timeline functionality is never lost by the Phase
+ * 5.1 format change. The old hover is deliberately dropped: its bytes were
+ * produced by a different scene-selection/encoding configuration and must
+ * not be served as a current montage.
+ */
+export function isLegacyPreviewSidecar(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const v = value as Record<string, unknown>;
+  return (
+    v.version === 1 &&
+    typeof v.videoId === 'number' &&
+    typeof v.megaNodeId === 'string' &&
+    typeof v.sourceSize === 'number' &&
+    (v.status === 'ready' || v.status === 'failed') &&
+    typeof v.lastAccessedAt === 'string'
+  );
+}
+
 /** Read + validate a sidecar; null when absent/corrupt (never throws). */
 export async function readSidecar(videoId: number): Promise<PreviewSidecar | null> {
   try {
     const parsed: unknown = JSON.parse(await fs.promises.readFile(sidecarPath(videoId), 'utf8'));
-    if (!isPreviewSidecar(parsed) || parsed.videoId !== videoId) return null;
-    return parsed;
+    if (isPreviewSidecar(parsed) && parsed.videoId === videoId) return parsed;
+    if (!isLegacyPreviewSidecar(parsed) || (parsed as { videoId?: unknown }).videoId !== videoId) return null;
+    const legacy = parsed as unknown as {
+      megaNodeId: string;
+      sourceSize: number;
+      durationSeconds: number | null;
+      status: 'ready' | 'failed';
+      hover: unknown;
+      timeline: PreviewSidecar['timeline'];
+      attempts: number;
+      lastError: string | null;
+      lastAccessedAt: string;
+      metrics: PreviewSidecar['metrics'];
+    };
+    const migrated: PreviewSidecar = {
+      version: 2,
+      videoId,
+      megaNodeId: legacy.megaNodeId,
+      sourceSize: legacy.sourceSize,
+      durationSeconds: legacy.durationSeconds,
+      status: legacy.timeline ? 'ready' : 'failed',
+      hover: null,
+      timeline: legacy.timeline ?? null,
+      attempts: 0,
+      lastError: legacy.lastError ?? null,
+      failedAt: null,
+      lastAccessedAt: legacy.lastAccessedAt,
+      metrics: legacy.metrics ?? null,
+      generationVersion: previewGenerationVersion(),
+    };
+    await writeSidecarAtomic(migrated).catch(() => {});
+    return migrated;
   } catch {
     return null;
   }
@@ -87,6 +139,10 @@ export async function removePreviewAssets(videoId: number): Promise<void> {
     fs.promises.rm(clipPath(videoId), { force: true }),
     fs.promises.rm(spritePath(videoId), { force: true }),
   ]);
+  pendingTouches.delete(videoId);
+  // Artifact availability just changed: the dashboard must not keep
+  // reporting the previous completed/missing split for a full TTL.
+  invalidatePreviewStatsCache();
 }
 
 // ---------------------------------------------------------------------------
@@ -94,20 +150,83 @@ export async function removePreviewAssets(videoId: number): Promise<void> {
 // ---------------------------------------------------------------------------
 
 const lastTouch = new Map<number, number>();
+/**
+ * Access timestamps that have not been written to their sidecars yet.
+ *
+ * `touchPreview()` is called on every meta poll, clip request and VTT
+ * request. Rewriting the sidecar each time is unnecessary write
+ * amplification (and SSD wear) for a value that only LRU eviction consumes.
+ * Instead, remember the newest access in memory; `flushPreviewAccessTimes()`
+ * persists it during the periodic eviction/statistics work. Eviction itself
+ * reads this map so the in-memory value still drives LRU ordering before it
+ * is persisted.
+ */
+const pendingTouches = new Map<number, number>();
 
-/** Throttled, fire-and-forget access recording; never throws. */
+/** Test/diagnostic: is there an access timestamp waiting to be persisted? */
+export function pendingPreviewTouchCount(): number {
+  return pendingTouches.size;
+}
+
+/** Test/diagnostic: the in-memory last-access value for one video. */
+export function pendingPreviewTouchAt(videoId: number): number | null {
+  return pendingTouches.get(videoId) ?? null;
+}
+
+/**
+ * Record an access. Memory-only and throttled; never throws, never writes.
+ * The timestamp is persisted later by `flushPreviewAccessTimes()` (periodic
+ * eviction / stats refresh).
+ */
 export async function touchPreview(videoId: number): Promise<void> {
   try {
     const now = Date.now();
     if (now - (lastTouch.get(videoId) ?? 0) < previewTouchIntervalMs()) return;
     lastTouch.set(videoId, now);
-    const sidecar = await readSidecar(videoId);
-    if (!sidecar) return;
-    sidecar.lastAccessedAt = new Date(now).toISOString();
-    await writeSidecarAtomic(sidecar);
+    pendingTouches.set(videoId, now);
   } catch {
     // best-effort only
   }
+}
+
+/**
+ * Persist pending access timestamps with atomic sidecar writes. Called by
+ * periodic eviction and statistics refresh, so a high-frequency viewer
+ * workload produces at most one write per video per flush interval.
+ * Returns how many sidecars were actually rewritten.
+ */
+export async function flushPreviewAccessTimes(): Promise<number> {
+  if (pendingTouches.size === 0) return 0;
+  const batch = Array.from(pendingTouches.entries());
+  let written = 0;
+  const CHUNK = 8;
+  for (let i = 0; i < batch.length; i += CHUNK) {
+    await Promise.all(
+      batch.slice(i, i + CHUNK).map(async ([videoId, at]) => {
+        try {
+          const sidecar = await readSidecar(videoId);
+          if (!sidecar) {
+            pendingTouches.delete(videoId);
+            return;
+          }
+          const previous = Date.parse(sidecar.lastAccessedAt);
+          if (Number.isFinite(previous) && previous >= at) {
+            pendingTouches.delete(videoId);
+            return;
+          }
+          sidecar.lastAccessedAt = new Date(at).toISOString();
+          await writeSidecarAtomic(sidecar);
+          // Only clear when no newer touch arrived while the write was in
+          // flight (touchPreview never awaits this function).
+          if ((pendingTouches.get(videoId) ?? 0) <= at) pendingTouches.delete(videoId);
+          written++;
+        } catch {
+          // Keep the pending value; the next flush retries it.
+        }
+      }),
+    );
+  }
+  return written;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +260,7 @@ export function activePreviewReaders(videoId: number): number {
 /** Test hook: reset all in-memory eviction state (unit tests only). */
 export function __resetPreviewStoreStateForTests(): void {
   lastTouch.clear();
+  pendingTouches.clear();
   activeReaders.clear();
 }
 
@@ -216,19 +336,26 @@ export async function evictPreviewCache(options?: {
     }
     if (size <= 0) continue;
     totalBytes += size;
-    let lastAccess = now; // no sidecar -> newest (deleted below as stale)
+    let lastAccess = pendingTouches.get(videoId) ?? 0;
     let stale = false;
     const sidecar = await readSidecar(videoId);
     if (!sidecar) {
       stale = true;
     } else {
       const t = Date.parse(sidecar.lastAccessedAt);
-      if (Number.isFinite(t)) lastAccess = t;
+      // The in-memory touch is newer than the persisted sidecar until the
+      // flush below; LRU must consider it so a frequently played preview is
+      // not evicted just because its last write is amortized.
+      if (Number.isFinite(t)) lastAccess = Math.max(lastAccess, t);
     }
+    if (lastAccess === 0) lastAccess = now; // unreadable timestamp -> newest
     entries.push({ videoId, size, lastAccess, stale });
   }
   const result: PreviewEvictionResult = { ...empty, totalBytes, entries: entries.length };
-  if (result.totalBytes <= maxBytes && !entries.some((e) => e.stale)) return result;
+  if (result.totalBytes <= maxBytes && !entries.some((e) => e.stale)) {
+    await flushPreviewAccessTimes();
+    return result;
+  }
   const deletable = (e: PreviewEntry): boolean => {
     if ((activeReaders.get(e.videoId) ?? 0) > 0) return false;
     if (e.stale) return true; // unservable: reclaim immediately
@@ -249,6 +376,8 @@ export async function evictPreviewCache(options?: {
       // raced deletion - leave
     }
   }
+  // Persist what remains after the eviction pass (bounded, periodic).
+  await flushPreviewAccessTimes();
   return result;
 }
 

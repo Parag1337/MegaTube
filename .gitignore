@@ -12,6 +12,12 @@
 
 # testing
 /coverage
+/test-results/
+/playwright-report/
+
+# perf/benchmark build outputs (NEXT_DIST_DIR overrides; Phase 1-2 feature)
+/.next-perf/
+/.tmp-bench/
 
 # next.js
 /.next/

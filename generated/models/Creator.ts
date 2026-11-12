@@ -795,7 +795,7 @@ export type $CreatorPayload<ExtArgs extends runtime.Types.Extensions.InternalArg
 export type CreatorGetPayload<S extends boolean | null | undefined | CreatorDefaultArgs> = runtime.Types.Result.GetResult<Prisma.$CreatorPayload, S>
 
 export type CreatorCountArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> =
-  Omit<CreatorFindManyArgs, 'select' | 'include' | 'distinct' | 'omit'> & {
+  Omit<CreatorFindManyArgs, 'select' | 'include' | 'distinct' | 'omit' | 'relationLoadStrategy'> & {
     select?: CreatorCountAggregateInputType | true
   }
 
@@ -1245,6 +1245,7 @@ export type CreatorFindUniqueArgs<ExtArgs extends runtime.Types.Extensions.Inter
    * Filter, which Creator to fetch.
    */
   where: Prisma.CreatorWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1267,6 +1268,7 @@ export type CreatorFindUniqueOrThrowArgs<ExtArgs extends runtime.Types.Extension
    * Filter, which Creator to fetch.
    */
   where: Prisma.CreatorWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1319,6 +1321,7 @@ export type CreatorFindFirstArgs<ExtArgs extends runtime.Types.Extensions.Intern
    * Filter by unique combinations of Creators.
    */
   distinct?: Prisma.CreatorScalarFieldEnum | Prisma.CreatorScalarFieldEnum[]
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1371,6 +1374,7 @@ export type CreatorFindFirstOrThrowArgs<ExtArgs extends runtime.Types.Extensions
    * Filter by unique combinations of Creators.
    */
   distinct?: Prisma.CreatorScalarFieldEnum | Prisma.CreatorScalarFieldEnum[]
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1423,6 +1427,7 @@ export type CreatorFindManyArgs<ExtArgs extends runtime.Types.Extensions.Interna
    * Filter by unique combinations of Creators.
    */
   distinct?: Prisma.CreatorScalarFieldEnum | Prisma.CreatorScalarFieldEnum[]
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1445,6 +1450,7 @@ export type CreatorCreateArgs<ExtArgs extends runtime.Types.Extensions.InternalA
    * The data needed to create a Creator.
    */
   data: Prisma.XOR<Prisma.CreatorCreateInput, Prisma.CreatorUncheckedCreateInput>
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1505,6 +1511,7 @@ export type CreatorUpdateArgs<ExtArgs extends runtime.Types.Extensions.InternalA
    * Choose, which Creator to update.
    */
   where: Prisma.CreatorWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1583,6 +1590,7 @@ export type CreatorUpsertArgs<ExtArgs extends runtime.Types.Extensions.InternalA
    * In case the Creator was found with the provided `where` argument, update it with this data.
    */
   update: Prisma.XOR<Prisma.CreatorUpdateInput, Prisma.CreatorUncheckedUpdateInput>
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**
@@ -1605,6 +1613,7 @@ export type CreatorDeleteArgs<ExtArgs extends runtime.Types.Extensions.InternalA
    * Filter which Creator to delete.
    */
   where: Prisma.CreatorWhereUniqueInput
+  relationLoadStrategy?: Prisma.RelationLoadStrategy
 }
 
 /**

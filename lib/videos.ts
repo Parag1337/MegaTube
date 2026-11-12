@@ -54,6 +54,12 @@ const videoSelect = {
   mimeType: true,
   duration: true,
   embedUrl: true,
+  // Phase 3: carried on the serialized row so callers that already hold the
+  // video (home feed's related pool, up-next selection) can pass
+  // getSameCreatorVideos' knownCreatorId instead of re-querying the video
+  // just to learn its creator. Additive field; consumers that don't use it
+  // are unaffected.
+  creatorId: true,
   creator: { select: { id: true, slug: true, name: true } },
   megaAccount: { select: { id: true, userId: true, label: true, status: true } },
 } as const;
@@ -229,6 +235,7 @@ export function serializeVideo(v: {
   mimeType: string | null;
   duration: number | null;
   embedUrl: string | null;
+  creatorId: number | null;
   creator: CreatorRef | null;
   megaAccount: { id: number; userId: string; label: string; status: string } | null;
 }) {
@@ -336,20 +343,24 @@ async function searchVideosFts(
   const rankSelect = rank ?? Prisma.sql`NULL`;
 
   try {
-    const [idRows, countRows] = await Promise.all([
-      prisma.$queryRaw<Array<{ id: number; rank: number | null }>>`
-        SELECT v."id" AS id, ${rankSelect} AS rank FROM "Video" AS v
+    // Phase 3: COUNT(*) OVER() resolves the total in the same round trip as
+    // the page's ids (one query instead of two). Same semantics as the
+    // LIMIT/OFFSET page: the window total counts all matching rows.
+    const idRows = await prisma.$queryRaw<Array<{ id: number; rank: number | null; total: bigint }>>`
+        SELECT v."id" AS id, ${rankSelect} AS rank, COUNT(*) OVER() AS total FROM "Video" AS v
         WHERE ${scope} AND ${filter}
         ORDER BY ${orderBy}
-        LIMIT ${take} OFFSET ${skip}`,
-      prisma.$queryRaw<Array<{ total: bigint }>>`
-        SELECT COUNT(*) AS total FROM "Video" AS v
-        WHERE ${scope} AND ${filter}`,
-    ]);
+        LIMIT ${take} OFFSET ${skip}`;
 
-    const total = Number(countRows[0]?.total ?? 0);
+    const total = Number(idRows[0]?.total ?? 0);
     if (idRows.length === 0) {
-      return { items: [], total, page: safePage, perPage, totalPages: Math.max(1, Math.ceil(total / perPage)) };
+      // Zero rows: the window total is unavailable, so count separately —
+      // rare (empty result pages), the hot path stays at 2 queries.
+      const countRows = await prisma.$queryRaw<Array<{ total: bigint }>>`
+        SELECT COUNT(*) AS total FROM "Video" AS v
+        WHERE ${scope} AND ${filter}`;
+      const separateTotal = Number(countRows[0]?.total ?? 0);
+      return { items: [], total: separateTotal, page: safePage, perPage, totalPages: Math.max(1, Math.ceil(separateTotal / perPage)) };
     }
 
     const rows = await prisma.video.findMany({
