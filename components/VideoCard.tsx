@@ -520,7 +520,14 @@ export function VideoCard({
 
         <div className="min-w-0 flex-1">
           <h3 className="line-clamp-2 text-[15px] font-medium leading-snug text-foreground">
-            {displayTitle}
+            <Link
+              href={`/video/${slug}`}
+              data-video-title-link
+              onClick={(e) => e.stopPropagation()}
+              className="hover:text-accent"
+            >
+              {displayTitle}
+            </Link>
           </h3>
           {creator ? (
             <Link

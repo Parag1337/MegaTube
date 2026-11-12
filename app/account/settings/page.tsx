@@ -55,7 +55,30 @@ export default async function AccountSettingsPage() {
           </p>
         </section>
 
-        {showPreviewAdmin && <PreviewManagement />}
+        <section aria-labelledby="tools-heading" className="mb-4">
+          <h2 id="tools-heading" className="mb-3 text-[15px] font-semibold">Tools</h2>
+          <div className="grid gap-3">
+            <Link
+              href="/account/tools/repair-thumbnails"
+              className="rounded-2xl border border-border bg-surface p-5 transition-colors hover:border-border-light hover:bg-surface-raised sm:p-6"
+            >
+              <span className="block text-[15px] font-semibold">Repair Thumbnails</span>
+              <span className="mt-1 block text-[13px] text-muted">
+                Replace missing, black, or broken thumbnails with real video frames.
+              </span>
+            </Link>
+            <Link
+              href="/account/duplicates"
+              className="rounded-2xl border border-border bg-surface p-5 transition-colors hover:border-border-light hover:bg-surface-raised sm:p-6"
+            >
+              <span className="block text-[15px] font-semibold">Find Duplicates</span>
+              <span className="mt-1 block text-[13px] text-muted">
+                Review possible duplicate files across your MEGA accounts.
+              </span>
+            </Link>
+            {showPreviewAdmin && <PreviewManagement />}
+          </div>
+        </section>
 
         <section aria-labelledby="data-heading" className="rounded-2xl border border-border bg-surface p-5 sm:p-6">
           <h2 id="data-heading" className="text-[15px] font-semibold">Your data</h2>

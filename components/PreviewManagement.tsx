@@ -108,7 +108,7 @@ export function PreviewManagement() {
         const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
         if (!res.ok) {
           setNotice(typeof data.error === 'string' ? data.error : 'Action failed.');
-          return;
+          return false;
         }
         if (name === 'generate') {
           const r = (data.result ?? {}) as Record<string, number>;
@@ -123,8 +123,10 @@ export function PreviewManagement() {
           setNotice('Saved.');
         }
         await load();
+        return true;
       } catch {
         setNotice('Action failed.');
+        return false;
       } finally {
         if (mountedRef.current) setBusy(null);
       }
@@ -134,35 +136,49 @@ export function PreviewManagement() {
 
   const toggleAutoGenerate = useCallback(
     (next: boolean) => {
-      void action('settings', () =>
-        fetch('/api/preview/admin/settings', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ autoGenerate: next }),
-        }),
-      );
+      void (async () => {
+        const ok = await action('settings', () =>
+          fetch('/api/preview/admin/settings', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ autoGenerate: next }),
+          }),
+        );
+        // The stats endpoint is intentionally cached for a few seconds, so
+        // its response may still hold the pre-toggle preference. Reflect the
+        // successful PATCH immediately instead of letting that stale value
+        // snap the checkbox back.
+        if (ok && mountedRef.current) {
+          setStats((prev) => (prev ? { ...prev, autoGenerate: next } : prev));
+        }
+      })();
     },
     [action],
   );
 
   const togglePaused = useCallback(
     (next: boolean) => {
-      void action('settings', () =>
-        fetch('/api/preview/admin/settings', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ paused: next }),
-        }),
-      );
+      void (async () => {
+        const ok = await action('settings', () =>
+          fetch('/api/preview/admin/settings', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paused: next }),
+          }),
+        );
+        if (ok && mountedRef.current) {
+          setStats((prev) => (prev ? { ...prev, paused: next } : prev));
+        }
+      })();
     },
     [action],
   );
 
   if (error) {
     return (
-      <section aria-labelledby="preview-heading" className="mb-4 rounded-2xl border border-border bg-surface p-5 sm:p-6">
+      <section id="fix-previews" aria-labelledby="preview-heading" className="rounded-2xl border border-border bg-surface p-5 sm:p-6">
         <h2 id="preview-heading" className="text-[15px] font-semibold">
-          Video Preview Management
+          Fix Previews
         </h2>
         <p className="mt-1 text-[13px] text-muted">{error}</p>
       </section>
@@ -171,9 +187,9 @@ export function PreviewManagement() {
 
   if (!stats) {
     return (
-      <section aria-labelledby="preview-heading" className="mb-4 rounded-2xl border border-border bg-surface p-5 sm:p-6">
+      <section id="fix-previews" aria-labelledby="preview-heading" className="rounded-2xl border border-border bg-surface p-5 sm:p-6">
         <h2 id="preview-heading" className="text-[15px] font-semibold">
-          Video Preview Management
+          Fix Previews
         </h2>
         <p className="mt-1 text-[13px] text-muted">Loading preview statistics…</p>
       </section>
@@ -184,12 +200,13 @@ export function PreviewManagement() {
     stats.totalVideos > 0 ? Math.min(100, (stats.completedPreviews / stats.totalVideos) * 100) : 0;
 
   return (
-    <section aria-labelledby="preview-heading" className="mb-4 rounded-2xl border border-border bg-surface p-5 sm:p-6">
+    <section id="fix-previews" aria-labelledby="preview-heading" className="rounded-2xl border border-border bg-surface p-5 sm:p-6">
       <h2 id="preview-heading" className="text-[15px] font-semibold">
-        Video Preview Management
+        Fix Previews
       </h2>
       <p className="mt-1 text-[13px] text-muted">
-        Multi-scene hover previews are generated in the background, one at a time.
+        Find missing, invalid, or outdated previews and generate them in the
+        background, one at a time, even after you leave Settings.
       </p>
 
       <div className="mt-4">

@@ -157,6 +157,7 @@ export function HistoryList({
                 <div className="min-w-0 flex-1">
                   <Link
                     href={`/video/${video.slug}`}
+                    data-video-title-link
                     className="line-clamp-2 text-sm font-medium leading-snug hover:text-accent sm:text-[15px]"
                   >
                     {video.title || video.megaFilename.replace(/\.[^.]+$/, '')}

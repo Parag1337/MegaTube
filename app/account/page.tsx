@@ -6,7 +6,14 @@ import { LogoutButton } from './logout-button';
 import { ManageAccountButton } from '@/components/ManageAccountButton';
 import { MegaAccountsPanel } from '@/components/MegaAccountsPanel';
 import { Avatar } from '@/components/ui';
-import { BookmarkIcon, ChevronRightIcon, FilmIcon, HistoryIcon, RefreshIcon } from '@/components/icons';
+import {
+  BookmarkIcon,
+  ChevronRightIcon,
+  FilmIcon,
+  HistoryIcon,
+  RefreshIcon,
+  SparklesIcon,
+} from '@/components/icons';
 
 export const metadata: Metadata = { title: 'Account' };
 
@@ -85,6 +92,12 @@ export default async function AccountPage() {
               icon={<FilmIcon className="h-[20px] w-[20px]" />}
               title="Find duplicates"
               body="Free up MEGA storage by removing duplicate videos"
+            />
+            <LibraryRow
+              href="/account/settings#fix-previews"
+              icon={<SparklesIcon className="h-[20px] w-[20px]" />}
+              title="Fix previews"
+              body="Generate missing, invalid, or outdated video previews"
             />
           </nav>
         </section>
