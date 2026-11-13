@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
 import { canManagePreviews } from '@/lib/preview/admin';
 import { retryPreviewJobs } from '@/lib/preview/jobs';
+import { enforcePreviewRateLimit } from '@/lib/preview/rate-limit';
 
 /**
  * Phase 5.1: retry terminal preview jobs (owner-only).
@@ -22,6 +23,8 @@ export async function POST(request: Request) {
     if (!canManagePreviews(user)) {
       return NextResponse.json({ error: 'Not authorized.' }, { status: 403 });
     }
+    const limited = enforcePreviewRateLimit(user.id, 'admin-retry');
+    if (limited) return limited;
 
     let body: { jobIds?: unknown; includeUnsupported?: unknown } = {};
     try {

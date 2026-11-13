@@ -107,6 +107,27 @@ test('spritePlan: interval never below the floor, count never beyond duration', 
   assert.equal(micro.count, 1);
 });
 
+test('compareScenesByStart orders absolute source timestamps, not window offsets', () => {
+  // Regression: TS scenes were sorted by their window-relative seek offset,
+  // producing a montage in acquisition order (e.g. 71s, 358s, 645s, 215s).
+  const scenes = [
+    { startSec: 645, id: 'late' },
+    { startSec: 71, id: 'early' },
+    { startSec: 358, id: 'middle' },
+    { startSec: 215, id: 'second' },
+  ];
+  assert.deepEqual(
+    [...scenes].sort(seg.compareScenesByStart).map((s) => s.id),
+    ['early', 'second', 'middle', 'late'],
+  );
+  // Equal timestamps keep their relative order (stable sort contract).
+  const tied = [
+    { startSec: 10, id: 'a' },
+    { startSec: 10, id: 'b' },
+  ];
+  assert.deepEqual([...tied].sort(seg.compareScenesByStart).map((s) => s.id), ['a', 'b']);
+});
+
 test('buildSpriteVtt: cue grid math + xywh fragments', () => {
   const vtt = seg.buildSpriteVtt({
     spriteUrl: '/api/preview/7/timeline',
@@ -125,6 +146,39 @@ test('buildSpriteVtt: cue grid math + xywh fragments', () => {
   assert.match(vtt, /00:00:44\.000 --> 00:00:48\.000/);
   const cues = vtt.split('\n\n').length - 1; // minus the WEBVTT header
   assert.equal(cues, 12);
+});
+
+test('buildSpriteVtt: cold-source times produce exact, non-overlapping cues', () => {
+  const vtt = seg.buildSpriteVtt({
+    spriteUrl: '/api/preview/7/timeline',
+    durationSec: 100,
+    intervalSec: 25,
+    count: 4,
+    cols: 2,
+    tileW: 160,
+    tileH: 90,
+    times: [10, 35, 60, 85],
+  });
+  assert.match(vtt, /00:00:10\.000 --> 00:00:35\.000\n\/api\/preview\/7\/timeline#xywh=0,0,160,90/);
+  assert.match(vtt, /00:00:35\.000 --> 00:01:00\.000\n\/api\/preview\/7\/timeline#xywh=160,0,160,90/);
+  assert.match(vtt, /00:01:00\.000 --> 00:01:25\.000\n\/api\/preview\/7\/timeline#xywh=0,90,160,90/);
+  assert.match(vtt, /00:01:25\.000 --> 00:01:40\.000\n\/api\/preview\/7\/timeline#xywh=160,90,160,90/);
+  assert.equal(vtt.split('\n\n').length - 1, 4);
+});
+
+test('buildSpriteVtt: malformed/unsorted times fall back to the regular grid', () => {
+  const vtt = seg.buildSpriteVtt({
+    spriteUrl: '/api/preview/7/timeline',
+    durationSec: 8,
+    intervalSec: 4,
+    count: 2,
+    cols: 2,
+    tileW: 160,
+    tileH: 90,
+    times: [4, 2],
+  });
+  assert.match(vtt, /00:00:00\.000 --> 00:00:04\.000/);
+  assert.match(vtt, /00:00:04\.000 --> 00:00:08\.000/);
 });
 
 test('vttTimestamp: pads hours/ms correctly', () => {

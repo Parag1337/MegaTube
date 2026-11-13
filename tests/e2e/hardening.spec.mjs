@@ -10,12 +10,34 @@
 
 import { test, expect } from '@playwright/test';
 import pg from 'pg';
+import { canSignInWithClerk, signInWithClerk } from './clerk-auth.mjs';
 
 const BASE = process.env.E2E_BASE_URL ?? 'http://localhost:3000';
 const E2E_DATABASE_URL =
   process.env.E2E_DATABASE_URL ??
   'postgresql://megatube:megatube-dev-only@localhost:5433/megatube?schema=public';
 const BROKEN_SLUG = 'broken-link-test-video';
+
+// The fixture library is private, so every card test needs the Clerk fixture
+// session. Broken-link rows stay public and are found through search.
+test.beforeEach(async ({ page }) => {
+  test.skip(!canSignInWithClerk(), 'requires CLERK_SECRET_KEY and E2E_CLERK_USER_ID');
+  await signInWithClerk(page);
+});
+
+test.describe.configure({ mode: 'serial' });
+
+function previewSurfaces(scope) {
+  return scope.locator(
+    'iframe[src*="mega.nz/embed"], video[src^="/api/preview/"]',
+  );
+}
+
+function previewUi(scope) {
+  return scope.locator(
+    'iframe[src*="mega.nz/embed"], video[src^="/api/preview/"], [data-preview-loading]',
+  );
+}
 
 function withClient(fn) {
   const client = new pg.Client({ connectionString: E2E_DATABASE_URL });
@@ -26,11 +48,11 @@ function withClient(fn) {
 
 function insertBrokenVideo() {
   return withClient(async (db) => {
-    const existing = await db.query('SELECT id FROM Video WHERE slug = $1', [BROKEN_SLUG]);
+    const existing = await db.query('SELECT id FROM "Video" WHERE slug = $1', [BROKEN_SLUG]);
     if (existing.rowCount === 0) {
       await db.query(
-        `INSERT INTO Video (megaUrl, megaFileId, megaFileKey, megaFilename, title, slug,
-          thumbnail, thumbnailAvailable, embedUrl, sortOrder, createdAt, updatedAt)
+        `INSERT INTO "Video" ("megaUrl", "megaFileId", "megaFileKey", "megaFilename", title, slug,
+          thumbnail, "thumbnailAvailable", "embedUrl", "sortOrder", "createdAt", "updatedAt")
          VALUES ($1, $2, $3, $4, $5, $6, NULL, false, $7, 999999, now(), now())`,
         [
           'https://mega.nz/file/badlink1#not-a-real-key',
@@ -48,7 +70,7 @@ function insertBrokenVideo() {
 
 function removeBrokenVideo() {
   return withClient(async (db) => {
-    await db.query('DELETE FROM Video WHERE slug = $1', [BROKEN_SLUG]);
+    await db.query('DELETE FROM "Video" WHERE slug = $1', [BROKEN_SLUG]);
   });
 }
 
@@ -59,23 +81,23 @@ test.describe('error/fallback behavior', () => {
       const errors = [];
       page.on('pageerror', (e) => errors.push(e.message));
 
-      const res = await page.goto(BASE, { waitUntil: 'domcontentloaded' });
-      expect(res.status()).toBe(200); // homepage must not 500
-
-      // Regular cards render normally alongside the broken one.
-      const cards = page.locator('[role="link"][aria-label]');
-      await expect(cards).toHaveCount(17, { timeout: 15000 });
+      const res = await page.goto(
+        `${BASE}/search?q=${encodeURIComponent('Broken Link Test Video')}`,
+        { waitUntil: 'domcontentloaded' },
+      );
+      expect(res.status()).toBe(200); // search must not 500
 
       // The broken card renders with the SVG fallback (no thumbnail).
-      const brokenCard = page.locator(`[aria-label="Broken Link Test Video"]`);
-      await expect(brokenCard).toHaveCount(1);
-      await expect(brokenCard.locator('svg')).toHaveCount(1);
+      const brokenCard = page.locator(`[aria-label="Broken Link Test Video"]`).first();
+      await expect(brokenCard).toBeVisible({ timeout: 15_000 });
+      await expect(brokenCard.locator('svg').first()).toBeVisible();
+      await expect(brokenCard.locator('img[src*="/thumbs/"]')).toHaveCount(0);
 
-      // Hovering a broken card must NOT create a preview iframe and must
+      // Hovering a broken card must NOT create a preview surface and must
       // not throw.
       await brokenCard.hover();
       await page.waitForTimeout(800);
-      await expect(brokenCard.locator('iframe')).toHaveCount(0);
+      await expect(previewSurfaces(brokenCard)).toHaveCount(0);
       expect(errors).toEqual([]);
     } finally {
       await removeBrokenVideo();
@@ -119,15 +141,15 @@ test.describe('preview cleanup under stress', () => {
     for (let i = 0; i < count; i++) {
       await cards.nth(i).hover();
       await page.waitForTimeout(120);
-      const c = await page.locator('iframe[src*="mega.nz/embed"]').count();
+      const c = await previewUi(page).count();
       maxConcurrent = Math.max(maxConcurrent, c);
     }
     expect(maxConcurrent).toBeLessThanOrEqual(1);
 
-    // Parking the mouse off-cards removes the remaining preview.
+    // Parking the mouse off-cards removes the remaining preview UI.
     await page.mouse.move(2, 2);
-    await page.waitForTimeout(400);
-    await expect(page.locator('iframe[src*="mega.nz/embed"]')).toHaveCount(0);
+    await page.waitForTimeout(500);
+    await expect(previewUi(page)).toHaveCount(0);
   });
 
   test('repeated enter/leave cycles leave no orphaned iframes', async ({ page }) => {
@@ -137,13 +159,11 @@ test.describe('preview cleanup under stress', () => {
 
     for (let i = 0; i < 4; i++) {
       await card.hover();
-      await page.waitForTimeout(550);
-      await expect(page.locator('iframe[src*="mega.nz/embed"]')).toHaveCount(1);
+      await expect(previewUi(card)).toHaveCount(1, { timeout: 5_000 });
       await page.mouse.move(2, 2);
-      await page.waitForTimeout(350);
-      await expect(page.locator('iframe[src*="mega.nz/embed"]')).toHaveCount(0);
+      await expect(previewUi(card)).toHaveCount(0, { timeout: 5_000 });
     }
-    await expect(page.locator('iframe[src*="mega.nz/embed"]')).toHaveCount(0);
+    await expect(previewUi(page)).toHaveCount(0);
   });
 
   test('scrolling while a preview is active keeps the DOM sane', async ({ page }) => {
@@ -151,22 +171,24 @@ test.describe('preview cleanup under stress', () => {
     const card = page.locator('[role="link"][aria-label]').nth(4);
     await card.scrollIntoViewIfNeeded();
     await card.hover();
-    await page.waitForTimeout(650);
-    await expect(page.locator('iframe[src*="mega.nz/embed"]')).toHaveCount(1);
+    await expect(previewUi(card)).toHaveCount(1, { timeout: 5_000 });
 
     await page.mouse.wheel(0, 400);
     await page.waitForTimeout(500);
-    // Scrolling alone must not spawn additional players.
-    const c = await page.locator('iframe[src*="mega.nz/embed"]').count();
-    expect(c).toBeLessThanOrEqual(1);
+    // Scrolling alone must not spawn additional preview UI.
+    expect(await previewUi(page).count()).toBeLessThanOrEqual(1);
 
     await page.mouse.move(2, 2);
-    await page.waitForTimeout(400);
-    await expect(page.locator('iframe[src*="mega.nz/embed"]')).toHaveCount(0);
+    await page.waitForTimeout(500);
+    await expect(previewUi(page)).toHaveCount(0);
   });
 });
 
 test.describe('touch device semantics', () => {
+  // CDP Input.dispatchTouchEvent and isMobile context emulation are
+  // Chromium-only. Chrome/mobile-chrome projects run these; Firefox and
+  // WebKit skip rather than fail on an unavailable protocol.
+  test.skip(({ browserName }) => browserName !== 'chromium', 'CDP touch emulation is Chromium-only');
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
   test('quick tap opens the video page and spawns no preview', async ({ page, context }) => {
@@ -200,8 +222,10 @@ test.describe('touch device semantics', () => {
       expect(videoPage).toBeTruthy();
     }
 
-    // The tapping page must never have spawned a preview iframe.
-    await expect(page.locator('iframe[src*="mega.nz/embed"]')).toHaveCount(0);
+    // The tapping page must never have spawned preview UI.
+    if (!page.url().includes('/video/')) {
+      await expect(previewUi(page)).toHaveCount(0);
+    }
   });
 
   test('long-press previews, and lifting the finger restores the thumbnail', async ({ page }) => {
@@ -218,14 +242,13 @@ test.describe('touch device semantics', () => {
       type: 'touchStart',
       touchPoints: [{ x: px, y: py }],
     });
-    // Hold past the 400ms preview delay: the preview must appear.
-    await page.waitForTimeout(900);
-    await expect(page.locator('iframe[src*="mega.nz/embed"]')).toHaveCount(1);
+    // Hold past the 400ms preview delay: the loading badge or a ready local
+    // clip must appear (cold previews can take longer than the delay).
+    await expect(previewUi(card)).toHaveCount(1, { timeout: 5_000 });
 
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-    // Lifting the finger must remove the preview (and the synthetic
+    // Lifting the finger must remove the preview UI (and the synthetic
     // mouseenter that follows must NOT re-arm it).
-    await page.waitForTimeout(900);
-    await expect(page.locator('iframe[src*="mega.nz/embed"]')).toHaveCount(0);
+    await expect(previewUi(card)).toHaveCount(0, { timeout: 5_000 });
   });
 });

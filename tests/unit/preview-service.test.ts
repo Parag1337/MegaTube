@@ -2,9 +2,10 @@
  * Preview service core tests (lib/preview/service.ts).
  *
  * Auth matrix (401/400/404/410/409), meta statuses, durable-job status
- * mapping, artifact-missing requeue, timeline warm-cache gate, asset serving
- * (Range/ETag/304/416/404) and the VTT document. All dependencies are fakes —
- * no prisma, no MEGA, no ffmpeg.
+ * mapping, artifact-missing requeue, timeline admission (warm cache and
+ * bounded cold-window fallback), asset serving (Range/ETag/304/416/404) and
+ * the VTT document. All dependencies are fakes — no prisma, no MEGA, no
+ * ffmpeg.
  */
 
 import { test, before, after } from 'node:test';
@@ -74,6 +75,23 @@ function stubQueue(opts?: { full?: boolean; inFlight?: boolean }): QueueStub {
       calls.push({ key, signal: signal ?? null });
       return opts?.full ? 'rejected' : 'started';
     },
+  };
+}
+
+/** Queue stub that actually runs the enqueued runner so failure state can be
+ * observed deterministically (used by the cold-timeline cooldown test). */
+function runningQueue(): QueueStub & { wait: () => Promise<void> } {
+  const calls: Array<{ key: string; signal: AbortSignal | null }> = [];
+  let done: Promise<void> = Promise.resolve();
+  return {
+    calls,
+    has: () => false,
+    enqueueNow: (key, runner, signal) => {
+      calls.push({ key, signal: signal ?? null });
+      done = Promise.resolve(runner()).then(() => undefined, () => undefined);
+      return 'started';
+    },
+    wait: () => done,
   };
 }
 
@@ -229,9 +247,10 @@ test('meta: ready sidecar + files on disk → ready with URLs, no-store', async 
   assert.equal(body.hover?.url, '/api/preview/7');
   assert.equal(body.hover?.durationSec, 8);
   assert.equal(body.hover?.scenes.length, 2);
-  // No warm cache → timeline honestly reports source-not-local.
-  assert.equal(body.timeline?.status, 'unavailable');
-  assert.equal(body.timeline?.reason, 'source-not-local');
+  // No warm cache is no longer a dead end: the bounded cold-window
+  // fallback is admitted immediately, and the meta response stays fast.
+  assert.equal(body.timeline?.status, 'generating');
+  assert.equal(body.timeline?.reason, null);
 });
 
 test('meta: missing clip bytes with a ready sidecar → durable job ensured + worker woken', async () => {
@@ -306,7 +325,7 @@ test('meta: identity mismatch (re-synced source) invalidates assets + regenerate
   assert.ok(!fs.existsSync(path.join(dir, '7.sprite.jpg')));
 });
 
-test('meta: timeline gate — warm cache present enqueues; absent reports source-not-local', async () => {
+test('meta: timeline gate — warm cache and cold-window fallback both enqueue', async () => {
   clean();
   const queue = stubQueue();
   const res = await svc.handlePreviewMeta(USER, '7', { want: 'timeline' }, makeDeps({ queue, warmCache: true }));
@@ -320,9 +339,9 @@ test('meta: timeline gate — warm cache present enqueues; absent reports source
   const queue2 = stubQueue();
   const res2 = await svc.handlePreviewMeta(USER, '7', { want: 'timeline' }, makeDeps({ queue: queue2, warmCache: false }));
   const body2 = (await res2.json()) as { timeline: { status: string; reason: string | null } };
-  assert.equal(body2.timeline.status, 'unavailable');
-  assert.equal(body2.timeline.reason, 'source-not-local');
-  assert.equal(queue2.calls.length, 0, 'no MEGA spritesheet downloads, ever');
+  assert.equal(body2.timeline.status, 'generating');
+  assert.equal(body2.timeline.reason, null);
+  assert.equal(queue2.calls.length, 1, 'cold timeline uses the bounded window path');
 });
 
 test('meta: timeline queue full reports unavailable without starting work', async () => {
@@ -433,6 +452,7 @@ test('asset: stale-generation clip is not served even if bytes exist', async () 
 test('vtt: ready timeline → text/vtt with the documented cell count', async () => {
   clean();
   readySidecar(7, { timeline: true });
+  fs.writeFileSync(path.join(dir, '7.sprite.jpg'), Buffer.alloc(100, 2));
   const res = await svc.handlePreviewVtt(USER, '7', {}, makeDeps());
   assert.equal(res.status, 200);
   assert.match(res.headers.get('content-type') ?? '', /text\/vtt/);
@@ -448,4 +468,33 @@ test('vtt: no timeline → 404 JSON', async () => {
   assert.equal(res.status, 404);
   const body = (await res.json()) as { status: string };
   assert.equal(body.status, 'unavailable');
+});
+
+test('meta: timeline without a source size reports a meaningful reason and queues nothing', async () => {
+  clean();
+  const queue = stubQueue();
+  const video = videoRow({ id: 78, fileSize: null });
+  const res = await svc.handlePreviewMeta(USER, '78', { want: 'timeline' }, makeDeps({ video, queue }));
+  const body = (await res.json()) as { timeline: { status: string; reason: string | null } };
+  assert.equal(body.timeline.status, 'unavailable');
+  assert.equal(body.timeline.reason, 'source-size-unknown');
+  assert.equal(queue.calls.length, 0);
+});
+
+test('meta: failed cold timeline enters cooldown instead of re-enqueueing every poll', async () => {
+  clean();
+  const queue = runningQueue();
+  const video = videoRow({ id: 77 });
+  const deps = makeDeps({ video, queue, warmCache: false });
+  const first = await svc.handlePreviewMeta(USER, '77', { want: 'timeline' }, deps);
+  const firstBody = (await first.json()) as { timeline: { status: string } };
+  assert.equal(firstBody.timeline.status, 'generating');
+  assert.equal(queue.calls.length, 1);
+  await queue.wait();
+
+  const second = await svc.handlePreviewMeta(USER, '77', { want: 'timeline' }, deps);
+  const secondBody = (await second.json()) as { timeline: { status: string; reason: string | null } };
+  assert.equal(secondBody.timeline.status, 'unavailable');
+  assert.equal(secondBody.timeline.reason, 'timeline-retry-later');
+  assert.equal(queue.calls.length, 1, 'cooldown prevents a no-op queue entry');
 });

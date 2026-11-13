@@ -85,6 +85,18 @@ export interface MontageScenePlan {
   fraction: number | null;
 }
 
+/**
+ * Playback order for selected montage scenes.
+ *
+ * `sourceSeekSec` is relative to the acquired window for TS sources, so it
+ * cannot be compared across segments. The absolute scene start is the only
+ * stable timeline coordinate. Keeping the comparator here makes the ordering
+ * contract directly unit-testable.
+ */
+export function compareScenesByStart<T extends { startSec: number }>(a: T, b: T): number {
+  return a.startSec - b.startSec;
+}
+
 export interface MontagePlan {
   scenes: MontageScenePlan[];
   sceneSeconds: number;
@@ -417,18 +429,43 @@ export interface SpriteVttInput {
   cols: number;
   tileW: number;
   tileH: number;
+  /**
+   * Optional absolute timestamps for cells with a non-uniform cadence.
+   * Must contain exactly `count` finite, ascending values. When present,
+   * cue k spans `times[k]` to `times[k+1]` (the last cue ends at duration).
+   */
+  times?: number[];
 }
 
 /**
  * Build the WebVTT document consumed by Vidstack's timeline thumbnails
  * (`DefaultVideoLayout thumbnails`). Cues never reference blank padding
  * cells and never extend beyond the video duration.
+ *
+ * Regular warm-cache sprites use `k * intervalSec`. Cold-source sprites
+ * reuse acquired hover windows and therefore carry their exact source
+ * timestamps in `times`; the xywh cell coordinates are still the k-th
+ * cell of the same grid.
  */
 export function buildSpriteVtt(input: SpriteVttInput): string {
   const cues: string[] = [];
+  const irregular =
+    input.times !== undefined &&
+    input.times.length === input.count &&
+    input.times.every(
+      (t, i) =>
+        Number.isFinite(t) &&
+        t >= 0 &&
+        (i === 0 || t > input.times![i - 1]),
+    );
   for (let k = 0; k < input.count; k++) {
-    const start = spriteCellTime(k, input.intervalSec);
-    const end = Math.min(start + input.intervalSec, input.durationSec);
+    const start = irregular ? input.times![k] : spriteCellTime(k, input.intervalSec);
+    const next = irregular
+      ? k + 1 < input.count
+        ? input.times![k + 1]
+        : input.durationSec
+      : start + input.intervalSec;
+    const end = Math.min(next, input.durationSec);
     if (end <= start) break;
     const x = (k % input.cols) * input.tileW;
     const y = Math.floor(k / input.cols) * input.tileH;

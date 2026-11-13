@@ -81,7 +81,29 @@ function depsFor(warmPath: string) {
   } as unknown as import('@/lib/preview/service').PreviewServiceDeps;
 }
 
-async function makeFixture(target: string): Promise<void> {
+function metaDepsFor(
+  video: ReturnType<typeof videoRow>,
+  warmPath: string,
+): import('@/lib/preview/service').PreviewServiceDeps {
+  const deps = depsFor(warmPath);
+  deps.loadVideo = async (_userId, id) => (id === video.id ? video : null);
+  return deps;
+}
+
+async function waitForTimeline(
+  videoId: number,
+  timeoutMs = 60_000,
+): Promise<import('@/lib/preview/types').PreviewSidecar> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const sidecar = await cache.readSidecar(videoId);
+    if (sidecar?.timeline) return sidecar;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`timeline sidecar did not appear for video ${videoId}`);
+}
+
+async function makeFixture(target: string, seconds = 6): Promise<void> {
   const run = await ffmpeg.encodeMontage({
     inputs: [],
     width: 320,
@@ -96,11 +118,14 @@ async function makeFixture(target: string): Promise<void> {
   assert.equal(run.ok, false);
   const encoded = await ffmpeg.runFfmpeg(
     [
-      '-f', 'lavfi', '-i', 'testsrc2=s=320x180:r=24:d=6',
+      '-f', 'lavfi', '-i', `testsrc2=s=320x180:r=24:d=${seconds}`,
       '-c:v', 'libopenh264',
       '-pix_fmt', 'yuv420p',
       '-b:v', '500k',
       '-rc_mode', 'bitrate',
+      // Explicit GOP so `-discard nokey` has keyframes to sample in the
+      // timeline tests (libopenh264's default GOP is long).
+      '-g', '24',
       '-movflags', '+faststart',
       '-f', 'mp4',
       '-y', target,
@@ -133,6 +158,10 @@ test(
       'known-duration scenes are not marked estimated',
     );
     assert.ok(sidecar.metrics.totalMs >= 0);
+    assert.ok(sidecar.timeline, 'hover generation also emitted a window-reuse timeline');
+    assert.equal(sidecar.timeline.times?.[0], 0, 'first cold cell covers from 0');
+    assert.equal(sidecar.timeline.count, sidecar.timeline.times?.length);
+    assert.ok(fs.existsSync(cache.spritePath(video.id)), 'timeline sprite published with hover');
   },
 );
 
@@ -172,5 +201,71 @@ test(
       false,
       'an aborted run must not clobber a newer sidecar',
     );
+  },
+);
+
+test(
+  'timeline: warm-cache source produces a dense sprite and matching VTT',
+  { skip: hasFfmpeg ? false : 'ffmpeg not installed', timeout: 120_000 },
+  async () => {
+    const warmPath = path.join(previewDir, 'warm-timeline.mp4');
+    await makeFixture(warmPath, 20);
+    const video = videoRow(9204, fs.statSync(warmPath).size, 20);
+    const deps = metaDepsFor(video, warmPath);
+    const meta = await svc.handlePreviewMeta('user-1', '9204', { want: 'timeline' }, deps);
+    assert.equal(meta.status, 200);
+    const sidecar = await waitForTimeline(9204);
+    assert.equal(sidecar.timeline?.count, 5);
+    assert.equal(sidecar.timeline?.times, undefined, 'warm sprite uses the regular grid');
+    assert.ok(fs.existsSync(cache.spritePath(9204)), 'sprite published');
+
+    const probe = await ffmpeg.probeMedia(cache.spritePath(9204), 30_000);
+    assert.equal(probe?.width, 1600);
+    assert.equal(probe?.height, 90);
+
+    const vtt = await svc.handlePreviewVtt('user-1', '9204', {}, deps);
+    assert.equal(vtt.status, 200);
+    const text = await vtt.text();
+    assert.equal((text.match(/-->/g) ?? []).length, 5);
+    assert.match(text, /#xywh=640,0,160,90/);
+  },
+);
+
+test(
+  'timeline helpers: extract frames from windows and tile them',
+  { skip: hasFfmpeg ? false : 'ffmpeg not installed', timeout: 120_000 },
+  async () => {
+    const source = path.join(previewDir, 'helper-source.mp4');
+    await makeFixture(source, 6);
+    const frameDir = path.join(previewDir, 'helper-frames');
+    fs.mkdirSync(frameDir, { recursive: true });
+    const frames: string[] = [];
+    for (const [i, seek] of [0.5, 2, 3.5, 5].entries()) {
+      const out = path.join(frameDir, `f${i}.jpg`);
+      const result = await ffmpeg.extractFrameJpeg({
+        inputPath: source,
+        seekSec: seek,
+        tileW: 160,
+        tileH: 90,
+        outPath: out,
+        timeoutMs: 30_000,
+      });
+      assert.equal(result.ok, true, result.detail);
+      frames.push(out);
+    }
+    const sheet = path.join(frameDir, 'sheet.jpg');
+    const tiled = await ffmpeg.encodeSpriteFromFrames({
+      imagePaths: frames,
+      tileW: 160,
+      tileH: 90,
+      cols: 2,
+      rows: 2,
+      outPath: sheet,
+      timeoutMs: 30_000,
+    });
+    assert.equal(tiled.ok, true, tiled.detail);
+    const probe = await ffmpeg.probeMedia(sheet, 30_000);
+    assert.equal(probe?.width, 320);
+    assert.equal(probe?.height, 180);
   },
 );

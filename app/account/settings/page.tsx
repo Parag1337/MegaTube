@@ -3,7 +3,6 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { getCurrentUser } from '@/lib/auth';
 import { ManageAccountButton } from '@/components/ManageAccountButton';
-import { PreviewManagement } from '@/components/PreviewManagement';
 import { ThemeSelector } from '@/components/ThemeSelector';
 import { canManagePreviews } from '@/lib/preview/admin';
 
@@ -76,7 +75,17 @@ export default async function AccountSettingsPage() {
                 Review possible duplicate files across your MEGA accounts.
               </span>
             </Link>
-            {showPreviewAdmin && <PreviewManagement />}
+            {showPreviewAdmin && (
+              <Link
+                href="/account/previews"
+                className="rounded-2xl border border-border bg-surface p-5 transition-colors hover:border-border-light hover:bg-surface-raised sm:p-6"
+              >
+                <span className="block text-[15px] font-semibold">Fix Previews</span>
+                <span className="mt-1 block text-[13px] text-muted">
+                  Manage preview generation →
+                </span>
+              </Link>
+            )}
           </div>
         </section>
 

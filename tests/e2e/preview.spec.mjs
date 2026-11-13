@@ -13,6 +13,7 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { canSignInWithClerk, signInWithClerk } from './clerk-auth.mjs';
 
 const BASE = process.env.E2E_BASE_URL ?? 'http://localhost:3000';
 
@@ -23,19 +24,12 @@ function previewSurfaces(page) {
   );
 }
 
-/**
- * Optional authenticated E2E: the app's pages are Clerk-protected, and the
- * legacy session cookie alone does not satisfy Clerk middleware. CI can set
- * E2E_SESSION_TOKEN (plus a middleware bypass) to exercise a real library.
- * Without it the suite runs exactly as before (public/landing environment).
- */
-const SESSION_TOKEN = process.env.E2E_SESSION_TOKEN;
-test.beforeEach(async ({ context }) => {
-  if (SESSION_TOKEN) {
-    await context.addCookies([
-      { name: 'session_token', value: SESSION_TOKEN, url: BASE, httpOnly: true, sameSite: 'Lax' },
-    ]);
-  }
+// The fixture library is private (all 219 rows are owned through MEGA), so
+// the public landing page has no cards. Sign in with the Clerk fixture user
+// before each test; skip visibly when the fixture is not configured.
+test.beforeEach(async ({ page }) => {
+  test.skip(!canSignInWithClerk(), 'requires CLERK_SECRET_KEY and E2E_CLERK_USER_ID');
+  await signInWithClerk(page);
 });
 
 test.describe('homepage preview system', () => {
@@ -46,7 +40,8 @@ test.describe('homepage preview system', () => {
     await expect(previewSurfaces(page)).toHaveCount(0);
   });
 
-  test('hover starts exactly one muted/autoplay preview after a short delay', async ({ page }) => {
+  test('hover starts exactly one muted/autoplay preview after a short delay', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'pointer-hover timing is desktop-only; touch long-press is covered by hardening.spec.mjs');
     await page.goto(BASE);
     const firstCard = page.locator('[role="link"][aria-label]').first();
     const surfaces = previewSurfaces(page);
@@ -88,7 +83,8 @@ test.describe('homepage preview system', () => {
     await page.screenshot({ path: '/tmp/preview-active.png' });
   });
 
-  test('mouseleave destroys the preview and shows the thumbnail', async ({ page }) => {
+  test('mouseleave destroys the preview and shows the thumbnail', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'pointer hover is desktop-only; touch long-press is covered by hardening.spec.mjs');
     await page.goto(BASE);
     const firstCard = page.locator('[role="link"][aria-label]').first();
     const surfaces = previewSurfaces(page);
@@ -100,7 +96,8 @@ test.describe('homepage preview system', () => {
     await expect(surfaces).toHaveCount(0);
   });
 
-  test('moving between cards keeps only one preview at a time', async ({ page }) => {
+  test('moving between cards keeps only one preview at a time', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'pointer hover is desktop-only; touch long-press is covered by hardening.spec.mjs');
     await page.goto(BASE);
     const cards = page.locator('[role="link"][aria-label]');
     const surfaces = previewSurfaces(page);
@@ -151,7 +148,8 @@ test.describe('homepage preview system', () => {
 });
 
 test.describe('local hover previews', () => {
-  test('hover plays the local clip while it stays on the card', async ({ page, context }) => {
+  test('hover plays the local clip while it stays on the card', async ({ page, context, isMobile }) => {
+    test.skip(isMobile, 'pointer hover is desktop-only; touch long-press is covered by hardening.spec.mjs');
     await page.goto(BASE);
     const card = page.locator('[role="link"][aria-label]').first();
     await expect(card).toBeVisible({ timeout: 15000 });
@@ -193,7 +191,6 @@ test.describe('local hover previews', () => {
 
 test.describe('same-tab navigation from every listing', () => {
   test('listing clicks stay in the current tab (no popup/window)', async ({ page, context }) => {
-    test.skip(!SESSION_TOKEN, 'requires E2E_SESSION_TOKEN for authenticated listings');
     await page.goto(BASE);
     const first = page.locator('[role="link"][aria-label]').first();
     await expect(first).toBeVisible({ timeout: 15000 });
@@ -279,5 +276,24 @@ test.describe('video page', () => {
       // Owned/private videos stream through the normal media player.
       await expect(localPlayer.first()).toBeVisible();
     }
+  });
+});
+
+test.describe('Fix Previews management', () => {
+  test('Settings links to the dedicated page and keeps the other tools', async ({ page }) => {
+    await page.goto(`${BASE}/account/settings`, { waitUntil: 'domcontentloaded' });
+
+    // The old implementation rendered the whole editor inline; the current
+    // Settings page must only link to the dedicated route.
+    await expect(page.locator('#fix-previews')).toHaveCount(0);
+    await expect(page.getByRole('link', { name: /Fix Previews/ })).toBeVisible();
+    await expect(page.getByRole('link', { name: /Repair Thumbnails/ })).toBeVisible();
+    await expect(page.getByRole('link', { name: /Find Duplicates/ })).toBeVisible();
+
+    await page.getByRole('link', { name: /Fix Previews/ }).click();
+    await expect(page).toHaveURL(/\/account\/previews$/);
+    await expect(page.locator('#fix-previews')).toHaveCount(1);
+    await expect(page.getByRole('heading', { name: 'Fix Previews' }).first()).toBeVisible();
+    await expect(page.getByText(/previews ready/)).toBeVisible({ timeout: 20_000 });
   });
 });

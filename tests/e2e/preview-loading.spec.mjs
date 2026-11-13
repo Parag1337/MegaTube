@@ -9,17 +9,15 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { canSignInWithClerk, signInWithClerk } from './clerk-auth.mjs';
 
 const BASE = process.env.E2E_BASE_URL ?? 'http://localhost:3000';
 const META_RE = /\/api\/preview\/(\d+)\/meta\?want=hover$/;
 
-const SESSION_TOKEN = process.env.E2E_SESSION_TOKEN;
-test.beforeEach(async ({ context }) => {
-  if (SESSION_TOKEN) {
-    await context.addCookies([
-      { name: 'session_token', value: SESSION_TOKEN, url: BASE, httpOnly: true, sameSite: 'Lax' },
-    ]);
-  }
+// The fixture library is private; signed-out home has no cards.
+test.beforeEach(async ({ page }) => {
+  test.skip(!canSignInWithClerk(), 'requires CLERK_SECRET_KEY and E2E_CLERK_USER_ID');
+  await signInWithClerk(page);
 });
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -79,14 +77,23 @@ async function cardFirstId(card) {
  * generated clip yet (the same limitation as the main preview suite).
  */
 async function readyCard(page) {
-  const card = firstCard(page);
-  const id = await cardFirstId(card);
-  if (!id) test.skip(true, 'first card has no media id');
-  const res = await page.request.get(`${BASE}/api/preview/${id}/meta?want=hover`);
-  if (!res.ok()) test.skip(true, `preview meta unavailable (${res.status()})`);
-  const meta = await res.json();
-  test.skip(meta.status !== 'ready' || !meta.hover?.url, `preview not ready: ${meta.status}`);
-  return { card, id, url: meta.hover.url };
+  // Home feed order is personalized/random. Scan a bounded set of visible
+  // cards for one whose hover clip already exists so the playback/loading
+  // tests exercise a real cached clip instead of a cold generation race.
+  const cards = page.locator('[role="link"][aria-label]');
+  const count = Math.min(await cards.count(), 12);
+  for (let i = 0; i < count; i++) {
+    const card = cards.nth(i);
+    const id = await cardFirstId(card);
+    if (!id) continue;
+    const res = await page.request.get(`${BASE}/api/preview/${id}/meta?want=hover`);
+    if (!res.ok()) continue;
+    const meta = await res.json();
+    if (meta.status === 'ready' && meta.hover?.url) {
+      return { card, id, url: meta.hover.url };
+    }
+  }
+  test.skip(true, 'no visible card has a ready hover clip');
 }
 
 test.describe('hover preview loading indicator', () => {
@@ -107,7 +114,7 @@ test.describe('hover preview loading indicator', () => {
     await metaRequest;
 
     await expect(badge).toBeVisible({ timeout: 5_000 });
-    await expect(badge).toContainText('Loading preview');
+    await expect(badge).toContainText(/Preparing preview|Loading preview/);
     await expect(badge).toHaveAttribute('role', 'status');
     await expect(badge).toHaveCSS('position', 'absolute');
     await expect(badge).toHaveCSS('pointer-events', 'none');

@@ -18,6 +18,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  previewArtifactCleanupGraceMs,
+  previewArtifactCleanupMaxEntries,
   previewCacheMaxBytes,
   previewEvictionGraceMs,
   previewEvictionIntervalMs,
@@ -132,17 +134,40 @@ export function identityMatches(
   return sidecar.megaNodeId === identity.megaNodeId && sidecar.sourceSize === identity.sourceSize;
 }
 
-/** Delete every preview asset + sidecar for a video (never throws). */
-export async function removePreviewAssets(videoId: number): Promise<void> {
-  await Promise.all([
-    fs.promises.rm(sidecarPath(videoId), { force: true }),
-    fs.promises.rm(clipPath(videoId), { force: true }),
-    fs.promises.rm(spritePath(videoId), { force: true }),
-  ]);
+export interface RemovedPreviewAssets {
+  filesDeleted: number;
+  bytesFreed: number;
+}
+
+/**
+ * Delete every preview asset + sidecar for a video (never throws).
+ *
+ * Returns the number of files that actually existed and were removed, so
+ * administrative reporting (Delete All Previews) never claims to have
+ * deleted artifacts that were already absent.
+ */
+export async function removePreviewAssets(videoId: number): Promise<RemovedPreviewAssets> {
+  const targets = [sidecarPath(videoId), clipPath(videoId), spritePath(videoId)];
+  const removed = await Promise.all(
+    targets.map(async (target) => {
+      try {
+        const st = await fs.promises.stat(target);
+        if (!st.isFile()) return { deleted: false, bytes: 0 };
+        await fs.promises.rm(target, { force: true });
+        return { deleted: true, bytes: st.size };
+      } catch {
+        return { deleted: false, bytes: 0 };
+      }
+    }),
+  );
   pendingTouches.delete(videoId);
   // Artifact availability just changed: the dashboard must not keep
   // reporting the previous completed/missing split for a full TTL.
   invalidatePreviewStatsCache();
+  return {
+    filesDeleted: removed.filter((r) => r.deleted).length,
+    bytesFreed: removed.reduce((sum, r) => sum + r.bytes, 0),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -257,11 +282,37 @@ export function activePreviewReaders(videoId: number): number {
   return activeReaders.get(videoId) ?? 0;
 }
 
+// ---------------------------------------------------------------------------
+// Active generation work-dir registry (P-02)
+// ---------------------------------------------------------------------------
+
+/**
+ * Work dirs owned by live generation jobs in THIS process. The age-based
+ * grace period protects jobs in other processes; this registry additionally
+ * makes an in-process cleanup pass unable to touch a running job even if its
+ * directory mtime is old (clock skew, long acquisition, tests).
+ */
+const activeWorkDirs = new Set<string>();
+
+export function registerPreviewWorkDir(dir: string): void {
+  activeWorkDirs.add(path.resolve(dir));
+}
+
+export function unregisterPreviewWorkDir(dir: string): void {
+  activeWorkDirs.delete(path.resolve(dir));
+}
+
+/** Test/diagnostic hook. */
+export function isPreviewWorkDirActive(dir: string): boolean {
+  return activeWorkDirs.has(path.resolve(dir));
+}
+
 /** Test hook: reset all in-memory eviction state (unit tests only). */
 export function __resetPreviewStoreStateForTests(): void {
   lastTouch.clear();
   pendingTouches.clear();
   activeReaders.clear();
+  activeWorkDirs.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -382,6 +433,223 @@ export async function evictPreviewCache(options?: {
 }
 
 // ---------------------------------------------------------------------------
+// Failed/unpublished artifact cleanup (Phase A / P-02)
+// ---------------------------------------------------------------------------
+
+export interface PreviewArtifactCleanupResult {
+  /** Directory entries inspected in this bounded pass. */
+  scannedEntries: number;
+  removedWorkDirs: number;
+  removedTempFiles: number;
+  removedOrphanClips: number;
+  removedOrphanSprites: number;
+  skippedActive: number;
+  skippedRecent: number;
+  /** Per-entry failures are counted and swallowed; cleanup never throws. */
+  failures: number;
+}
+
+export interface PreviewArtifactCleanupOptions {
+  now?: number;
+  graceMs?: number;
+  maxEntries?: number;
+  /** Restrict the pass to these video ids (targeted post-failure cleanup). */
+  videoIds?: number[];
+  /** Test hook: inject a failing/observable remover. */
+  remove?: (target: string, options: { recursive?: boolean; force?: boolean }) => Promise<void>;
+}
+
+const WORK_DIR_RE = /^(\d+)\.tmp-/;
+/** `<id>.<name>.<pid>.tmp` left by an interrupted atomic write/rename. */
+const ATOMIC_TMP_RE = /^(\d+)\..+\.tmp$/;
+const CLEANUP_CLIP_RE = /^(\d+)\.preview\.mp4$/;
+const CLEANUP_SPRITE_RE = /^(\d+)\.sprite\.jpg$/;
+
+interface FileStat {
+  size: number;
+  mtimeMs: number;
+}
+
+async function statFileOrNull(absPath: string): Promise<FileStat | null> {
+  try {
+    const st = await fs.promises.stat(absPath);
+    return st.isFile() ? { size: st.size, mtimeMs: st.mtimeMs } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reclaim artifacts that can never be served and temporary files left by
+ * failed, aborted or killed generation jobs.
+ *
+ * Safety rules:
+ *  - only names matching the known preview patterns in `data/previews/` are
+ *    considered; nothing outside that directory is scanned or deleted;
+ *  - a conservative age grace (default 30 min > the 10 min job deadline)
+ *    protects live workers in other processes; live work dirs in this
+ *    process are additionally skipped by registry;
+ *  - published clips are deleted only when the sidecar says they cannot be
+ *    served (missing/failed/old hover), never when a current ready hover
+ *    sidecar references them;
+ *  - sprites referenced by a timeline sidecar are preserved even when hover
+ *    generation failed;
+ *  - active preview streams are skipped by the existing refcount;
+ *  - sidecars are never deleted here (only interrupted `.tmp` writes), so
+ *    failure diagnostics and valid timeline metadata survive.
+ *
+ * The pass is bounded, idempotent, and never throws.
+ */
+export async function cleanupFailedPreviewArtifacts(
+  options: PreviewArtifactCleanupOptions = {},
+): Promise<PreviewArtifactCleanupResult> {
+  const now = options.now ?? Date.now();
+  const graceMs = options.graceMs ?? previewArtifactCleanupGraceMs();
+  const cutoff = now - graceMs;
+  const maxEntries = options.maxEntries ?? previewArtifactCleanupMaxEntries();
+  const videoFilter = options.videoIds ? new Set(options.videoIds) : null;
+  const remove =
+    options.remove ?? ((target: string, removeOptions: { recursive?: boolean; force?: boolean }) =>
+      fs.promises.rm(target, removeOptions));
+  const result: PreviewArtifactCleanupResult = {
+    scannedEntries: 0,
+    removedWorkDirs: 0,
+    removedTempFiles: 0,
+    removedOrphanClips: 0,
+    removedOrphanSprites: 0,
+    skippedActive: 0,
+    skippedRecent: 0,
+    failures: 0,
+  };
+
+  let names: string[];
+  try {
+    names = await fs.promises.readdir(previewsDir());
+  } catch {
+    return result;
+  }
+
+  // Bounded even if someone drops thousands of unrelated files in the dir.
+  names.sort();
+  if (names.length > maxEntries) names = names.slice(0, maxEntries);
+  result.scannedEntries = names.length;
+
+  const assetIds = new Set<number>();
+  for (const name of names) {
+    const workDirMatch = WORK_DIR_RE.exec(name);
+    if (workDirMatch) {
+      const videoId = Number(workDirMatch[1]);
+      if (videoFilter && !videoFilter.has(videoId)) continue;
+      const abs = path.join(previewsDir(), name);
+      if (activeWorkDirs.has(path.resolve(abs))) {
+        result.skippedActive++;
+        continue;
+      }
+      try {
+        const st = await fs.promises.stat(abs);
+        if (!st.isDirectory()) continue;
+        if (st.mtimeMs > cutoff) {
+          result.skippedRecent++;
+          continue;
+        }
+        await remove(abs, { recursive: true, force: true });
+        result.removedWorkDirs++;
+      } catch {
+        result.failures++;
+      }
+      continue;
+    }
+
+    const tmpMatch = ATOMIC_TMP_RE.exec(name);
+    if (tmpMatch) {
+      const videoId = Number(tmpMatch[1]);
+      if (videoFilter && !videoFilter.has(videoId)) continue;
+      const abs = path.join(previewsDir(), name);
+      try {
+        const st = await fs.promises.stat(abs);
+        if (!st.isFile() || st.mtimeMs > cutoff) {
+          result.skippedRecent++;
+          continue;
+        }
+        await remove(abs, { force: true });
+        result.removedTempFiles++;
+      } catch {
+        result.failures++;
+      }
+      continue;
+    }
+
+    const assetMatch = CLEANUP_CLIP_RE.exec(name) ?? CLEANUP_SPRITE_RE.exec(name);
+    if (assetMatch) {
+      const videoId = Number(assetMatch[1]);
+      if (videoFilter && !videoFilter.has(videoId)) continue;
+      assetIds.add(videoId);
+    }
+  }
+
+  for (const videoId of assetIds) {
+    if ((activeReaders.get(videoId) ?? 0) > 0) {
+      // A clip/sprite is being streamed right now; never unlink it.
+      result.skippedActive++;
+      continue;
+    }
+
+    const sidecar = await readSidecar(videoId).catch(() => null);
+    const version = previewGenerationVersion();
+    const versionCurrent = sidecar !== null && sidecar.generationVersion === version;
+    const clip = await statFileOrNull(clipPath(videoId));
+    const sprite = await statFileOrNull(spritePath(videoId));
+
+    const clipUnservable =
+      clip !== null &&
+      (!sidecar || !versionCurrent || sidecar.status !== 'ready' || !sidecar.hover);
+    if (clipUnservable) {
+      if (clip.mtimeMs > cutoff) {
+        result.skippedRecent++;
+      } else {
+        try {
+          await remove(clipPath(videoId), { force: true });
+          result.removedOrphanClips++;
+        } catch {
+          result.failures++;
+        }
+      }
+    }
+
+    const spriteUnservable = sprite !== null && (!sidecar || !versionCurrent || !sidecar.timeline);
+    if (spriteUnservable) {
+      if (sprite.mtimeMs > cutoff) {
+        result.skippedRecent++;
+      } else {
+        try {
+          await remove(spritePath(videoId), { force: true });
+          result.removedOrphanSprites++;
+        } catch {
+          result.failures++;
+        }
+      }
+    }
+  }
+
+  if (
+    result.removedWorkDirs > 0 ||
+    result.removedTempFiles > 0 ||
+    result.removedOrphanClips > 0 ||
+    result.removedOrphanSprites > 0
+  ) {
+    console.log(
+      `[preview] artifact cleanup: ${result.removedWorkDirs} work dir(s), ` +
+        `${result.removedTempFiles} temp file(s), ${result.removedOrphanClips} unservable clip(s), ` +
+        `${result.removedOrphanSprites} orphan sprite(s)`,
+    );
+  }
+  if (result.failures > 0) {
+    console.warn(`[preview] artifact cleanup had ${result.failures} recoverable failure(s)`);
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Background scheduling (amortized; mirrors startMediaCacheMaintenance)
 // ---------------------------------------------------------------------------
 
@@ -391,7 +659,12 @@ let evictInFlight = false;
 export function maybeEvictPreviewCache(): void {
   if (evictInFlight) return;
   evictInFlight = true;
-  evictPreviewCache()
+  // P-02: reclaim failed/unpublished artifacts before the LRU pass. Both
+  // operations are bounded and never throw; a cleanup failure must not stop
+  // eviction, and neither runs in the queue worker's critical path.
+  cleanupFailedPreviewArtifacts()
+    .catch(() => {})
+    .then(() => evictPreviewCache())
     .then((r) => {
       if (r.evicted > 0) {
         console.log(

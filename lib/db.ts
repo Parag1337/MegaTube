@@ -7,6 +7,7 @@
  * instance is reused across the app.
  */
 
+import { createHash } from 'node:crypto';
 import { PrismaClient } from '../generated/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
@@ -38,6 +39,24 @@ export function withDbQueryCounter<T>(
 }
 
 const databaseUrl = process.env.DATABASE_URL;
+
+/**
+ * Credential-free identity of the configured database.
+ *
+ * Web and worker logs can compare this value to prove they point at the same
+ * host/port/database without printing any part of DATABASE_URL. Credentials,
+ * query parameters and the password never enter the digest.
+ */
+export function databaseIdentityFingerprint(): string {
+  if (!databaseUrl) return 'unset';
+  try {
+    const url = new URL(databaseUrl);
+    const identity = `${url.hostname}:${url.port || '5432'}${url.pathname}`;
+    return createHash('sha256').update(identity).digest('hex').slice(0, 12);
+  } catch {
+    return 'invalid';
+  }
+}
 
 /** True when DATABASE_URL points somewhere other than this machine. */
 export function isRemoteDatabaseUrl(url: string | undefined): boolean {

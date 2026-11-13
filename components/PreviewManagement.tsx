@@ -61,13 +61,23 @@ function formatAge(ms: number | null): string {
  * enqueue durable jobs; the single bounded worker does the actual work, so
  * pressing these buttons can never start hundreds of ffmpeg processes.
  */
-export function PreviewManagement() {
+export function PreviewManagement({ hideHeader = false }: { hideHeader?: boolean } = {}) {
   const [stats, setStats] = useState<PreviewStats | null>(null);
   const [failures, setFailures] = useState<FailureItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [deleteStarted, setDeleteStarted] = useState(false);
+  const [deleteProgress, setDeleteProgress] = useState<string | null>(null);
   const mountedRef = useRef(true);
+
+  const heading = (
+    <h2 id="preview-heading" className={hideHeader ? 'sr-only' : 'text-[15px] font-semibold'}>
+      Fix Previews
+    </h2>
+  );
 
   const load = useCallback(async () => {
     try {
@@ -86,17 +96,48 @@ export function PreviewManagement() {
     }
   }, []);
 
-  useEffect(() => {
-    mountedRef.current = true;
-    // Deferred a tick so the first fetch never synchronously setState during
-    // the effect body (React 19 lint rule), then refresh on an interval.
-    const initial = setTimeout(() => void load(), 0);
-    const timer = setInterval(() => void load(), POLL_MS);
-    return () => {
-      mountedRef.current = false;
-      clearTimeout(initial);
-      clearInterval(timer);
-    };
+  const deleteAllPreviews = useCallback(async () => {
+    setDeleteStarted(true);
+    setDeleteProgress('Deleting previews…');
+    try {
+      const res = await fetch('/api/preview/admin/delete-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!res.ok) {
+        setDeleteStarted(false);
+        setDeleteProgress(null);
+        setNotice(typeof data.error === 'string' ? data.error : 'Failed to delete previews.');
+        return false;
+      }
+      // The route finishes the deletion before responding, so this result is
+      // the complete, accurate outcome rather than an optimistic estimate.
+      const result = data.result as Record<string, unknown> | undefined;
+      const filesDeleted = (result?.filesDeleted as number) ?? 0;
+      const bytesFreed = (result?.bytesFreed as number) ?? 0;
+      const jobsDeleted = (result?.jobsDeleted as number) ?? 0;
+      const skippedActiveVideos = (result?.skippedActiveVideos as number) ?? 0;
+      setNotice(
+        `Deleted ${filesDeleted} preview artifact(s) (${formatBytes(bytesFreed)}), ` +
+          `removed ${jobsDeleted} queue record(s).` +
+          (skippedActiveVideos > 0
+            ? ` Skipped ${skippedActiveVideos} video(s) that are currently generating or being viewed.`
+            : '') +
+          ' Previews will regenerate on next sync or when you press Generate.',
+      );
+      setDeleteProgress(null);
+      setDeleteStarted(false);
+      setDeleteDialogOpen(false);
+      setDeleteConfirm(false);
+      await load();
+      return true;
+    } catch {
+      setDeleteStarted(false);
+      setDeleteProgress(null);
+      setNotice('Action failed.');
+      return false;
+    }
   }, [load]);
 
   const action = useCallback(
@@ -174,12 +215,23 @@ export function PreviewManagement() {
     [action],
   );
 
+  useEffect(() => {
+    mountedRef.current = true;
+    // Deferred a tick so the first fetch never synchronously setState during
+    // the effect body (React 19 lint rule), then refresh on an interval.
+    const initial = setTimeout(() => void load(), 0);
+    const timer = setInterval(() => void load(), POLL_MS);
+    return () => {
+      mountedRef.current = false;
+      clearTimeout(initial);
+      clearInterval(timer);
+    };
+  }, [load]);
+
   if (error) {
     return (
       <section id="fix-previews" aria-labelledby="preview-heading" className="rounded-2xl border border-border bg-surface p-5 sm:p-6">
-        <h2 id="preview-heading" className="text-[15px] font-semibold">
-          Fix Previews
-        </h2>
+        {heading}
         <p className="mt-1 text-[13px] text-muted">{error}</p>
       </section>
     );
@@ -188,9 +240,7 @@ export function PreviewManagement() {
   if (!stats) {
     return (
       <section id="fix-previews" aria-labelledby="preview-heading" className="rounded-2xl border border-border bg-surface p-5 sm:p-6">
-        <h2 id="preview-heading" className="text-[15px] font-semibold">
-          Fix Previews
-        </h2>
+        {heading}
         <p className="mt-1 text-[13px] text-muted">Loading preview statistics…</p>
       </section>
     );
@@ -201,13 +251,13 @@ export function PreviewManagement() {
 
   return (
     <section id="fix-previews" aria-labelledby="preview-heading" className="rounded-2xl border border-border bg-surface p-5 sm:p-6">
-      <h2 id="preview-heading" className="text-[15px] font-semibold">
-        Fix Previews
-      </h2>
-      <p className="mt-1 text-[13px] text-muted">
-        Find missing, invalid, or outdated previews and generate them in the
-        background, one at a time, even after you leave Settings.
-      </p>
+      {heading}
+      {!hideHeader && (
+        <p className="mt-1 text-[13px] text-muted">
+          Find missing, invalid, or outdated previews and generate them in the
+          background, one at a time, even after you leave Settings.
+        </p>
+      )}
 
       <div className="mt-4">
         <div className="flex items-baseline justify-between text-[13px]">
@@ -288,6 +338,14 @@ export function PreviewManagement() {
         >
           {stats.paused ? 'Resume generation' : 'Pause generation'}
         </button>
+        <button
+          type="button"
+          disabled={busy !== null}
+          onClick={() => { setDeleteDialogOpen(true); setDeleteConfirm(false); setDeleteStarted(false); setDeleteProgress(null); }}
+          className="inline-flex h-9 items-center rounded-full bg-red-600 px-4 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-50"
+        >
+          Delete All Previews
+        </button>
       </div>
 
       <label className="mt-4 flex items-start gap-2 text-[13px]">
@@ -328,6 +386,80 @@ export function PreviewManagement() {
             ))}
           </ul>
         </details>
+      )}
+
+      {/* Delete All Previews Confirmation Dialog */}
+      {deleteDialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" role="dialog" aria-modal="true" aria-labelledby="delete-dialog-title">
+          <div className="bg-surface rounded-2xl p-6 w-full max-w-md mx-4">
+            <h3 id="delete-dialog-title" className="text-lg font-semibold text-foreground mb-4">
+              Delete All Previews?
+            </h3>
+            {!deleteStarted ? (
+              <div className="space-y-4">
+                <p className="text-sm text-muted">
+                  This will permanently delete all generated preview clips, timeline spritesheets,
+                  timeline VTT assets, and preview sidecar metadata for your entire video library.
+                </p>
+                <ul className="space-y-2 text-sm text-muted">
+                  <li>✓ Preview clips (MP4) will be deleted</li>
+                  <li>✓ Timeline spritesheets (JPG) will be deleted</li>
+                  <li>✓ Timeline VTT assets will be deleted</li>
+                  <li>✓ Preview sidecar metadata (JSON) will be deleted</li>
+                  <li>✗ Original MEGA videos will NOT be deleted</li>
+                  <li>✗ Video library records will NOT be deleted</li>
+                  <li>✗ Linked MEGA accounts will NOT be affected</li>
+                </ul>
+                <p className="text-sm text-muted">
+                  Preview generation will need to run again to recreate them. This can be done
+                  manually via <strong>Generate Missing Previews</strong> or automatically on the
+                  next video sync (if auto-generate is enabled).
+                </p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="delete-confirm-checkbox"
+                    onChange={(e) => setDeleteConfirm(e.target.checked)}
+                    className="h-4 w-4 accent-[var(--accent)]"
+                  />
+                  <label htmlFor="delete-confirm-checkbox" className="text-sm text-muted cursor-pointer">
+                    I understand this action cannot be undone
+                  </label>
+                </div>
+                <div className="mt-6 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setDeleteDialogOpen(false); setDeleteConfirm(false); setDeleteStarted(false); setDeleteProgress(null); }}
+                    className="flex-1 h-9 items-center rounded-full bg-surface-raised px-4 text-sm font-medium text-foreground hover:bg-surface-overlay"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!deleteConfirm || deleteStarted}
+                    onClick={() => void deleteAllPreviews()}
+                    className="flex-1 h-9 items-center rounded-full bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                  >
+                    Delete All Previews
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <p className="text-sm text-muted">
+                  {deleteProgress || 'Deleting all previews…'}
+                </p>
+                <div className="h-2 bg-surface-raised rounded-full overflow-hidden">
+                  <div className="h-full bg-red-600 animate-pulse" style={{ width: '100%' }} />
+                </div>
+                <p className="text-xs text-muted">
+                  Keep this tab open until the deletion finishes. Deleting a large library can
+                  take a while.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </section>
   );

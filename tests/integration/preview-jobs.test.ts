@@ -128,13 +128,11 @@ test('bulk scan enqueues one durable job per video lacking an artifact', async (
   assert.ok(rows.every((r) => r.status === 'pending'));
 });
 
-test('claims are atomic and never hand the same job to two workers', async () => {
+test('claims are atomic and only one worker owns the single generation slot', async () => {
   const first = await jobs.claimNextPreviewJob('worker-a', 60_000);
-  const second = await jobs.claimNextPreviewJob('worker-b', 60_000);
   assert.ok(first);
-  assert.ok(second);
-  assert.notEqual(first.id, second.id);
-  assert.notEqual(first.videoId, second.videoId);
+  const second = await jobs.claimNextPreviewJob('worker-b', 60_000);
+  assert.equal(second, null, 'a live lease blocks every other worker, not just the same job');
 
   const firstRow = await prisma.previewGenerationJob.findUnique({ where: { id: first.id } });
   assert.equal(firstRow?.lockedBy, 'worker-a');
@@ -153,10 +151,10 @@ test('claims are atomic and never hand the same job to two workers', async () =>
 
 test('completion requires the worker that owns the lease', async () => {
   const job = await prisma.previewGenerationJob.findFirst({
-    where: { status: 'generating', lockedBy: 'worker-b' },
+    where: { status: 'generating', lockedBy: 'worker-a' },
   });
   assert.ok(job);
-  const ok = await jobs.completePreviewJob(job.id, 'worker-b', 321, {
+  const ok = await jobs.completePreviewJob(job.id, 'worker-a', 321, {
     transferBytes: 1000,
     acquisitionMs: 10,
     ffmpegMs: 20,
@@ -171,7 +169,7 @@ test('completion requires the worker that owns the lease', async () => {
   assert.equal(row?.status, 'completed');
   assert.equal(row?.artifactBytes, 321);
   // The wrong worker must never be able to publish.
-  const again = await jobs.completePreviewJob(job.id, 'worker-a', 1, {
+  const again = await jobs.completePreviewJob(job.id, 'worker-b', 1, {
     transferBytes: 0,
     acquisitionMs: 0,
     ffmpegMs: 0,
@@ -185,11 +183,9 @@ test('completion requires the worker that owns the lease', async () => {
 });
 
 test('transient failure returns to pending with bounded backoff', async () => {
-  const job = await prisma.previewGenerationJob.findFirst({
-    where: { status: 'generating', lockedBy: 'worker-a' },
-  });
+  const job = await jobs.claimNextPreviewJob('worker-b', 60_000);
   assert.ok(job);
-  const outcome = await jobs.failPreviewJob(job.id, 'worker-a', 'download_timeout', 'MEGA timed out', {
+  const outcome = await jobs.failPreviewJob(job.id, 'worker-b', 'download_timeout', 'MEGA timed out', {
     retryable: true,
   });
   assert.equal(outcome.willRetry, true);
@@ -199,6 +195,44 @@ test('transient failure returns to pending with bounded backoff', async () => {
   assert.equal(row?.errorCode, 'download_timeout');
   assert.ok(row?.nextRetryAt && row.nextRetryAt.getTime() > Date.now(), 'backoff is in the future');
   assert.equal(row?.lockedBy, null);
+});
+
+test('attempt exhaustion preserves the specific failure code and message', async () => {
+  const ensured = await jobs.ensurePreviewJob({
+    videoId: videoIds[2],
+    sourceFingerprint: `exhaust-${Date.now()}`,
+  });
+  assert.ok(ensured.jobId);
+  const jobId = ensured.jobId;
+  const maxAttempts = config.previewJobMaxAttempts();
+  await prisma.previewGenerationJob.update({
+    where: { id: jobId },
+    data: {
+      status: 'generating',
+      lockedBy: 'worker-exhaust',
+      attempts: maxAttempts,
+      maxAttempts,
+      leaseExpiresAt: new Date(Date.now() + 60_000),
+    },
+  });
+
+  const outcome = await jobs.failPreviewJob(
+    jobId,
+    'worker-exhaust',
+    'encode_failed',
+    'ffmpeg exited 1: encoder rejected the frame',
+    { retryable: true },
+  );
+  assert.equal(outcome.status, 'failed');
+  assert.equal(outcome.willRetry, false);
+
+  const row = await prisma.previewGenerationJob.findUnique({ where: { id: jobId } });
+  assert.equal(row?.status, 'failed');
+  assert.equal(row?.errorCode, 'encode_failed', 'specific code must survive exhaustion');
+  assert.match(row?.lastError ?? '', /encoder rejected the frame/);
+  assert.notEqual(row?.errorCode, 'max_attempts');
+  assert.equal(row?.attempts, maxAttempts);
+  assert.equal(jobs.autoRetryBlockedError(row?.errorCode), false);
 });
 
 test('expired worker leases are recovered automatically', async () => {
@@ -219,6 +253,26 @@ test('expired worker leases are recovered automatically', async () => {
   assert.equal(row?.status, 'pending');
   assert.equal(row?.lockedBy, null);
   assert.equal(row?.errorCode, 'lease_expired');
+});
+
+test('a generating row without a lease is recovered instead of blocking the slot', async () => {
+  const job = await prisma.previewGenerationJob.findFirst({ where: { status: 'pending' } });
+  assert.ok(job);
+  await prisma.previewGenerationJob.update({
+    where: { id: job.id },
+    data: {
+      status: 'generating',
+      lockedBy: 'dead-worker-no-lease',
+      leaseExpiresAt: null,
+      attempts: 1,
+      recoveryCount: 0,
+    },
+  });
+  await jobs.recoverExpiredPreviewLeases();
+  const row = await prisma.previewGenerationJob.findUnique({ where: { id: job.id } });
+  assert.equal(row?.status, 'pending');
+  assert.equal(row?.errorCode, 'lease_expired');
+  assert.equal(row?.lockedBy, null);
 });
 
 test('unsupported classification is terminal and does not retry', async () => {

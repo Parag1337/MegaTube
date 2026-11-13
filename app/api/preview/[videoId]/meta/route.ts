@@ -10,6 +10,7 @@
 
 import { NextRequest } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
+import { enforcePreviewRateLimit } from '@/lib/preview/rate-limit';
 import { handlePreviewMeta } from '@/lib/preview/service';
 
 export const runtime = 'nodejs';
@@ -17,6 +18,10 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ videoId: string }> }) {
   const user = await getCurrentUser();
+  // P-01: authenticated per-user limit before any video/sidecar/job work.
+  // Keyed by user + scope, never by the requested video id.
+  const limited = user ? enforcePreviewRateLimit(user.id, 'meta') : null;
+  if (limited) return limited;
   const { videoId } = await params;
   return handlePreviewMeta(user?.id ?? null, videoId, {
     want: request.nextUrl.searchParams.get('want'),

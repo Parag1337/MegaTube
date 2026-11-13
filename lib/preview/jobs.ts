@@ -16,14 +16,17 @@ import path from 'node:path';
 import { Prisma } from '@/generated/client';
 import { prisma } from '@/lib/db';
 import {
+  activePreviewReaders,
   clipPath,
   flushPreviewAccessTimes,
   previewsDir,
   readSidecar,
   removePreviewAssets,
   spritePath,
+  cleanupFailedPreviewArtifacts,
 } from './cache';
 import {
+  previewDeleteAllBatchSize,
   previewGenerationVersion,
   previewJobMaxAttempts,
   previewJobMaxRecoveries,
@@ -624,7 +627,19 @@ export interface ClaimedJob {
  */
 export async function claimNextPreviewJob(workerId: string, leaseMs: number): Promise<ClaimedJob | null> {
   const starvationMs = previewJobStarvationMs();
-  const rows = await prisma.$queryRaw<ClaimedJob[]>`WITH next AS (
+  return prisma.$transaction(async (tx) => {
+    // One global generation slot, not one slot per process. Two web/worker
+    // processes can run this transaction at the same time; the advisory lock
+    // serializes the "is anything already generating?" check, and the
+    // NOT EXISTS predicate then refuses the second claim. Without both, a
+    // worker that throws after claiming (e.g. a Prisma validation error)
+    // immediately claims the next row, leaving a whole backlog generating
+    // and forcing lease recovery to clean it up.
+    const [lock] = await tx.$queryRaw<Array<{ locked: boolean }>>`SELECT
+      pg_try_advisory_xact_lock(hashtext('megatube.preview.claim')::bigint) AS locked`;
+    if (!lock?.locked) return null;
+
+    const rows = await tx.$queryRaw<ClaimedJob[]>`WITH next AS (
       SELECT j."id", j."videoId", j."kind", j."sourceFingerprint", j."generationVersion"
       FROM "PreviewGenerationJob" j
       JOIN "Video" v ON v."id" = j."videoId"
@@ -633,6 +648,19 @@ export async function claimNextPreviewJob(workerId: string, leaseMs: number): Pr
       WHERE j."status" IN ('pending', 'queued')
         AND j."nextRetryAt" <= ${utcNow}
         AND u."previewPaused" = false
+        -- A revoked session cannot generate previews; keep the durable
+        -- backlog pending until the owner reconnects instead of burning
+        -- attempts against guaranteed failures.
+        AND a."status" NOT IN ('DISCONNECTED', 'REAUTH_REQUIRED')
+        -- Do not claim a second job while any process still owns a live
+        -- generation lease. An expired lease is recovered before the next
+        -- claim attempt by the worker tick.
+        AND NOT EXISTS (
+          SELECT 1 FROM "PreviewGenerationJob" active
+          WHERE active."status" = 'generating'
+            AND active."leaseExpiresAt" IS NOT NULL
+            AND active."leaseExpiresAt" >= ${utcNow}
+        )
       ORDER BY
         CASE WHEN j."queuedAt" < ${utcNow} - (${starvationMs} * interval '1 millisecond')
              THEN 1 ELSE 0 END DESC,
@@ -653,14 +681,15 @@ export async function claimNextPreviewJob(workerId: string, leaseMs: number): Pr
     WHERE j."id" = next."id"
     RETURNING j."id", j."videoId", j."kind", j."sourceFingerprint", j."generationVersion",
               j."claimCount", j."attempts", j."recoveryCount"`;
-  if (rows.length === 0) return null;
-  const job = rows[0];
-  return {
-    ...job,
-    claimCount: Number(job.claimCount),
-    attempts: Number(job.attempts),
-    recoveryCount: Number(job.recoveryCount),
-  };
+    if (rows.length === 0) return null;
+    const job = rows[0];
+    return {
+      ...job,
+      claimCount: Number(job.claimCount),
+      attempts: Number(job.attempts),
+      recoveryCount: Number(job.recoveryCount),
+    };
+  });
 }
 
 /**
@@ -736,8 +765,10 @@ export async function recoverExpiredPreviewLeases(): Promise<number> {
         "stage" = NULL,
         "updatedAt" = ${utcNow}
     WHERE j."status" = 'generating'
-      AND j."leaseExpiresAt" IS NOT NULL
-      AND j."leaseExpiresAt" < ${utcNow}`;
+      -- A generating row without a lease cannot be alive: the claim that made
+      -- it generating always writes a lease atomically. Treat it as abandoned
+      -- rather than letting it block the global generation slot forever.
+      AND (j."leaseExpiresAt" IS NULL OR j."leaseExpiresAt" < ${utcNow})`;
   if (result > 0) {
     invalidatePreviewStatsCache();
     console.log(`[preview] recovered ${result} abandoned preview job(s)`);
@@ -1236,6 +1267,104 @@ export function __resetPreviewJobsForTests(): void {
 /** Test-only helper used by diagnostics; never exposes paths/URLs. */
 export function previewSpritePath(videoId: number): string {
   return spritePath(videoId);
+}
+
+/**
+ * Delete all preview artifacts and reset queue for a user's entire library.
+ *
+ * Scopes the operation to the authenticated user's videos only.
+ * Removes all preview artifacts (clips, spritesheets, VTT, sidecars) and resets
+ * the preview job queue for those videos. Active workers are safely handled.
+ */
+export async function deleteAllUserPreviews(userId: string): Promise<{
+  filesDeleted: number;
+  bytesFreed: number;
+  jobsDeleted: number;
+  skippedActiveVideos: number;
+}> {
+  const batchSize = previewDeleteAllBatchSize();
+  let cursor = 0;
+  let filesDeleted = 0;
+  let bytesFreed = 0;
+  let jobsDeleted = 0;
+  let skippedActiveVideos = 0;
+
+  // Process bounded batches. A library can contain thousands of videos; one
+  // giant IN-list + transaction would hold locks and build an oversized
+  // parameter list. Cursor pagination also lets the route return progress
+  // without re-scanning earlier rows.
+  for (;;) {
+    const videos = await prisma.video.findMany({
+      where: { megaAccount: { userId }, id: { gt: cursor } },
+      select: { id: true },
+      orderBy: { id: 'asc' },
+      take: batchSize,
+    });
+    if (videos.length === 0) break;
+    cursor = videos[videos.length - 1].id;
+    const videoIds = videos.map((v) => v.id);
+
+    // Serialize against the durable worker. The claim query uses
+    // FOR UPDATE SKIP LOCKED, so rows locked here cannot be claimed while
+    // the deletion transaction runs. A job already in `generating` belongs
+    // to a live worker: its video is skipped entirely (artifact + job)
+    // rather than deleting the row out from under the encoder.
+    const batch = await prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<Array<{ id: number; videoId: number; status: string }>>(
+        Prisma.sql`SELECT "id", "videoId", "status"
+          FROM "PreviewGenerationJob"
+          WHERE "videoId" IN (${Prisma.join(videoIds)})
+          FOR UPDATE`,
+      );
+      const active = new Set<number>();
+      for (const job of locked) {
+        if (job.status === 'generating') active.add(Number(job.videoId));
+      }
+      // A local active stream must not have its files unlinked. (This is
+      // process-local; see the cross-process limitation in the audit report.)
+      for (const id of videoIds) {
+        if (activePreviewReaders(id) > 0) active.add(id);
+      }
+      const deletable = videoIds.filter((id) => !active.has(id));
+      if (deletable.length === 0) {
+        return { deletableVideoIds: deletable, jobsDeleted: 0, skippedActiveVideos: active.size };
+      }
+      const deleted = await tx.previewGenerationJob.deleteMany({
+        where: { videoId: { in: deletable } },
+      });
+      return {
+        deletableVideoIds: deletable,
+        jobsDeleted: deleted.count,
+        skippedActiveVideos: active.size,
+      };
+    });
+
+    jobsDeleted += batch.jobsDeleted;
+    skippedActiveVideos += batch.skippedActiveVideos;
+
+    // Delete only known preview artifacts for the deletable videos. The
+    // cache helper reports what actually existed, so partial failures and
+    // already-absent files are reflected honestly.
+    for (const videoId of batch.deletableVideoIds) {
+      try {
+        const removed = await removePreviewAssets(videoId);
+        filesDeleted += removed.filesDeleted;
+        bytesFreed += removed.bytesFreed;
+      } catch {
+        // Continue on individual failures; the response reports the rest.
+      }
+    }
+
+    // Reclaim interrupted work dirs / temp files belonging to these videos.
+    if (batch.deletableVideoIds.length > 0) {
+      await cleanupFailedPreviewArtifacts({ videoIds: batch.deletableVideoIds });
+    }
+  }
+
+  // Invalidate stats cache so the dashboard reflects the deletion now.
+  invalidatePreviewStatsCache();
+
+  return { filesDeleted, bytesFreed, jobsDeleted, skippedActiveVideos };
 }
 
 /** Test-only helper: path of a preview artifact, for filesystem assertions. */

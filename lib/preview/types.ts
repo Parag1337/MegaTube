@@ -51,6 +51,13 @@ export interface TimelinePreviewInfo {
   intervalSec: number;
   /** Usable cells (rows×cols grid may have blank padding cells). */
   count: number;
+  /**
+   * Absolute source timestamps for cells whose cadence is not uniform.
+   * Cold-source timelines reuse the already-acquired hover windows, so
+   * their cells are deliberately irregular. Absent means the regular
+   * `k * intervalSec` grid.
+   */
+  times?: number[];
 }
 
 export interface PreviewMetrics {

@@ -551,6 +551,15 @@ export function sceneSignatureDistance(a: number[], b: number[]): number {
   return sum / n;
 }
 
+/**
+ * Video codecs this ffmpeg build cannot decode AT ALL (native h264/hevc/vc1/
+ * vvc decoders are compiled out; h264 is rescued by libopenh264, hevc/vc1/vvc
+ * are not). Probing metadata works, but no frame can ever be decoded. When a
+ * source reports one of these, failing fast with `unsupported_codec` is
+ * honest — three attempts would burn MEGA bandwidth for nothing.
+ */
+export const UNDECODABLE_VIDEO_CODECS = new Set(['hevc', 'h265', 'vc1', 'vvc']);
+
 /** A frame is "usable" above this mean brightness (mirrors THUMB_BRIGHTNESS_MIN). */
 export const PREVIEW_BRIGHTNESS_MIN = 12;
 
@@ -598,12 +607,113 @@ export async function encodeSprite(opts: EncodeSpriteOptions): Promise<{ ok: boo
     '-frames:v', '1',
     '-vf',
     `fps=1/${opts.intervalSec},scale=${opts.tileW}:${opts.tileH}:force_original_aspect_ratio=decrease,` +
-      `pad=${opts.tileW}:${opts.tileH}:-1:-1:black,tile=${opts.cols}x${opts.rows}`,
+      `pad=${opts.tileW}:${opts.tileH}:-1:-1:black,tile=${opts.cols}x${opts.rows},format=yuvj420p`,
     '-c:v', 'mjpeg',
     '-q:v', '4',
     '-f', 'image2',
     '-y', opts.outPath,
   ];
+  const run = await runFfmpeg(args, opts.timeoutMs, false, opts.signal);
+  const ok = run.code === 0;
+  return { ok, detail: ok ? 'encoded' : summarizeRun(run) };
+}
+
+export interface ExtractFrameOptions {
+  inputPath: string;
+  /** Input-side seek (absolute for MP4, window-relative for TS). */
+  seekSec: number;
+  tileW: number;
+  tileH: number;
+  outPath: string;
+  timeoutMs: number;
+  signal?: AbortSignal;
+}
+
+/**
+ * Extract one timeline cell from an already-acquired source window.
+ *
+ * This is the cold-source counterpart to `encodeSprite`: it never asks for
+ * the whole video, it decodes one frame at a time from the bounded windows
+ * the hover pass already downloaded. Frames that land outside the acquired
+ * window simply fail and are skipped by the caller.
+ */
+export async function extractFrameJpeg(
+  opts: ExtractFrameOptions,
+): Promise<{ ok: boolean; detail: string }> {
+  const args: string[] = [];
+  if (opts.seekSec > 0) args.push('-ss', opts.seekSec.toFixed(3));
+  args.push(
+    '-i', opts.inputPath,
+    '-frames:v', '1',
+    '-vf',
+    `scale=${opts.tileW}:${opts.tileH}:force_original_aspect_ratio=decrease,` +
+      `pad=${opts.tileW}:${opts.tileH}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1`,
+    '-an',
+    '-c:v', 'mjpeg',
+    '-q:v', '4',
+    '-f', 'image2',
+    '-y', opts.outPath,
+  );
+  const run = await runFfmpeg(args, opts.timeoutMs, false, opts.signal);
+  const ok = run.code === 0;
+  return { ok, detail: ok ? 'encoded' : summarizeRun(run) };
+}
+
+export interface TileFramesOptions {
+  /** Pre-scaled JPEG cells, in playback order. */
+  imagePaths: string[];
+  tileW: number;
+  tileH: number;
+  cols: number;
+  rows: number;
+  outPath: string;
+  timeoutMs: number;
+  signal?: AbortSignal;
+}
+
+/**
+ * Tile already-extracted frame JPEGs into one spritesheet. Used for cold
+ * sources whose cells come from several acquired windows (and therefore
+ * cannot be produced by a single-pass `fps`/`tile` filter over one file).
+ */
+export async function encodeSpriteFromFrames(
+  opts: TileFramesOptions,
+): Promise<{ ok: boolean; detail: string }> {
+  if (opts.imagePaths.length === 0) return { ok: false, detail: 'no sprite frames' };
+  const scalePad =
+    `scale=${opts.tileW}:${opts.tileH}:force_original_aspect_ratio=decrease,` +
+    `pad=${opts.tileW}:${opts.tileH}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1`;
+
+  const args: string[] = [];
+  for (const imagePath of opts.imagePaths) args.push('-i', imagePath);
+
+  if (opts.imagePaths.length === 1) {
+    args.push(
+      '-frames:v', '1',
+      '-vf', scalePad,
+      '-c:v', 'mjpeg',
+      '-q:v', '4',
+      '-f', 'image2',
+      '-y', opts.outPath,
+    );
+  } else {
+    const labels = opts.imagePaths.map((_, i) => `[${i}:v]${scalePad}[v${i}]`);
+    const layout = opts.imagePaths
+      .map((_, i) => `${(i % opts.cols) * opts.tileW}_${Math.floor(i / opts.cols) * opts.tileH}`)
+      .join('|');
+    const inputs = opts.imagePaths.map((_, i) => `[v${i}]`).join('');
+    const filter = `${labels.join(';')};${inputs}xstack=inputs=${opts.imagePaths.length}:layout=${layout}:fill=black[out]`;
+    args.push(
+      '-filter_complex', filter,
+      '-map', '[out]',
+      '-frames:v', '1',
+      '-c:v', 'mjpeg',
+      '-q:v', '4',
+      '-f', 'image2',
+      '-y', opts.outPath,
+    );
+  }
+
   const run = await runFfmpeg(args, opts.timeoutMs, false, opts.signal);
   const ok = run.code === 0;
   return { ok, detail: ok ? 'encoded' : summarizeRun(run) };

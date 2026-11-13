@@ -94,7 +94,7 @@ export default async function AccountPage() {
               body="Free up MEGA storage by removing duplicate videos"
             />
             <LibraryRow
-              href="/account/settings#fix-previews"
+              href="/account/previews"
               icon={<SparklesIcon className="h-[20px] w-[20px]" />}
               title="Fix previews"
               body="Generate missing, invalid, or outdated video previews"

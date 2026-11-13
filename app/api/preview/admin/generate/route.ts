@@ -3,6 +3,7 @@ import { getCurrentUser } from '@/lib/auth';
 import { canManagePreviews } from '@/lib/preview/admin';
 import { ensureMissingPreviewJobs } from '@/lib/preview/jobs';
 import { previewPriorityManual } from '@/lib/preview/config';
+import { enforcePreviewRateLimit } from '@/lib/preview/rate-limit';
 
 /**
  * Phase 5.1: "Generate Missing Previews".
@@ -24,6 +25,9 @@ export async function POST() {
     if (!canManagePreviews(user)) {
       return NextResponse.json({ error: 'Not authorized.' }, { status: 403 });
     }
+    // Whole-library scan: the most expensive preview endpoint.
+    const limited = enforcePreviewRateLimit(user.id, 'admin-generate');
+    if (limited) return limited;
 
     const result = await ensureMissingPreviewJobs({
       userId: user.id,

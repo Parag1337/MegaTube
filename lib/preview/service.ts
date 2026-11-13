@@ -34,6 +34,7 @@ import {
   writeSidecarAtomic,
 } from './cache';
 import {
+  previewColdTimelineScenes,
   previewDisabled,
   previewFfmpegTimeoutMs,
   previewMaxHeapRatio,
@@ -41,6 +42,7 @@ import {
   previewGenerationConfig,
   previewGenerationVersion,
   previewMontageMaxFileBytes,
+  previewMontageMaxRanges,
   previewPriorityHover,
   previewSceneAlternatives,
   previewSpriteCols,
@@ -52,15 +54,19 @@ import {
   brightnessVerdict,
   encodeMontage,
   encodeSprite,
+  encodeSpriteFromFrames,
+  extractFrameJpeg,
   probeMedia,
   probeSceneSample,
   sceneSignatureDistance,
   validateMontageFile,
+  UNDECODABLE_VIDEO_CODECS,
   type MontageInput,
 } from './ffmpeg';
 import { PreviewQueue, previewQueueSingleton } from './queue';
 import {
   buildSpriteVtt,
+  compareScenesByStart,
   montageCanvas,
   outputFps,
   planMontage,
@@ -92,6 +98,7 @@ import type {
   OwnedVideo,
   PreviewMetrics,
   PreviewSidecar,
+  TimelinePreviewInfo,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -236,6 +243,153 @@ function toTileH(tileW: number): number {
 /** In-memory cooldown for timeline failures (cheap, restart clears it). */
 const timelineCooldown = new Map<number, number>();
 
+interface TimelineFrame {
+  path: string;
+  /** Absolute source timestamp represented by this cell. */
+  timeSec: number;
+}
+
+interface TimelineSelectedScene {
+  input: MontageInput;
+  /** Absolute planned scene start. */
+  startSec: number;
+  sceneIndex: number;
+}
+
+interface TimelineSourceSegment {
+  index: number;
+  /** Absolute start of the acquired window. */
+  startSec: number;
+  /** Seek relative to the window (TS) or absolute source time (MP4). */
+  seekSec: number;
+}
+
+/**
+ * Encode the final spritesheet from already-extracted cells. Cells may come
+ * from different acquired windows; `times` records their exact absolute
+ * positions so the VTT does not pretend they are a uniform grid.
+ */
+async function encodeTimelineSpriteFromFrames(
+  videoId: number,
+  frames: TimelineFrame[],
+  durationSec: number,
+  workDir: string,
+  timeoutMs: number,
+  signal: AbortSignal | undefined,
+): Promise<{ ok: boolean; detail: string; info?: TimelinePreviewInfo; ffmpegMs: number }> {
+  if (frames.length === 0) return { ok: false, detail: 'no timeline frames', ffmpegMs: 0 };
+  const sorted = [...frames].sort((a, b) => a.timeSec - b.timeSec);
+  const tileW = previewSpriteTileW();
+  const tileH = toTileH(tileW);
+  const cols = previewSpriteCols();
+  const rows = Math.ceil(sorted.length / cols);
+  const tmpOut = path.join(workDir, 'sprite.tmp.jpg');
+  const t0 = Date.now();
+  const encoded = await encodeSpriteFromFrames({
+    imagePaths: sorted.map((f) => f.path),
+    tileW,
+    tileH,
+    cols,
+    rows,
+    outPath: tmpOut,
+    timeoutMs,
+    signal,
+  });
+  const ffmpegMs = Date.now() - t0;
+  if (!encoded.ok) return { ok: false, detail: encoded.detail, ffmpegMs };
+  try {
+    const st = await fs.promises.stat(tmpOut);
+    if (!st.isFile() || st.size <= 0) {
+      return { ok: false, detail: 'sprite empty', ffmpegMs };
+    }
+    await fs.promises.rename(tmpOut, spritePath(videoId));
+  } catch (err) {
+    return { ok: false, detail: sanitizeFailureDetail(err), ffmpegMs };
+  }
+  return {
+    ok: true,
+    detail: 'generated',
+    ffmpegMs,
+    info: {
+      tileW,
+      tileH,
+      cols,
+      rows,
+      intervalSec: Math.max(1, Math.round(durationSec / sorted.length)),
+      count: sorted.length,
+      times: sorted.map((f) => Number(f.timeSec.toFixed(3))),
+    },
+  };
+}
+
+/**
+ * Extract timeline cells from acquired scene windows. No MEGA request is
+ * made here: every path is already local. Offsets let the hover pass reuse
+ * its ~9 s windows for several cells instead of one.
+ */
+async function extractTimelineFramesFromSelected(
+  selected: TimelineSelectedScene[],
+  segments: TimelineSourceSegment[],
+  durationSec: number,
+  workDir: string,
+  offsets: number[],
+  timeoutMs: number,
+  signal: AbortSignal | undefined,
+  now: () => number,
+): Promise<{ frames: TimelineFrame[]; ffmpegMs: number }> {
+  const frames: TimelineFrame[] = [];
+  let ffmpegMs = 0;
+  for (const item of selected) {
+    const segment = segments.find((s) => s.index === item.sceneIndex);
+    if (!segment) continue;
+    const baseAbs = segment.startSec + (item.input.seekSec - segment.seekSec);
+    for (const offset of offsets) {
+      // A window can end a little before the nominal scene point (especially
+      // the final window at EOF). Retry a couple of seconds earlier inside
+      // the same acquired bytes before giving up on the cell.
+      for (const delta of [0, -1, -2]) {
+        const candidate = offset + delta;
+        const abs = baseAbs + candidate;
+        const seek = item.input.seekSec + candidate;
+        if (seek < 0 || abs < 0 || abs >= durationSec - 0.05) continue;
+        if (frames.some((f) => Math.abs(f.timeSec - abs) < 0.5)) continue;
+        const out = path.join(workDir, `timeline-frame-${frames.length}.jpg`);
+        const t0 = now();
+        const extracted = await extractFrameJpeg({
+          inputPath: item.input.path,
+          seekSec: seek,
+          tileW: previewSpriteTileW(),
+          tileH: toTileH(previewSpriteTileW()),
+          outPath: out,
+          timeoutMs,
+          signal,
+        });
+        ffmpegMs += now() - t0;
+        if (!extracted.ok) {
+          await fs.promises.rm(out, { force: true }).catch(() => {});
+          if (delta === -2) {
+            console.warn(
+              `${GENERATION_LOG_PREFIX} timeline cell miss abs=${abs.toFixed(1)} ` +
+                `seek=${seek.toFixed(1)}: ${extracted.detail}`,
+            );
+          }
+          continue;
+        }
+        frames.push({ path: out, timeSec: abs });
+        break;
+      }
+    }
+  }
+  frames.sort((a, b) => a.timeSec - b.timeSec);
+  // Hover scenes start at ~10% of the duration. Let the first cell cover
+  // from 0 so the VTT has no dead thumbnail gap at the start; the last cell
+  // similarly covers the tail to the true duration.
+  if (frames.length > 0 && frames[0].timeSec > 0 && frames[0].timeSec <= durationSec * 0.15) {
+    frames[0] = { ...frames[0], timeSec: 0 };
+  }
+  return { frames, ffmpegMs };
+}
+
 // ---------------------------------------------------------------------------
 // Generation
 // ---------------------------------------------------------------------------
@@ -273,6 +427,21 @@ function classifyGenerationError(input: unknown): {
     return { code: 'job_timeout', retryable: true, unsupported: false };
   }
   if (text.includes('source size unknown')) return { code: 'source_size_unknown', retryable: false, unsupported: false };
+  // Acquisition timeouts are network failures, not encoder failures. The
+  // generic `timeout` branch below is for ffmpeg/probe deadlines.
+  if (text.includes('preview source fetch timed out') || text.includes('mega api request timed out')) {
+    return { code: 'download_timeout', retryable: true, unsupported: false };
+  }
+  // A rejected/revoked MEGA session cannot be fixed by retrying the same
+  // stored credentials. Fail once and let the owner reconnect instead of
+  // burning the full attempt budget on guaranteed failures.
+  if (
+    text.includes('session expired') ||
+    text.includes('session could not be decrypted') ||
+    text.includes('reconnect required')
+  ) {
+    return { code: 'source_unavailable', retryable: false, unsupported: false };
+  }
   if (text.includes('unsupported') || text.includes('unknown decoder') || text.includes('invalid data')) {
     return { code: 'unsupported_codec', retryable: false, unsupported: true };
   }
@@ -282,7 +451,7 @@ function classifyGenerationError(input: unknown): {
   if (text.includes('timeout') || text.includes('timed out')) {
     return { code: 'ffmpeg_timeout', retryable: true, unsupported: false };
   }
-  if (text.includes('ciphertext fetch failed') || text.includes('source unavailable')) {
+  if (text.includes('ciphertext fetch failed') || text.includes('ciphertext fetch truncated') || text.includes('source unavailable')) {
     return { code: 'download_failed', retryable: true, unsupported: false };
   }
   if (text.includes('output too large')) return { code: 'output_too_large', retryable: true, unsupported: false };
@@ -360,6 +529,10 @@ export async function generateHoverForWorker(
   let acquisitionMs = 0;
   const workDir = await createWorkDir(videoId);
   let sidecar: PreviewSidecar | null = null;
+  // A valid timeline can outlive a missing hover clip. Keep it across the
+  // hover regeneration so a dense warm-cache sprite is never downgraded to
+  // the coarser window-reuse sprite.
+  let preservedTimeline: TimelinePreviewInfo | null = null;
   try {
     sidecar = await readSidecar(videoId);
     if (sidecar) {
@@ -367,12 +540,15 @@ export async function generateHoverForWorker(
         // Old-format or changed-source artifact: never serve it as current.
         await removePreviewAssets(videoId).catch(() => {});
         sidecar = null;
-      } else if (sidecar.status === 'ready' && sidecar.hover) {
-        const clip = await fileReadable(clipPath(videoId));
-        if (clip.ok) {
-          return { ok: true, detail: 'already ready', metrics: sidecar.metrics ?? undefined };
+      } else {
+        preservedTimeline = sidecar.timeline ?? null;
+        if (sidecar.status === 'ready' && sidecar.hover) {
+          const clip = await fileReadable(clipPath(videoId));
+          if (clip.ok) {
+            return { ok: true, detail: 'already ready', metrics: sidecar.metrics ?? undefined };
+          }
+          sidecar = null; // asset vanished (eviction/restart): regenerate
         }
-        sidecar = null; // asset vanished (eviction/restart): regenerate
       }
     }
 
@@ -462,6 +638,17 @@ export async function generateHoverForWorker(
         retryable: false,
       };
     }
+    // No decoder exists for these on this host — fail fast and honest
+    // instead of burning three attempts and ~75 MB of MEGA traffic.
+    if (sourceProbe.codec && UNDECODABLE_VIDEO_CODECS.has(sourceProbe.codec.toLowerCase())) {
+      return {
+        ok: false,
+        detail: `source codec ${sourceProbe.codec} cannot be decoded on this host`,
+        errorCode: 'unsupported_codec',
+        retryable: false,
+        unsupported: true,
+      };
+    }
     const canvas = montageCanvas(sourceProbe.width, sourceProbe.height, cfg);
     const fps = outputFps(sourceProbe.fps, cfg.fpsCap);
 
@@ -470,6 +657,8 @@ export async function generateHoverForWorker(
       scene: MontagePlan['scenes'][number];
       input: MontageInput;
       sample: NonNullable<Awaited<ReturnType<typeof probeSceneSample>>>;
+      /** Absolute timeline position; the only cross-segment ordering key. */
+      startSec: number;
     }> = [];
     const signatures: number[][] = [];
     for (const scene of plan.scenes) {
@@ -510,7 +699,7 @@ export async function generateHoverForWorker(
       }
       const chosen = usable ?? best;
       if (!chosen) continue;
-      selected.push({ scene, input: chosen.input, sample: chosen.sample });
+      selected.push({ scene, input: chosen.input, sample: chosen.sample, startSec: scene.startSec });
       signatures.push(chosen.sample.signature);
     }
     if (selected.length === 0) {
@@ -521,8 +710,61 @@ export async function generateHoverForWorker(
         retryable: true,
       };
     }
-    // Chronological order, independent of the percentage ladder index.
-    selected.sort((a, b) => a.input.seekSec - b.input.seekSec);
+    // Chronological order by absolute source position. `input.seekSec` is
+    // window-relative for TS segments (usually 0), so sorting by it made
+    // known-duration TS montages jump backwards in time.
+    selected.sort(compareScenesByStart);
+
+    // Cold-source timeline: reuse the exact windows just acquired for the
+    // hover montage. A 9 s window can yield several cells, so this adds no
+    // MEGA traffic and no permanent copy of the source. A warm-cache
+    // timeline (if already present) is kept as-is; the denser single-pass
+    // sprite is generated by generateTimeline() when playback warms the cache.
+    let timelineInfo: TimelinePreviewInfo | null = sidecar?.timeline ?? preservedTimeline;
+    if (timelineInfo) {
+      const existingSprite = await fileReadable(spritePath(videoId));
+      if (!existingSprite.ok) timelineInfo = null;
+    }
+    if (!timelineInfo && planDuration !== null && planDuration > 0 && selected.length > 0) {
+      opts?.onStage?.('timeline');
+      const extracted = await extractTimelineFramesFromSelected(
+        selected.map((s) => ({
+          input: s.input,
+          startSec: s.startSec,
+          sceneIndex: s.scene.index,
+        })),
+        source.segments,
+        planDuration,
+        workDir,
+        [0, 3, 6],
+        timeoutMs,
+        opts?.signal,
+        deps.now,
+      );
+      ffmpegMs += extracted.ffmpegMs;
+      if (extracted.frames.length > 0) {
+        const timeline = await encodeTimelineSpriteFromFrames(
+          videoId,
+          extracted.frames,
+          planDuration,
+          workDir,
+          timeoutMs,
+          opts?.signal,
+        );
+        ffmpegMs += timeline.ffmpegMs;
+        if (timeline.ok && timeline.info) {
+          timelineInfo = timeline.info;
+          console.log(
+            `${GENERATION_LOG_PREFIX} timeline ready video ${videoId} cells=${timeline.info.count} ` +
+              `source=windows`,
+          );
+        } else {
+          console.warn(
+            `${GENERATION_LOG_PREFIX} timeline skipped video ${videoId}: ${sanitizeFailureDetail(timeline.detail)}`,
+          );
+        }
+      }
+    }
 
     opts?.onStage?.('encoding');
     const tmpOut = path.join(workDir, 'montage.tmp.mp4');
@@ -636,7 +878,7 @@ export async function generateHoverForWorker(
         scenes,
         faststart: validated.faststart,
       },
-      timeline: sidecar?.timeline ?? null,
+      timeline: timelineInfo,
       attempts: 0,
       lastError: null,
       failedAt: null,
@@ -683,19 +925,27 @@ export async function generateHoverForWorker(
  * Missing warm cache is a STATE (no sidecar failure, no attempts); hard
  * failures cool down in-memory only.
  */
+/**
+ * Generate a timeline sprite.
+ *
+ * Preferred path: the warm remux cache (full local MP4) gives the dense
+ * single-pass 100-cell sprite. When playback has not warmed the cache, fall
+ * back to a bounded set of MEGA windows acquired through the same merged
+ * range machinery as hover scenes. The fallback never downloads the whole
+ * video and reuses the preview acquisition budget.
+ */
 async function generateTimeline(video: PreviewVideoRow, deps: PreviewServiceDeps): Promise<HoverOutcome> {
   const videoId = video.id;
   const sourceSize = video.fileSize !== null ? Number(video.fileSize) : null;
-  if (sourceSize === null) return { ok: false, detail: 'source-not-local' };
+  if (sourceSize === null || !video.megaNodeId) return { ok: false, detail: 'source-size-unknown' };
+  console.log(`${GENERATION_LOG_PREFIX} timeline start video ${videoId} size=${sourceSize}`);
 
-  const warm = await deps.readWarmCache(videoId, video.megaNodeId as string, sourceSize);
-  if (!warm) return { ok: false, detail: 'source-not-local' };
-
-  let sidecar = await readSidecar(videoId);
+  const sidecar = await readSidecar(videoId);
   if (sidecar && sidecar.status === 'ready' && sidecar.timeline) {
     const sprite = await fileReadable(spritePath(videoId));
     if (sprite.ok) return { ok: true, detail: 'already ready' };
-    sidecar = null;
+    // Keep the sidecar (and its hover metadata) but replace the missing
+    // timeline below. Never null it out here: that would erase a valid hover.
   }
 
   const cooldownUntil = timelineCooldown.get(videoId) ?? 0;
@@ -704,53 +954,166 @@ async function generateTimeline(video: PreviewVideoRow, deps: PreviewServiceDeps
   const timeoutMs = previewFfmpegTimeoutMs();
   const workDir = await createWorkDir(videoId);
   try {
-    // Duration: DB first (trusted enough for a sprite grid), ffprobe of the
-    // local file as the authority when the DB has none.
     let durationSec = video.duration !== null && video.duration > 0 ? video.duration : null;
     let ffmpegMs = 0;
-    if (durationSec === null) {
+    let timelineInfo: TimelinePreviewInfo | null = null;
+    const warm = await deps.readWarmCache(videoId, video.megaNodeId, sourceSize);
+    console.log(
+      `${GENERATION_LOG_PREFIX} timeline source video ${videoId} warm=${warm ? 'yes' : 'no'} ` +
+        `duration=${durationSec ?? 'unknown'}`,
+    );
+
+    if (warm) {
+      if (durationSec === null) {
+        const t0 = deps.now();
+        const probe = await probeMedia(warm.path, timeoutMs);
+        ffmpegMs += deps.now() - t0;
+        durationSec = probe?.durationSec ?? null;
+      }
+      if (durationSec === null) {
+        timelineCooldown.set(videoId, deps.now() + previewFailureCooldownMs());
+        return { ok: false, detail: 'unknown-duration' };
+      }
+      const tileW = previewSpriteTileW();
+      const tileH = toTileH(tileW);
+      const plan = spritePlan(durationSec, tileW, previewSpriteCols(), previewSpriteMaxTiles(), previewSpriteMinIntervalSec());
+      const tmpOut = path.join(workDir, 'sprite.tmp.jpg');
       const t0 = deps.now();
-      const probe = await probeMedia(warm.path, timeoutMs);
+      const encoded = await encodeSprite({
+        inputPath: warm.path,
+        intervalSec: plan.intervalSec,
+        tileW,
+        tileH,
+        cols: plan.cols,
+        rows: plan.rows,
+        outPath: tmpOut,
+        timeoutMs,
+      });
       ffmpegMs += deps.now() - t0;
-      durationSec = probe?.durationSec ?? null;
-    }
-    if (durationSec === null) {
-      timelineCooldown.set(videoId, deps.now() + previewFailureCooldownMs());
-      return { ok: false, detail: 'unknown-duration' };
+      if (!encoded.ok) {
+        timelineCooldown.set(videoId, deps.now() + previewFailureCooldownMs());
+        return { ok: false, detail: `sprite encode failed (${encoded.detail})` };
+      }
+      const st = await fs.promises.stat(tmpOut);
+      if (st.size <= 0) {
+        timelineCooldown.set(videoId, deps.now() + previewFailureCooldownMs());
+        return { ok: false, detail: 'sprite empty' };
+      }
+      await fs.promises.rename(tmpOut, spritePath(videoId));
+      timelineInfo = {
+        tileW,
+        tileH,
+        cols: plan.cols,
+        rows: plan.rows,
+        intervalSec: plan.intervalSec,
+        count: plan.count,
+      };
+      console.log(
+        `${GENERATION_LOG_PREFIX} timeline ready video ${videoId} cells=${plan.count} ` +
+          `source=warm-cache interval=${plan.intervalSec}s ${(st.size / 1024).toFixed(0)}KB ffmpeg=${Math.round(ffmpegMs)}ms`,
+      );
+    } else {
+      // Cold source: acquire a bounded set of windows across the duration.
+      if (!video.fileKeyEncrypted || !video.megaAccount) {
+        return { ok: false, detail: 'source-unavailable' };
+      }
+      const owned = ownedVideoOf(video);
+      console.log(`${GENERATION_LOG_PREFIX} timeline decrypting key video ${videoId}`);
+      const fileKey = deps.decryptFileKey(video.fileKeyEncrypted);
+      console.log(`${GENERATION_LOG_PREFIX} timeline key ready video ${videoId}`);
+      let transferBytes = 0;
+      if (durationSec === null) {
+        const probe = await probeMontageSourceDuration(owned, workDir, fileKey, deps.sourceDeps);
+        transferBytes += probe.transferBytes;
+        durationSec = probe.durationSec;
+      }
+      if (durationSec === null) {
+        timelineCooldown.set(videoId, deps.now() + previewFailureCooldownMs());
+        return { ok: false, detail: 'unknown-duration' };
+      }
+
+      // One merged range per scene is the worst case. Requesting more scenes
+      // than the range budget silently drops the tail of the video, so cap
+      // the coarse timeline at the configured range count.
+      const count = Math.min(previewColdTimelineScenes(), previewMontageMaxRanges());
+      // End the sampled range at 90% of the duration. A TS window ending at
+      // EOF is often truncated mid-packet and cannot yield a decodable frame;
+      // the final VTT cue still spans to the true duration, so the tail uses
+      // the last successfully sampled cell instead of disappearing.
+      const usableEnd = Math.max(0, durationSec * 0.9);
+      const step = count > 1 ? usableEnd / (count - 1) : 0;
+      const scenes: MontageSceneRequest[] = Array.from({ length: count }, (_, index) => {
+        const startSec = Math.min(usableEnd, index * step);
+        return {
+          index,
+          startSec,
+          durationSec: Math.min(1, Math.max(0.3, durationSec - startSec)),
+          fraction: null,
+          estimated: false,
+        };
+      });
+      console.log(
+        `${GENERATION_LOG_PREFIX} timeline acquiring video ${videoId} windows=${scenes.length} ` +
+          `duration=${durationSec.toFixed(1)}s`,
+      );
+      const source = await resolveMontageSources(owned, scenes, workDir, fileKey, deps.sourceDeps, {
+        durationSec,
+      });
+      transferBytes += source.transferBytes;
+      console.log(
+        `${GENERATION_LOG_PREFIX} timeline acquired video ${videoId} segments=${source.segments.length} ` +
+          `mega=${(transferBytes / 1048576).toFixed(1)}MB`,
+      );
+      const selected: TimelineSelectedScene[] = source.segments.map((segment) => ({
+        input: { path: segment.path, seekSec: segment.seekSec, durationSec: 1 },
+        startSec: segment.startSec,
+        sceneIndex: segment.index,
+      }));
+      const extracted = await extractTimelineFramesFromSelected(
+        selected,
+        source.segments,
+        durationSec,
+        workDir,
+        [0],
+        timeoutMs,
+        undefined,
+        deps.now,
+      );
+      ffmpegMs += extracted.ffmpegMs;
+      console.log(
+        `${GENERATION_LOG_PREFIX} timeline frames video ${videoId} count=${extracted.frames.length} ` +
+          `ffmpeg=${Math.round(ffmpegMs)}ms`,
+      );
+      if (extracted.frames.length === 0) {
+        timelineCooldown.set(videoId, deps.now() + previewFailureCooldownMs());
+        return { ok: false, detail: 'no timeline frames could be decoded' };
+      }
+      const timeline = await encodeTimelineSpriteFromFrames(
+        videoId,
+        extracted.frames,
+        durationSec,
+        workDir,
+        timeoutMs,
+        undefined,
+      );
+      ffmpegMs += timeline.ffmpegMs;
+      if (!timeline.ok || !timeline.info) {
+        timelineCooldown.set(videoId, deps.now() + previewFailureCooldownMs());
+        return { ok: false, detail: `sprite encode failed (${timeline.detail})` };
+      }
+      timelineInfo = timeline.info;
+      console.log(
+        `${GENERATION_LOG_PREFIX} timeline ready video ${videoId} cells=${timelineInfo.count} ` +
+          `source=cold-windows mega=${(transferBytes / 1048576).toFixed(1)}MB ffmpeg=${Math.round(ffmpegMs)}ms`,
+      );
     }
 
-    const tileW = previewSpriteTileW();
-    const tileH = toTileH(tileW);
-    const plan = spritePlan(durationSec, tileW, previewSpriteCols(), previewSpriteMaxTiles(), previewSpriteMinIntervalSec());
-    const tmpOut = path.join(workDir, 'sprite.tmp.jpg');
-    const t0 = deps.now();
-    const encoded = await encodeSprite({
-      inputPath: warm.path,
-      intervalSec: plan.intervalSec,
-      tileW,
-      tileH,
-      cols: plan.cols,
-      rows: plan.rows,
-      outPath: tmpOut,
-      timeoutMs,
-    });
-    ffmpegMs += deps.now() - t0;
-    if (!encoded.ok) {
-      timelineCooldown.set(videoId, deps.now() + previewFailureCooldownMs());
-      return { ok: false, detail: `sprite encode failed (${encoded.detail})` };
-    }
-    const st = await fs.promises.stat(tmpOut);
-    if (st.size <= 0) {
-      timelineCooldown.set(videoId, deps.now() + previewFailureCooldownMs());
-      return { ok: false, detail: 'sprite empty' };
-    }
-
-    await fs.promises.rename(tmpOut, spritePath(videoId));
+    if (!timelineInfo) return { ok: false, detail: 'timeline not generated' };
     const nowIso = new Date(deps.now()).toISOString();
     const base: PreviewSidecar = sidecar ?? {
       version: 2,
       videoId,
-      megaNodeId: video.megaNodeId as string,
+      megaNodeId: video.megaNodeId,
       sourceSize,
       durationSeconds: durationSec,
       status: 'ready',
@@ -765,24 +1128,22 @@ async function generateTimeline(video: PreviewVideoRow, deps: PreviewServiceDeps
     };
     await writeSidecarAtomic({
       ...base,
-      status: base.hover ? 'ready' : base.status === 'failed' ? 'failed' : 'ready',
-      timeline: {
-        tileW,
-        tileH,
-        cols: plan.cols,
-        rows: plan.rows,
-        intervalSec: plan.intervalSec,
-        count: plan.count,
-      },
+      // A timeline-only artifact is a ready preview asset. Preserve a hover
+      // failure only when neither asset exists.
+      status: 'ready',
+      timeline: timelineInfo,
       durationSeconds: base.durationSeconds ?? durationSec,
       lastAccessedAt: nowIso,
       metrics: base.metrics ?? { transferBytes: 0, ffmpegMs: Math.round(ffmpegMs), generatedAt: nowIso },
     });
-    console.log(
-      `${GENERATION_LOG_PREFIX} timeline ready video ${videoId} cells=${plan.count} ` +
-        `interval=${plan.intervalSec}s ${(st.size / 1024).toFixed(0)}KB ffmpeg=${Math.round(ffmpegMs)}ms`,
-    );
+    timelineCooldown.delete(videoId);
     return { ok: true, detail: 'generated' };
+  } catch (err) {
+    timelineCooldown.set(videoId, deps.now() + previewFailureCooldownMs());
+    console.warn(
+      `${GENERATION_LOG_PREFIX} timeline failed video ${videoId}: ${sanitizeFailureDetail(err)}`,
+    );
+    return { ok: false, detail: sanitizeFailureDetail(err) };
   } finally {
     await removeWorkDir(workDir);
   }
@@ -954,11 +1315,15 @@ export async function handlePreviewMeta(
     } else if (timelineInFlight) {
       timelineStatus = 'generating';
       reason = null;
-    } else if (video.fileSize === null || !(await warmCacheAvailable(video, deps))) {
-      // Warm-cache-only rule (design §2.4): report the state honestly and
-      // enqueue nothing — the first full playback warms the cache.
+    } else if (video.fileSize === null || !video.megaNodeId) {
+      // Without a source identity there is nothing bounded to acquire.
       timelineStatus = 'unavailable';
-      reason = 'source-not-local';
+      reason = 'source-size-unknown';
+    } else if (deps.now() < (timelineCooldown.get(videoId) ?? 0)) {
+      // A recent timeline failure is cooling down; do not start a no-op
+      // queue entry on every meta poll.
+      timelineStatus = 'unavailable';
+      reason = 'timeline-retry-later';
     } else {
       const outcome = enqueueGeneration(video, request.signal, deps);
       if (outcome === 'rejected') {
@@ -972,13 +1337,6 @@ export async function handlePreviewMeta(
   }
 
   return NextResponse.json(base, { headers: { 'Cache-Control': 'no-store' } });
-}
-
-/** Cheap warm-cache probe for the timeline gate (no MEGA work). */
-function warmCacheAvailable(video: PreviewVideoRow, deps: PreviewServiceDeps): Promise<boolean> {
-  const size = video.fileSize !== null ? Number(video.fileSize) : 0;
-  if (!video.megaNodeId || size <= 0) return Promise.resolve(false);
-  return deps.readWarmCache(video.id, video.megaNodeId, size).then((w) => w !== null);
 }
 
 // ---------------------------------------------------------------------------
@@ -1041,14 +1399,27 @@ export async function handlePreviewAsset(
     // Only current-generation montages may be served. This is the hard
     // guarantee that an old/stale artifact is never exposed as ready.
     if (!sidecar.hover || sidecar.generationVersion !== previewGenerationVersion()) {
-      return jsonError(404, 'Preview not available.', { status: 'unavailable' });
+      return jsonError(404, 'Preview not available.', {
+        status: 'unavailable',
+        reason: 'hover-not-generated',
+      });
     }
   }
-  if (kind === 'sprite' && !sidecar.timeline) return jsonError(404, 'Preview not available.', { status: 'unavailable' });
+  if (kind === 'sprite' && !sidecar.timeline) {
+    return jsonError(404, 'Timeline preview not available.', {
+      status: 'unavailable',
+      reason: 'timeline-not-generated',
+    });
+  }
 
   const absPath = kind === 'clip' ? clipPath(videoId) : spritePath(videoId);
   const file = await fileReadable(absPath);
-  if (!file.ok) return jsonError(404, 'Preview not available.', { status: 'unavailable' });
+  if (!file.ok) {
+    return jsonError(404, 'Preview not available.', {
+      status: 'unavailable',
+      reason: 'artifact-missing',
+    });
+  }
 
   const etag = assetEtag(videoId, sidecar, kind, file.size);
   if (request.ifNoneMatch && request.ifNoneMatch.trim() === etag) {
@@ -1109,10 +1480,25 @@ export async function handlePreviewVtt(
 
   const sidecar = await readSidecar(videoId);
   if (!sidecar || !sidecarMatchesRow(sidecar, auth.video) || sidecar.status !== 'ready' || !sidecar.timeline) {
-    return jsonError(404, 'Preview not available.', { status: 'unavailable' });
+    return jsonError(404, 'Timeline preview not available.', {
+      status: 'unavailable',
+      reason: 'timeline-not-generated',
+    });
   }
   const duration = sidecar.durationSeconds;
-  if (duration === null) return jsonError(404, 'Preview not available.', { status: 'unavailable' });
+  if (duration === null) {
+    return jsonError(404, 'Timeline preview not available.', {
+      status: 'unavailable',
+      reason: 'duration-unknown',
+    });
+  }
+  const sprite = await fileReadable(spritePath(videoId));
+  if (!sprite.ok) {
+    return jsonError(404, 'Timeline preview not available.', {
+      status: 'unavailable',
+      reason: 'artifact-missing',
+    });
+  }
 
   const info = sidecar.timeline;
   const vtt = buildSpriteVtt({
@@ -1123,6 +1509,7 @@ export async function handlePreviewVtt(
     cols: info.cols,
     tileW: info.tileW,
     tileH: info.tileH,
+    times: info.times,
   });
   const etag = `"pv-${videoId}-${sidecar.sourceSize}-vtt-${info.count}"`;
   if (request.ifNoneMatch && request.ifNoneMatch.trim() === etag) {

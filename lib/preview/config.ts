@@ -47,6 +47,15 @@ export function previewSourceMaxBytes(): number {
   return bytesEnv('PREVIEW_SOURCE_MAX_BYTES', 24 * 1024 * 1024);
 }
 
+/** Max wall-clock time for a single MEGA ciphertext fetch + decrypt pipeline.
+ *  MEGA storage sockets can accept a request and then never deliver a body
+ *  (or the decrypt transform can stall), and `keepAliveFetch` does not reliably
+ *  honor AbortSignal, so a hard timeout is required to keep a single worker
+ *  from being blocked indefinitely on one source acquisition. */
+export function previewSourceTimeoutMs(): number {
+  return Math.floor(numEnv('PREVIEW_SOURCE_TIMEOUT_MS', 60_000, 1_000, 5 * 60_000));
+}
+
 /** Max bytes spent fetching the MP4 moov atom (head or tail). */
 export function previewMoovMaxBytes(): number {
   return bytesEnv('PREVIEW_MOOV_MAX_BYTES', 4 * 1024 * 1024);
@@ -174,6 +183,15 @@ export function previewStatsMinRefreshMs(): number {
 
 export function previewJobHeartbeatMs(): number {
   return Math.floor(numEnv('PREVIEW_JOB_HEARTBEAT_MS', 30_000, 5_000, 5 * 60_000));
+}
+
+/**
+ * Delete All processes videos in bounded batches. This keeps the lock
+ * transaction + PostgreSQL parameter list small for very large libraries
+ * while still giving the worker a chance between batches.
+ */
+export function previewDeleteAllBatchSize(): number {
+  return Math.floor(numEnv('PREVIEW_DELETE_ALL_BATCH_SIZE', 200, 1, 1000));
 }
 
 /** Idle worker poll interval. */
@@ -316,6 +334,17 @@ export function previewSpriteMinIntervalSec(): number {
   return numEnv('PREVIEW_SPRITE_MIN_INTERVAL_SEC', 4, 1, 60);
 }
 
+/**
+ * Bounded number of source windows used for a cold-source timeline. The
+ * windows are acquired through the same merged-range path as hover scenes,
+ * so this is a bandwidth cap, not a full-video download. The resulting
+ * timeline is coarser than a warm-cache spritesheet but covers the whole
+ * duration and reuses the preview acquisition machinery.
+ */
+export function previewColdTimelineScenes(): number {
+  return Math.floor(numEnv('PREVIEW_COLD_TIMELINE_SCENES', 8, 2, 20));
+}
+
 /** Eviction knobs (mirrors lib/media/cache.ts patterns). */
 export function previewEvictionIntervalMs(): number {
   return Math.floor(numEnv('PREVIEW_EVICTION_INTERVAL_MS', 10 * 60_000, 1_000, 24 * 3600_000));
@@ -328,6 +357,21 @@ export function previewEvictionGraceMs(): number {
   // publishes out of the victim set long enough that LRU churn only touches
   // genuinely older previews while the backlog runs.
   return Math.floor(numEnv('PREVIEW_EVICTION_GRACE_MS', 10 * 60_000, 0, 24 * 3600_000));
+}
+
+/**
+ * Phase A / P-02: grace period before failed/unpublished preview artifacts
+ * are reclaimed. It must exceed the absolute per-job deadline (default
+ * 10 min) so a live worker in another process can never have its work dir
+ * deleted underneath it. 30 minutes is 3× the deadline.
+ */
+export function previewArtifactCleanupGraceMs(): number {
+  return Math.floor(numEnv('PREVIEW_ARTIFACT_CLEANUP_GRACE_MS', 30 * 60_000, 0, 7 * 24 * 3600_000));
+}
+
+/** Bound the directory scan for one cleanup pass (never walks the FS). */
+export function previewArtifactCleanupMaxEntries(): number {
+  return Math.floor(numEnv('PREVIEW_ARTIFACT_CLEANUP_MAX_ENTRIES', 10_000, 100, 200_000));
 }
 
 /** Kill switch: meta answers `unavailable (disabled)` without any work. */

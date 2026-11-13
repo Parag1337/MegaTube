@@ -162,11 +162,13 @@ export function VideoCard({
     else stopSelf();
   }, [beginIframePreview, previewSrc, stopSelf]);
 
-  const beginLocalPreview = useCallback((url: string) => {
+  const beginLocalPreview = useCallback((url: string, { showLoading = true } = {}) => {
     activeRef.current = true;
     acquirePreview(stopSelf);
     setPreviewLabel('Loading preview');
-    setPreviewLoading(true);
+    // A cached clip mounts immediately and normally plays within a frame;
+    // showing the cold-generation badge here makes the ready path flash.
+    setPreviewLoading(showLoading);
     setPreviewView({ kind: 'local', url });
     setPreview('active');
 
@@ -213,8 +215,8 @@ export function VideoCard({
 
     const cached = cachedCardPreviewMeta(id);
     if (cached?.hoverUrl) {
-      // Known-ready: mount immediately; the loader stays until `playing`.
-      beginLocalPreview(cached.hoverUrl);
+      // Known-ready: mount immediately without the cold-generation badge.
+      beginLocalPreview(cached.hoverUrl, { showLoading: false });
       return;
     }
     if (metaInFlightRef.current) return;

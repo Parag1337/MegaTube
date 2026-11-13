@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
 import { canManagePreviews } from '@/lib/preview/admin';
 import { getPreviewFailures, getPreviewLibraryStats } from '@/lib/preview/jobs';
+import { enforcePreviewRateLimit } from '@/lib/preview/rate-limit';
 
 /**
  * Phase 5.1: preview-generation dashboard data.
@@ -22,6 +23,8 @@ export async function GET() {
     if (!canManagePreviews(user)) {
       return NextResponse.json({ error: 'Not authorized.' }, { status: 403 });
     }
+    const limited = enforcePreviewRateLimit(user.id, 'admin-stats');
+    if (limited) return limited;
 
     const [stats, failures] = await Promise.all([
       getPreviewLibraryStats(user.id),

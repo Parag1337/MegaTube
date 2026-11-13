@@ -18,6 +18,14 @@ export async function register() {
     // (static import() would pull the module into BOTH runtime bundles).
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     require('./lib/net-resilience').applyNetworkResilience();
+    // Credential-free DB identity. Every web/worker process logs the same
+    // fingerprint when it shares DATABASE_URL; a mismatch is visible in the
+    // platform logs without ever printing a connection string or password.
+    await import('./lib/db')
+      .then((m) => {
+        console.log(`[db] identity ${m.databaseIdentityFingerprint()} (credential-free host/port/database fingerprint)`);
+      })
+      .catch(() => {});
     // Bug 6: temp files from jobs killed by a crash/hard exit (*.ts.part,
     // *.part.mp4, *.live.spool) can never clean themselves up. Sweep them
     // once per server start, before any media request can create a new job,
@@ -36,6 +44,11 @@ export async function register() {
     // never touches the media cache directory.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     require('./lib/preview/cache').startPreviewMaintenance();
+    // P-02: reclaim old failed/unpublished artifacts once per start, before
+    // the worker can create new work. Grace-based and safe alongside another
+    // live instance's jobs.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('./lib/preview/cache').cleanupFailedPreviewArtifacts().catch(() => {});
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     require('./lib/preview/source').sweepOrphanWorkDirs().catch(() => {});
     // Phase 5.1: resume the durable preview backlog. One guarded worker loop

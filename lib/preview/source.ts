@@ -37,7 +37,10 @@ import {
   mergeByteWindows,
 } from './segment';
 import { findMoovInChunk, readMp4DurationSeconds } from './mp4-index';
+import { trimTsFileToKeyframe } from './ts-window';
+import { parseMp4VideoTrack, exactWindowForScene, type ExactWindow, type VideoTrackIndex } from './mp4-seek';
 import { probeMedia } from './ffmpeg';
+import { observeContainerBytes } from '../media/container';
 import {
   previewFfmpegTimeoutMs,
   previewMoovMaxBytes,
@@ -45,7 +48,13 @@ import {
   previewMontageSourceBudgetBytes,
   previewMontageWindowMaxBytes,
   previewSourceMaxBytes,
+  previewSourceTimeoutMs,
 } from './config';
+import {
+  isPreviewWorkDirActive,
+  registerPreviewWorkDir,
+  unregisterPreviewWorkDir,
+} from './cache';
 
 export interface PreviewSourceDeps {
   fetchCiphertext: (url: string, signal?: AbortSignal) => Promise<Response>;
@@ -93,11 +102,46 @@ export function throwIfAborted(signal?: AbortSignal): void {
   }
 }
 
+/**
+ * Run a source-acquisition operation with a hard wall-clock timeout. MEGA
+ * storage sockets can accept a request and never deliver a body, and the
+ * megajs decrypt stream can stall without ending; `keepAliveFetch` does not
+ * reliably honor AbortSignal. Without this, one stalled fetch blocks the
+ * single preview worker indefinitely. The returned promise is detached so a
+ * timeout does not leave an unhandled rejection from the stalled operation.
+ */
+export function withSourceTimeout<T>(
+  p: Promise<T>,
+  ms: number,
+  onTimeout?: () => void,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const settled = new Promise<T>((resolve, reject) => {
+    p.then(resolve, reject);
+  });
+  const race = Promise.race([
+    settled,
+    new Promise<T>((_, reject) => {
+      timer = setTimeout(() => {
+        onTimeout?.();
+        reject(new Error('preview source fetch timed out'));
+      }, ms);
+      if (timer && typeof timer.unref === 'function') timer.unref();
+    }),
+  ]);
+  return race.finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 /** Per-job temp directory: `<previewsDir>/<id>.tmp-<rand>/` (orphan-swept). */
 export async function createWorkDir(videoId: number): Promise<string> {
   const base = path.join(previewsDirForTemp(), `${videoId}.tmp-`);
   await fs.promises.mkdir(path.dirname(base), { recursive: true });
-  return fs.promises.mkdtemp(base);
+  const dir = await fs.promises.mkdtemp(base);
+  // P-02: a concurrent cleanup pass must never touch a live job's files.
+  registerPreviewWorkDir(dir);
+  return dir;
 }
 
 function previewsDirForTemp(): string {
@@ -112,6 +156,8 @@ export async function removeWorkDir(dir: string | null): Promise<void> {
     await fs.promises.rm(dir, { recursive: true, force: true });
   } catch {
     // ignore
+  } finally {
+    unregisterPreviewWorkDir(dir);
   }
 }
 
@@ -130,21 +176,62 @@ async function decryptRangeToFile(
   destPath: string,
   signal?: AbortSignal,
 ): Promise<number> {
-  const res = await deps.fetchCiphertext(`${url}/${start}-${end}`, signal);
-  if (!res.ok || !res.body) {
-    throw new SourceUnavailableError(`ciphertext fetch failed with status ${res.status}`);
-  }
-  const decryptor = decrypt(fileKey, { start, disableVerification: true });
-  const nodeUpstream = Readable.fromWeb(res.body as unknown as Parameters<typeof Readable.fromWeb>[0]);
-  let written = 0;
-  const counter = new Transform({
-    transform(chunk: Buffer, _enc, cb) {
-      written += chunk.length;
-      cb(null, chunk);
-    },
+  const timeoutMs = previewSourceTimeoutMs();
+  // Own abort controller so a hard timeout can tear down the underlying
+  // socket, HTTP body, megajs decrypt stream and file handle. keepAliveFetch
+  // forwards AbortSignal to undici, which cancels the request and cascades
+  // through the pipeline. The caller's signal (job deadline) is merged in so
+  // a deadline expiry also aborts the fetch.
+  const controller = new AbortController();
+  const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+
+  let timedOut = false;
+  const op = (async (): Promise<number> => {
+    const res = await deps.fetchCiphertext(`${url}/${start}-${end}`, combined);
+    if (!res.ok || !res.body) {
+      throw new SourceUnavailableError(`ciphertext fetch failed with status ${res.status}`);
+    }
+    const decryptor = decrypt(fileKey, { start, disableVerification: true });
+    const nodeUpstream = Readable.fromWeb(res.body as unknown as Parameters<typeof Readable.fromWeb>[0]);
+    let written = 0;
+    const counter = new Transform({
+      transform(chunk: Buffer, _enc, cb) {
+        written += chunk.length;
+        cb(null, chunk);
+      },
+    });
+    await pipeline(nodeUpstream, decryptor as unknown as NodeJS.WritableStream, counter, fs.createWriteStream(destPath));
+    // A truncated/corrupted upstream body (MEGA 509 throttling, dead sockets)
+    // must never reach the demuxer: with `disableVerification` there is no MAC
+    // to catch it, so the byte count itself is the integrity check — a short
+    // file is not the file we asked for.
+    const expected = end - start + 1;
+    if (written !== expected) {
+      await fs.promises.rm(destPath, { force: true }).catch(() => {});
+      throw new SourceUnavailableError(
+        `ciphertext fetch truncated (got ${written} of ${expected} bytes)`,
+      );
+    }
+    return written;
+  })();
+
+  const result = withSourceTimeout(op, timeoutMs, () => {
+    timedOut = true;
+    controller.abort();
   });
-  await pipeline(nodeUpstream, decryptor as unknown as NodeJS.WritableStream, counter, fs.createWriteStream(destPath));
-  return written;
+
+  // On timeout (or any failure), remove the partially written temp file so a
+  // short/truncated body never reaches the demuxer.
+  result.catch(() => {
+    if (timedOut) {
+      fs.promises.rm(destPath, { force: true }).catch(() => {});
+    }
+  });
+  // Detach late rejections from the background pipeline so a timeout never
+  // surfaces as an unhandled rejection; the caller already sees the timeout.
+  op.catch(() => {});
+
+  return result;
 }
 
 /** Stream-copy a local file slice (TS window cut from the acquisition prefix). */
@@ -173,6 +260,36 @@ async function resolveDownloadUrl(
 }
 
 /**
+ * 188-byte container truth probe for files the sync labelled `video/mp4`
+ * (MEGA nodes carry no MIME; the label comes from the filename extension,
+ * so VOE-CDN MPEG-TS payloads arrive as `.mp4`). The playback route performs
+ * the same self-healing probe (`probeMediaContainer`); the preview pipeline
+ * previously trusted the label and failed with "moov not found" on every
+ * such file. 188 bytes, decrypts at offset 0 — same convention as megajs.
+ * Returns 'unknown' on any failure or unrecognized layout (callers keep the
+ * stored-label fallback, never guess).
+ */
+async function sniffContainerPrefix(
+  deps: PreviewSourceDeps,
+  url: string,
+  fileKey: Buffer,
+  workDir: string,
+  signal?: AbortSignal,
+): Promise<'ts' | 'mp4' | 'unknown'> {
+  const prefix = path.join(workDir, 'prefix.bin');
+  try {
+    await decryptRangeToFile(deps, url, 0, 187, fileKey, prefix, signal);
+    const buf = await fs.promises.readFile(prefix);
+    const observation = observeContainerBytes(buf);
+    return observation.kind;
+  } catch {
+    return 'unknown';
+  } finally {
+    await fs.promises.rm(prefix, { force: true }).catch(() => {});
+  }
+}
+
+/**
  * Resolve the source plan for one candidate. Throws SourceUnavailableError
  * when nothing bounded can decode this candidate (caller tries the next
  * candidate, the budget decides how many).
@@ -198,7 +315,23 @@ export async function resolvePreviewSource(
     }
   }
 
-  const isTs = needsRemuxForContainer(video.mimeType);
+  let isTs = needsRemuxForContainer(video.mimeType);
+  let resolvedUrlCache: ResolvedUrl | null = null;
+  const ensureDownload = async (): Promise<ResolvedUrl> => {
+    resolvedUrlCache ??= await resolveDownloadUrl(video, deps);
+    return resolvedUrlCache;
+  };
+  // Stored MP4 labels are unverified (MEGA nodes carry no MIME): if the
+  // 188-byte prefix of the real bytes is MPEG-TS, take the TS path instead
+  // of failing with "moov not found".
+  if (!isTs) {
+    try {
+      const { url } = await ensureDownload();
+      if ((await sniffContainerPrefix(deps, url, fileKey, workDir)) === 'ts') isTs = true;
+    } catch {
+      // keep the stored label (safe fallback)
+    }
+  }
 
   // 2. Local TS acquisition prefix: cut the same byte window the MEGA path
   //    would fetch, but from disk (0 transfer). Requires the frontier to
@@ -214,16 +347,23 @@ export async function resolvePreviewSource(
           const win = path.join(workDir, 'window.ts');
           await copySlice(part, byteStart, byteLen, win);
           tmpFiles.push(win);
-          return { kind: 'ts-window', path: win, seekSec: 0, transferBytes: 0, cleanup };
+          if (!(await trimTsFileToKeyframe(win))) {
+            // Local window has no decodable random-access group — fall
+            // through to the MEGA window instead of failing the job.
+            await fs.promises.rm(win, { force: true }).catch(() => {});
+          } else {
+            return { kind: 'ts-window', path: win, seekSec: 0, transferBytes: 0, cleanup };
+          }
         }
       }
-    } catch {
+    } catch (err) {
+      if (err instanceof SourceUnavailableError) throw err;
       // fall through to the MEGA window
     }
   }
 
   // 3./4. Bounded MEGA windows.
-  const { url, size: resolvedSize } = await resolveDownloadUrl(video, deps);
+  const { url, size: resolvedSize } = await ensureDownload();
   const totalSize = resolvedSize || size;
   if (isTs) {
     const { byteStart, byteLen } = byteWindowFor(
@@ -237,6 +377,9 @@ export async function resolvePreviewSource(
     const win = path.join(workDir, 'window.ts');
     await decryptRangeToFile(deps, url, byteStart, byteStart + byteLen - 1, fileKey, win);
     tmpFiles.push(win);
+    if (!(await trimTsFileToKeyframe(win))) {
+      throw new SourceUnavailableError('ts window has no decodable keyframe');
+    }
     return {
       kind: 'ts-window',
       path: win,
@@ -546,6 +689,11 @@ export async function probeMontageSourceDuration(
 
   const { url, size: resolvedSize } = await resolveDownloadUrl(video, deps);
   const totalSize = resolvedSize || size;
+  // Stored MP4 labels are unverified; sniff 188 bytes before spending 8 MB
+  // on an moov hunt for a file that is actually MPEG-TS.
+  if ((await sniffContainerPrefix(deps, url, fileKey, workDir, signal)) === 'ts') {
+    return { durationSec: null, source: 'ts-unknown', transferBytes: 188 };
+  }
   const moovMax = previewMoovMaxBytes();
   const headLen = Math.min(moovMax, totalSize);
   const head = path.join(workDir, 'head.bin');
@@ -617,12 +765,36 @@ export async function resolveMontageSources(
     2 * 1024 * 1024,
     Math.min(previewMontageWindowMaxBytes(), Math.floor(previewMontageSourceBudgetBytes() / scenes.length)),
   );
-  const isTs = needsRemuxForContainer(video.mimeType);
-  const align = isTs ? 752 : 16;
+  const isTsStored = needsRemuxForContainer(video.mimeType);
+  const align = isTsStored ? 752 : 16;
+
+  /**
+   * Stored MP4 labels are unverified (MEGA nodes carry no MIME). Sniff the
+   * first 188 decrypted bytes once per run: if the payload is MPEG-TS
+   * (VOE-CDN mislabels), take the TS path — it needs no moov at all —
+   * instead of failing with "moov not found" after 8 MB of wasted fetches.
+   * `ensureDownload()` memoizes the URL resolution so the sniff and the
+   * acquisition pass share one session open.
+   */
+  let isTs = isTsStored;
+  let resolvedUrlCache: ResolvedUrl | null = null;
+  const ensureDownload = async (): Promise<ResolvedUrl> => {
+    resolvedUrlCache ??= await resolveDownloadUrl(video, deps);
+    return resolvedUrlCache;
+  };
+  if (!isTs) {
+    try {
+      const { url } = await ensureDownload();
+      if ((await sniffContainerPrefix(deps, url, fileKey, workDir, signal)) === 'ts') isTs = true;
+    } catch {
+      // keep the stored label (safe fallback)
+    }
+  }
+  const effectiveAlign = isTs ? 752 : align;
 
   const windowsFor = (sourceSize: number, durationSec: number | null): PreparedSceneWindow[] =>
     scenes.map((scene) =>
-      planMontageSceneWindow(scene, durationSec, sourceSize, perWindowMax, align, coverageSeconds),
+      planMontageSceneWindow(scene, durationSec, sourceSize, perWindowMax, effectiveAlign, coverageSeconds),
     );
 
   /**
@@ -715,7 +887,11 @@ export async function resolveMontageSources(
         files.push(f);
         tmpFiles.push(f);
       }
-      const { segments, omittedScenes } = segmentsFromTs(windows, size, ranges, files);
+      const keep: boolean[] = [];
+      for (const f of files) keep.push(await trimTsFileToKeyframe(f));
+      const keptRanges = ranges.filter((_, i) => keep[i]);
+      const keptFiles = files.filter((_, i) => keep[i]);
+      const { segments, omittedScenes } = segmentsFromTs(windows, size, keptRanges, keptFiles);
       return {
         kind: 'ts-window',
         segments,
@@ -729,7 +905,7 @@ export async function resolveMontageSources(
 
   // 3./4. Bounded MEGA acquisition: one download URL, one moov pass.
   throwIfAborted(signal);
-  const { url, size: resolvedSize } = await resolveDownloadUrl(video, deps);
+  const { url, size: resolvedSize } = await ensureDownload();
   const totalSize = resolvedSize || size;
   if (isTs) {
     const windows = windowsFor(totalSize, duration);
@@ -757,7 +933,11 @@ export async function resolveMontageSources(
       files.push(f);
       tmpFiles.push(f);
     }
-    const { segments, omittedScenes } = segmentsFromTs(windows, totalSize, ranges, files);
+    const keep: boolean[] = [];
+    for (const f of files) keep.push(await trimTsFileToKeyframe(f));
+    const keptRanges = ranges.filter((_, i) => keep[i]);
+    const keptFiles = files.filter((_, i) => keep[i]);
+    const { segments, omittedScenes } = segmentsFromTs(windows, totalSize, keptRanges, keptFiles);
     return {
       kind: 'ts-window',
       segments,
@@ -789,6 +969,8 @@ export async function resolveMontageSources(
   let moovEnd = moov?.complete ? moov.end : null;
   let regionStart = 0;
   let regionLen = 0;
+  let moovBuf: Buffer | null = moov?.complete ? headBuf : null;
+  let moovBaseOffset = 0;
   const sparse = path.join(workDir, 'source.mp4');
   let effectiveDuration = duration;
 
@@ -823,6 +1005,27 @@ export async function resolveMontageSources(
     tmpFiles.push(sparse);
     regionStart = 0;
     regionLen = Math.max(0, moov.start);
+    moovBuf = tailData.buf;
+    moovBaseOffset = tailStart;
+  } else if (moov?.mdatBeforeMoov) {
+    // moov lives AFTER mdat (non-faststart) but fit inside the head chunk
+    // because the file is small — the media region is [0, moov.start), NOT
+    // [moovEnd, EOF). Treating this as faststart yielded an empty region.
+    if (!effectiveDuration) {
+      effectiveDuration = readMp4DurationSeconds(headBuf, 0, totalSize);
+    }
+    const fh = await fs.promises.open(sparse, 'w');
+    try {
+      await fh.truncate(totalSize);
+      await fh.write(headBuf, 0, headBuf.length, 0);
+    } finally {
+      await fh.close();
+    }
+    tmpFiles.push(sparse);
+    regionStart = 0;
+    regionLen = Math.max(0, moov.start);
+    moovBuf = headBuf;
+    moovBaseOffset = 0;
   } else {
     if (!effectiveDuration) {
       effectiveDuration = readMp4DurationSeconds(headBuf, 0, totalSize);
@@ -845,10 +1048,42 @@ export async function resolveMontageSources(
     throw new SourceUnavailableError('mp4 duration unknown');
   }
   if (regionLen <= 0) throw new SourceUnavailableError('empty MP4 media region');
-  const windows = windowsFor(regionLen, effectiveDuration);
+  // Exact acquisition: the head/tail chunk we already fetched contains the
+  // sample table; ask it where the keyframes for the scene targets really
+  // are instead of guessing a linear byte position (variable-bitrate sources
+  // invalidate the guess — ffmpeg then seeks into a sparse hole and the
+  // decoder dies with "Error submitting packet to decoder", exit 69). Falls
+  // back to the linear layout when any scene's window cannot be derived.
+  const trackIndex: VideoTrackIndex | null =
+    moov && moovBuf ? parseMp4VideoTrack(moovBuf, moov, moovBaseOffset) : null;
+  const exactWindows: Array<ExactWindow | null> = trackIndex
+    ? scenes.map((scene) =>
+        exactWindowForScene(
+          trackIndex,
+          { startSec: scene.startSec, durationSec: scene.durationSec },
+          totalSize,
+          perWindowMax,
+        ),
+      )
+    : [];
+  const useExact =
+    trackIndex !== null &&
+    exactWindows.length === scenes.length &&
+    exactWindows.every((w): w is ExactWindow => w !== null);
+  const regionOffset = useExact ? 0 : regionStart;
+  const windows: PreparedSceneWindow[] = useExact
+    ? scenes.map((scene, i) => ({
+        scene,
+        startSec: clampSceneStart(scene.startSec, effectiveDuration, scene.durationSec),
+        byteStart: exactWindows[i].byteStart,
+        byteLen: exactWindows[i].byteLen,
+        estimated: scene.estimated === true,
+        fraction: null,
+      }))
+    : windowsFor(regionLen, effectiveDuration);
   throwIfAborted(signal);
   const ranges = mergeByteWindows(
-    windows.map((w) => ({ byteStart: w.byteStart + regionStart, byteLen: w.byteLen })),
+    windows.map((w) => ({ byteStart: w.byteStart + regionOffset, byteLen: w.byteLen })),
     perWindowMax,
     1024 * 1024,
   ).slice(0, maxRanges);
@@ -872,7 +1107,7 @@ export async function resolveMontageSources(
   const segments: MontageSceneSource[] = [];
   const omittedScenes: number[] = [];
   for (const window of windows) {
-    const absStart = window.byteStart + regionStart;
+    const absStart = window.byteStart + regionOffset;
     const r = ranges.find((r) => absStart >= r.byteStart && absStart < r.byteStart + r.byteLen);
     if (!r) {
       omittedScenes.push(window.scene.index);
@@ -925,6 +1160,7 @@ export async function sweepOrphanWorkDirs(): Promise<number> {
   for (const name of names) {
     if (!WORK_DIR_RE.test(name)) continue;
     const abs = path.join(previewsDirForTemp(), name);
+    if (isPreviewWorkDirActive(abs)) continue;
     try {
       const st = await fs.promises.stat(abs);
       if (!st.isDirectory() || st.mtimeMs >= cutoff) continue;

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getCurrentUser } from '@/lib/auth';
 import { canManagePreviews } from '@/lib/preview/admin';
+import { enforcePreviewRateLimit } from '@/lib/preview/rate-limit';
 
 /**
  * Phase 5.1: preview-generation preferences (owner-only).
@@ -22,6 +23,8 @@ export async function PATCH(request: Request) {
     if (!canManagePreviews(user)) {
       return NextResponse.json({ error: 'Not authorized.' }, { status: 403 });
     }
+    const limited = enforcePreviewRateLimit(user.id, 'admin-settings');
+    if (limited) return limited;
 
     let body: { autoGenerate?: unknown; paused?: unknown } = {};
     try {
