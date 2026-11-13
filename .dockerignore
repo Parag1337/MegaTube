@@ -1,0 +1,63 @@
+# Docker build context: keep only what `next build` and the runtime need.
+# Never send local secrets, dependencies, build output, caches, or test data.
+
+# Dependencies and build output
+node_modules
+.next
+.next-perf
+.next-profiles
+out
+build
+coverage
+test-results
+playwright-report
+*.tsbuildinfo
+
+# Local configuration and secrets
+.env
+.env.*
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Local runtime data and generated caches
+data
+*.log
+npm-debug.log*
+
+# Repository and local tooling metadata
+.git
+.gitignore
+.gitattributes
+.github
+.agents
+.clai
+.devin
+.freebuff
+.kilo
+.ob1
+.vscode
+AGENTS.md
+CLAUDE.md
+README.md
+skills-lock.json
+
+# Tests, developer tooling, and documentation
+tests
+test
+docs
+scripts
+sdk
+playwright.config.mjs
+seed3-tmp.mts
+
+# Files created by extraction/editor/debug sessions
+Chrome
+behavior
+by
+covered
+is
+mobile-context
+the
+tmp-*
